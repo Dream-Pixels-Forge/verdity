@@ -1,0 +1,7 @@
+[registries]
+pypi = https://upload.pypi.org/legacy/
+testpypi = https://test.pypi.org/legacy/
+
+[server-index]
+username = __token__
+password = pypi-YOUR_PYPI_API_TOKEN

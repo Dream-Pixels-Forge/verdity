@@ -1,0 +1,78 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "verdity"
+version = "0.1.0"
+description = "Verdity — AI-Powered Pull Request Review System with security-first architecture"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+authors = [{name = "Verdity Contributors"}]
+keywords = [
+    "pr-review",
+    "code-review",
+    "security",
+    "ai-agent",
+    "github",
+    "webhook",
+    "llm",
+    "static-analysis",
+    "secrets-detection",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Web Environment",
+    "Framework :: FastAPI",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+dependencies = [
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.29.0",
+    "pydantic>=2.6.0",
+    "pydantic-settings>=2.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.1.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "httpx>=0.27.0",
+]
+
+[project.scripts]
+verdity-worker = "verdity.worker:run_entrypoint"
+
+[project.urls]
+Homepage = "https://github.com/Dream-Pixels-Forge/verdity"
+Documentation = "https://github.com/Dream-Pixels-Forge/verdity#readme"
+Repository = "https://github.com/Dream-Pixels-Forge/verdity"
+Issues = "https://github.com/Dream-Pixels-Forge/verdity/issues"
+Changelog = "https://github.com/Dream-Pixels-Forge/verdity/blob/main/CHANGELOG.md"
+Security = "https://github.com/Dream-Pixels-Forge/verdity/blob/main/SECURITY.md"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+addopts = "-v --cov=src/verdity --cov-report=term-missing --cov-fail-under=100"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100

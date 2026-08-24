@@ -1,0 +1,14 @@
+# MANIFEST.in — include non-Python files in source distributions
+
+include LICENSE
+include README.md
+include SECURITY.md
+include .env.example
+include pyproject.toml
+recursive-include dev-notes *
+graft tests
+global-exclude __pycache__
+global-exclude *.py[cod]
+global-exclude *.db
+global-exclude .pytest_cache
+global-exclude .verdity-tests

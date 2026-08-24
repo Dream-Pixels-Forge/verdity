@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Virtual envs
+.venv/
+venv/
+
+# Environment files with secrets — NEVER commit real .env
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# SQLite databases (keep in .gitignore so dev DBs don't get committed)
+*.db
+*.sqlite3
+
+# Test coverage
+.htmlcov/
+.coverage
+coverage.xml
+.pytest_cache/
+pytest-cache-files-*
+
+# Test temp DBs
+tests/.verdity-tests/
+
+# Node (for any frontend tooling)
+node_modules/
