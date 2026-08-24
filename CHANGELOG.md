@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] — 2026-08-24
+
+### Added
+- **GitHubClient** — GitHub App JWT authentication, installation token caching, and PR comment posting (`post_pr_comment`, `post_pr_review`, `post_inline_comment`, `get_pr`, `close`)
+- **GitHub Actions release workflow** — PyPI trusted publisher (OIDC) on GitHub release
+- 18 new tests for GitHubClient (JWT auth, token caching, PR operations)
+- `httpx`, `PyJWT`, `cryptography` dependencies
+
+### Changed
+- Version bumped to 0.2.0
+
 ## [0.1.0] — 2026-08-23
 
 ### Added

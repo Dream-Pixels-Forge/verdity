@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/banner.png" alt="Verdity Banner" width="100%">
+</p>
+
 # Verdity — AI-Powered Pull Request Review System
 
 > **Verdity** — from *verdict* + *fidelity/integrity*. Every finding is a **verdict** (structured, evidence-backed, confidence-scored), delivered with **integrity** (calibrated, gated, auditable, never auto-posted without earning it).
@@ -293,21 +297,6 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 pytest -v
 ```
-
-### Publish to PyPI
-
-```bash
-# Build distribution packages
-python -m build
-
-# Upload to TestPyPI first (recommended)
-python -m twine upload --repository testpypi dist/*
-
-# Upload to PyPI
-python -m twine upload dist/*
-```
-
-See [`.pypirc.example`](.pypirc.example) for Twine configuration.
 
 ---
 
