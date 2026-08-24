@@ -465,4 +465,4 @@ async def test_all_tests_pass_at_least_90_coverage():
     import verdity.webhook_normalizer
     import verdity.config
     # All imports succeed — structure is intact for full coverage
-    assert verdity.__version__ == "0.1.0"
+    assert verdity.__version__ == "0.2.0"
