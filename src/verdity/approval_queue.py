@@ -69,7 +69,7 @@ class ApprovalQueueStore:
         self,
         run_id: uuid.UUID,
         finding_id: uuid.UUID,
-        repo_id: int,
+        repo_id: str,
         concern: str,
         severity: str,
         file: str,
@@ -113,7 +113,7 @@ class ApprovalQueueStore:
         await self._conn.commit()
 
     async def get_pending(
-        self, repo_id: int | None = None, limit: int = 50
+        self, repo_id: str | None = None, limit: int = 50
     ) -> list[dict[str, Any]]:
         if repo_id:
             rows = await self._conn.execute(
@@ -141,7 +141,7 @@ class ApprovalQueueStore:
         )
         await self._conn.commit()
 
-    async def stats(self, repo_id: int | None = None) -> dict[str, int]:
+    async def stats(self, repo_id: str | None = None) -> dict[str, int]:
         if repo_id:
             rows = await self._conn.execute(
                 "SELECT status, COUNT(*) as cnt FROM approval_queue "

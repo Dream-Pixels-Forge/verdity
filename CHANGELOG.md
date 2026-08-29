@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] — 2026-08-29
+
+### Added
+- **Multi-Model Fallback** — Reliability through model redundancy with automatic fallback, cooldown tracking, and exponential backoff
+- **Incremental Re-indexing** — `get_files_needing_reindex()`, `mark_file_indexed()`, and `get_reindex_stats()` for efficient delta indexing
+- 25 new tests for model fallback and incremental re-indexing
+
+### Fixed
+- **CRITICAL `hmac_verify.py`** — `hmac.new()` → `hmac.HMAC()` (was `AttributeError` on every webhook)
+- **CRITICAL `router.py`** — Confidence formula: severity-as-floor (severity acts as baseline guarantee, not multiplicative dampener)
+- **CRITICAL `verification_gate.py`** — Secret detection regex pattern matching, skipping env/vault sources
+- **`verification_gate.py`** — Duplicate condition `sha256 in fix_code or sha256 in fix_code` → `sha256 in fix_code or sha512 in fix_code`
+- **`verification_gate.py`** — Reverted incorrect `except Exception` addition (too broad)
+- **`async_sqlite.py`** — Cursor moved inside executor for `execute_one()`
+- **`event_queue.py`** — LIKE wildcards in `repo_id` now escaped with `ESCAPE '\\'`
+- **`agents/code_quality.py`** — Added `re:` prefix convention for regex patterns
+- **`agents/documentation.py`** — Removed duplicate patterns both matching `"def "` (caused 2× findings per function)
+- **`agents/testing.py`** — Renamed misleading pattern `"no_test_for_function"` → `"test_function_added"`
+- **`agents/base.py`** — Token estimation now estimates from `total_chars // 4`; cost propagation from `record_call()` return value
+- **`approval_queue.py`** — `repo_id` type `int` → `str` (3 signatures)
+- **`worker.py`** — Monotonic-time backoff expiry tracking prevents busy-loop
+- **`orchestrator.py`** — Redundant variable inlined; `FIRST_EXCEPTION` → `ALL_COMPLETED` (one specialist's timeout doesn't cancel others)
+- **`budget_enforcer.py`** — Threshold values were swapped (`_WARN_THRESHOLD=0.80`, `_DEGRADE_THRESHOLD=0.60`)
+- **`aggregator.py`** — `confidence_threshold` parameter now actually applied; `RankedFinding.dedup_group_id` now populated
+- **`gateway/app.py`** — Added `from exc` exception chaining on webhook normalization failure
+
+### Changed
+- Version bumped to 0.2.1
+- Test suite: 342 tests at 100% coverage
+
 ## [0.2.0] — 2026-08-24
 
 ### Added

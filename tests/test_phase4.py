@@ -190,7 +190,7 @@ class TestAggregatorAgent:
                     line_end=10,
                     summary="Magic number",
                     explanation="magic number",
-                    confidence=0.6,
+                    confidence=0.75,
                     evidence=[],
                     agent_version="code-quality-agent@0.1.0",
                     prompt_hash="def",
@@ -262,3 +262,29 @@ class TestAggregatorAgent:
         assert "Verdity Review" in output.summary_comment_markdown
         assert "SQL injection" in output.summary_comment_markdown
         assert "🔴" in output.summary_comment_markdown  # critical emoji
+
+
+class TestCodeQualityRegex:
+    @pytest.mark.asyncio
+    async def test_regex_pattern_match(self, services):
+        """Test that regex patterns (re: prefix) are matched correctly."""
+        agent = CodeQualityAgent()
+        # Create a diff with a long function that matches the regex pattern
+        # The pattern is: re:def .*\\(.*\\):\\n.{200,}
+        long_body = "x" * 250  # 250 characters > 200 threshold
+        diff_files = [{"path": "x.py", "content": f"def long_func():\n{long_body}", "additions": f"def long_func():\n{long_body}", "deletions": ""}]
+        result = await agent.run(
+            ctx=SpecialistContext(
+                review_run_id=uuid.uuid4(),
+                repo_owner="acme", repo_name="w",
+                base_sha="", head_sha="",
+                diff_files=diff_files,
+                policy=ReviewPolicy(),
+            ),
+            semantic_index=services["index"],
+            token_economics=services["token_economics"],
+            audit_store=services["audit"],
+        )
+        # Should find a long_function issue via regex
+        summaries = [f.summary for f in result.findings]
+        assert any("long" in s.lower() or "refactor" in s.lower() for s in summaries)

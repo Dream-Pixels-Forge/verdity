@@ -201,7 +201,7 @@ async def handle_github_webhook(
         )
     except Exception as exc:
         logger.error("Failed to normalize webhook: %s", exc)
-        raise HTTPException(status_code=400, detail="Webhook normalization failed")
+        raise HTTPException(status_code=400, detail="Webhook normalization failed") from exc
 
     # ── Step 5: Sanitize paths before enqueueing ──────────────────────
     pr = event.pull_request

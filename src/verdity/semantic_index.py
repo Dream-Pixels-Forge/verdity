@@ -326,6 +326,88 @@ class SemanticIndex:
             results.append(r)
         return results
 
+    # ── Incremental Re-indexing ───────────────────────────────────────
+
+    async def get_files_needing_reindex(
+        self,
+        repo_id: str,
+        file_hashes: dict[str, str],
+    ) -> list[str]:
+        """
+        Compare incoming file hashes against stored metadata to find files
+        that need re-indexing (new, changed, or deleted files).
+
+        Args:
+            repo_id: Repository identifier (owner/name)
+            file_hashes: Dict of {file_path: sha256_hash} from the latest push
+
+        Returns:
+            List of file paths that need re-indexing
+        """
+        rows = await self._conn.execute(
+            "SELECT file_path, content_hash FROM file_metadata WHERE repo_id = ?",
+            (repo_id,),
+        )
+        stored = {r["file_path"]: r["content_hash"] for r in rows}
+
+        needs_reindex: list[str] = []
+
+        # New or changed files
+        for file_path, content_hash in file_hashes.items():
+            if file_path not in stored or stored[file_path] != content_hash:
+                needs_reindex.append(file_path)
+
+        # Deleted files (in stored but not in new hashes)
+        for file_path in stored:
+            if file_path not in file_hashes:
+                needs_reindex.append(file_path)
+
+        return needs_reindex
+
+    async def mark_file_indexed(
+        self,
+        repo_id: str,
+        file_path: str,
+        content_hash: str,
+        commit_sha: str | None = None,
+    ) -> None:
+        """Mark a file as successfully indexed with its content hash."""
+        await self._conn.execute(
+            """
+            INSERT INTO file_metadata (repo_id, file_path, content_hash, last_indexed_sha, updated_at)
+            VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            ON CONFLICT(repo_id, file_path) DO UPDATE SET
+                content_hash    = excluded.content_hash,
+                last_indexed_sha = excluded.last_indexed_sha,
+                updated_at      = excluded.updated_at
+            """,
+            (repo_id, file_path, content_hash, commit_sha),
+        )
+        await self._conn.commit()
+
+    async def get_reindex_stats(self, repo_id: str) -> dict[str, Any]:
+        """Get statistics about the index for a repository."""
+        rows = await self._conn.execute(
+            """
+            SELECT
+                COUNT(*) as total_files,
+                SUM(chunk_count) as total_chunks,
+                MIN(updated_at) as oldest_index,
+                MAX(updated_at) as newest_index
+            FROM file_metadata
+            WHERE repo_id = ?
+            """,
+            (repo_id,),
+        )
+        row = rows[0] if rows else {}
+        return {
+            "repo_id": repo_id,
+            "total_files": row.get("total_files", 0),
+            "total_chunks": row.get("total_chunks", 0),
+            "oldest_index": row.get("oldest_index"),
+            "newest_index": row.get("newest_index"),
+        }
+
     # ── Symbol Graph ──────────────────────────────────────────────────
 
     async def upsert_edges(self, edges: list[SymbolEdge]) -> int:

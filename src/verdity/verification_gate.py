@@ -130,24 +130,30 @@ class VerificationGate:
         return GateCheck(name="lint_pass", result=CheckResult.PASS)
 
     def _check_no_new_secrets(self, fix: ProposedFix) -> GateCheck:
-        """Ensure the proposed fix doesn't introduce new hard-coded secrets."""
-        code = "\n".join(fix.suggested_lines)
-        secret_indicators = ["hardcoded", "secret", "password", "api_key"]
-        # The fix lines should reference settings/env vars, not contain actual secrets
-        if any(indicator in code.lower() for indicator in secret_indicators):
-            # Check for actual secret patterns (not just comments)
-            for line in fix.suggested_lines:
-                stripped = line.strip()
-                if stripped.startswith("#"):
-                    continue  # comments are ok
-                if "=" in stripped and any(kw in stripped.lower() for kw in ("secret", "password", "key", "token")):
-                    if "settings" in stripped or "os.environ" in stripped or "getenv" in stripped:
-                        continue  # reading from env is ok
-                    return GateCheck(
-                        name="no_new_secrets",
-                        result=CheckResult.FAIL,
-                        reason=f"Potential hard-coded secret in fix line: {stripped}",
-                    )
+        """Ensure the proposed fix doesn't introduce new hard-coded secrets.
+
+        Only inspects non-comment lines for actual secret assignment patterns
+        (e.g. `password = "sk-..."`) — not keywords in comments or docstrings.
+        """
+        import re
+        secret_pattern = re.compile(
+            r"""(?:password|secret|api_key|token|credential)\s*=\s*(?:['"][^'"]{8,}['"]|"""  # string literal
+            r"""['"][^'"]*['"])""",
+            re.IGNORECASE,
+        )
+        env_sources = ("settings", "os.environ", "os.getenv", "getenv", "environ", "vault")
+        for line in fix.suggested_lines:
+            stripped = line.strip()
+            if stripped.startswith("#") or stripped.startswith('"""') or stripped.startswith("'''"):
+                continue
+            if secret_pattern.search(stripped):
+                if any(src in stripped for src in env_sources):
+                    continue  # reading from env/vault is ok
+                return GateCheck(
+                    name="no_new_secrets",
+                    result=CheckResult.FAIL,
+                    reason=f"Potential hard-coded secret in fix line: {stripped}",
+                )
         return GateCheck(name="no_new_secrets", result=CheckResult.PASS)
 
 
@@ -200,14 +206,14 @@ class VerifierSubagent:
                              reason="Fix still uses unsafe pickle loading")
 
         if proposed_fix.fix_type == "hash_fix":
-            if "sha256" in fix_code or "sha256" in fix_code:
+            if "sha256" in fix_code or "sha512" in fix_code:
                 return GateCheck(name="matches_intent", result=CheckResult.PASS,
                                  reason="Fix uses stronger hash algorithm")
             return GateCheck(name="matches_intent", result=CheckResult.FAIL,
                              reason="Fix does not use stronger hash algorithm")
 
         if proposed_fix.fix_type == "except_specific":
-            if "except (" in fix_code or "except (" in fix_code:
+            if "except (" in fix_code:
                 return GateCheck(name="matches_intent", result=CheckResult.PASS,
                                  reason="Fix catches specific exception types")
             return GateCheck(name="matches_intent", result=CheckResult.FAIL,

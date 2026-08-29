@@ -48,10 +48,12 @@ class BaseSpecialistAgent(ABC):
         """
         findings = await self._scan(ctx, semantic_index)
 
-        input_tokens = len(findings) * self._input_tokens_per_finding
+        # Estimate input tokens from diff content (chars ÷ 4 ≈ tokens)
+        total_chars = sum(len(f.get("content", "") + f.get("additions", "")) for f in ctx.diff_files)
+        input_tokens = max(total_chars // 4, len(findings) * self._input_tokens_per_finding)
         output_tokens = len(findings) * self._output_tokens_per_finding
 
-        await token_economics.record_call(
+        cost_usd = await token_economics.record_call(
             review_run_id=ctx.review_run_id,
             agent_name=self.AGENT_VERSION,
             model=f"{self.SPECIALIST_NAME}/dev",
@@ -88,7 +90,7 @@ class BaseSpecialistAgent(ABC):
             status="complete",
             findings=findings,
             tokens_used={"input": input_tokens, "output": output_tokens},
-            cost_usd=0.0,
+            cost_usd=cost_usd or 0.0,
         )
 
     @abstractmethod

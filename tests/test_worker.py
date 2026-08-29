@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -342,6 +342,63 @@ async def test_drain_one_backoff():
     await worker._drain_one()
     # Should have skipped due to backoff
     assert queue.acknowledge.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_drain_one_backoff_not_expired():
+    """_drain_one nacks and sleeps when backoff hasn't expired yet."""
+    from verdity.worker import Worker
+
+    queue = MagicMock()
+    orch = MagicMock()
+    orch.process_event = AsyncMock(return_value=uuid.uuid4())
+
+    msg = _make_envelope("backoff/pending", delivery_id="msg-bp")
+    queue.consume = AsyncMock(return_value=msg)
+    queue.acknowledge = AsyncMock()
+    queue.nack = AsyncMock()
+
+    worker = Worker(queue, orch)
+    worker._backoffs["backoff/pending"] = 5.0  # 5 second backoff
+    # Set expiry to 10 seconds in the future
+    import time
+    worker._backoff_expiry_times["backoff/pending"] = time.monotonic() + 10.0
+
+    with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        await worker._drain_one()
+        # Should have nacked the message
+        queue.nack.assert_called_once_with("msg-bp", error_msg="backoff")
+        # Should have slept for remaining time (capped at 1.0s)
+        mock_sleep.assert_called_once()
+        sleep_arg = mock_sleep.call_args[0][0]
+        assert sleep_arg <= 1.0  # capped at 1.0
+
+
+@pytest.mark.asyncio
+async def test_drain_one_backoff_expired():
+    """_drain_one clears expired backoff and processes message."""
+    from verdity.worker import Worker
+
+    queue = MagicMock()
+    orch = MagicMock()
+    orch.process_event = AsyncMock(return_value=uuid.uuid4())
+
+    msg = _make_envelope("backoff/expired", delivery_id="msg-be")
+    queue.consume = AsyncMock(return_value=msg)
+    queue.acknowledge = AsyncMock()
+    queue.nack = AsyncMock()
+
+    worker = Worker(queue, orch)
+    worker._backoffs["backoff/expired"] = 5.0
+    # Set expiry to 1 second in the past (already expired)
+    import time
+    worker._backoff_expiry_times["backoff/expired"] = time.monotonic() - 1.0
+
+    await worker._drain_one()
+    # Should have cleared the backoff expiry
+    assert "backoff/expired" not in worker._backoff_expiry_times
+    # Should have processed the message (not nacked)
+    queue.nack.assert_not_called()
 
 
 @pytest.mark.asyncio

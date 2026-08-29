@@ -251,19 +251,19 @@ class TestAggregatorSummary:
             Finding(
                 concern=ConcernType.SECURITY, severity=Severity.MEDIUM,
                 file="x.py", line_start=1, line_end=1,
-                summary="M1", explanation="e", confidence=0.7,
+                summary="M1", explanation="e", confidence=0.8,
                 evidence=[], agent_version="v", prompt_hash="h",
             ),
             Finding(
                 concern=ConcernType.CODE_QUALITY, severity=Severity.LOW,
                 file="x.py", line_start=2, line_end=2,
-                summary="L1", explanation="e", confidence=0.5,
+                summary="L1", explanation="e", confidence=0.75,
                 evidence=[], agent_version="v", prompt_hash="h",
             ),
             Finding(
                 concern=ConcernType.DOCUMENTATION, severity=Severity.INFO,
                 file="x.py", line_start=3, line_end=3,
-                summary="I1", explanation="e", confidence=0.3,
+                summary="I1", explanation="e", confidence=0.72,
                 evidence=[], agent_version="v", prompt_hash="h",
             ),
         ]
@@ -489,6 +489,23 @@ class TestBudgetEnforcerExtra:
         assert "total_spend_usd" in summary
         assert "filter" in summary
         assert summary["filter"] == {"repo_owner": "acme", "repo_name": "w", "org": "acme"}
+
+    @pytest.mark.asyncio
+    async def test_degrade_drops_optional_specialists(self, token_economics):
+        from verdity.budget_enforcer import BudgetEnforcer, DegradationSignal
+        enf = BudgetEnforcer(token_economics)
+        # Accumulate spend to reach degrade threshold (0.6) with optional specialist present
+        for _ in range(20):
+            await token_economics.record_call(
+                review_run_id=uuid.uuid4(), agent_name="sec", model="deepseek-chat",
+                input_tokens=80_000, output_tokens=80_000,
+                repo_owner="acme", repo_name="w", org="acme",
+            )
+        status = await enf.check_budget(
+            repo_owner="acme", repo_name="w", budget_usd=1.0,
+            current_specialists=["security", "documentation"],
+        )
+        assert status.signal == DegradationSignal.DEGRADE_OPTIONAL
 
     @pytest.mark.asyncio
     async def test_get_spend_summary_empty(self, token_economics):
@@ -1223,6 +1240,91 @@ class TestSemanticIndexSearchEdgeCases:
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# Semantic Index — incremental re-indexing
+# ═══════════════════════════════════════════════════════════════════════
+
+class TestSemanticIndexIncremental:
+    @pytest.mark.asyncio
+    async def test_get_files_needing_reindex_new_files(self):
+        idx = SemanticIndex(db_path=":memory:")
+        await idx.connect()
+        try:
+            # No stored files — all incoming files need re-indexing
+            needs = await idx.get_files_needing_reindex("r", {"a.py": "h1", "b.py": "h2"})
+            assert sorted(needs) == ["a.py", "b.py"]
+        finally:
+            await idx.close()
+
+    @pytest.mark.asyncio
+    async def test_get_files_needing_reindex_changed_files(self):
+        idx = SemanticIndex(db_path=":memory:")
+        await idx.connect()
+        try:
+            await idx.mark_file_indexed("r", "a.py", "old_hash")
+            needs = await idx.get_files_needing_reindex("r", {"a.py": "new_hash"})
+            assert needs == ["a.py"]
+        finally:
+            await idx.close()
+
+    @pytest.mark.asyncio
+    async def test_get_files_needing_reindex_deleted_files(self):
+        idx = SemanticIndex(db_path=":memory:")
+        await idx.connect()
+        try:
+            await idx.mark_file_indexed("r", "a.py", "h1")
+            await idx.mark_file_indexed("r", "b.py", "h2")
+            # b.py is missing from incoming hashes → needs re-index (deletion)
+            needs = await idx.get_files_needing_reindex("r", {"a.py": "h1"})
+            assert needs == ["b.py"]
+        finally:
+            await idx.close()
+
+    @pytest.mark.asyncio
+    async def test_get_files_needing_reindex_unchanged(self):
+        idx = SemanticIndex(db_path=":memory:")
+        await idx.connect()
+        try:
+            await idx.mark_file_indexed("r", "a.py", "h1")
+            needs = await idx.get_files_needing_reindex("r", {"a.py": "h1"})
+            assert needs == []
+        finally:
+            await idx.close()
+
+    @pytest.mark.asyncio
+    async def test_mark_file_indexed_updates_last_indexed_sha(self):
+        idx = SemanticIndex(db_path=":memory:")
+        await idx.connect()
+        try:
+            await idx.mark_file_indexed("r", "a.py", "h1", commit_sha="abc123")
+            rows = await idx._conn.execute(
+                "SELECT last_indexed_sha, content_hash FROM file_metadata WHERE repo_id = 'r'"
+            )
+            assert rows[0]["last_indexed_sha"] == "abc123"
+            assert rows[0]["content_hash"] == "h1"
+        finally:
+            await idx.close()
+
+    @pytest.mark.asyncio
+    async def test_get_reindex_stats(self):
+        idx = SemanticIndex(db_path=":memory:")
+        await idx.connect()
+        try:
+            await idx.mark_file_indexed("r", "a.py", "h1")
+            await idx.mark_file_indexed("r", "b.py", "h2")
+            await idx.upsert_chunks([
+                CodeChunk(chunk_id="c1", repo_id="r", file_path="a.py",
+                          start_line=1, end_line=10, content="test", language="py"),
+            ])
+            stats = await idx.get_reindex_stats("r")
+            assert stats["total_files"] == 2
+            assert stats["total_chunks"] == 1
+            assert stats["oldest_index"] is not None
+            assert stats["newest_index"] is not None
+        finally:
+            await idx.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Orchestrator — edge cases for exception handling in gather
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -1449,6 +1551,25 @@ class TestVerificationGateLintSecret:
         verdict = gate.run_checks(fix, finding)
         secret_check = next(c for c in verdict.checks if c.name == "no_new_secrets")
         assert secret_check.result == CheckResult.FAIL
+
+    def test_no_new_secrets_pass_env_source(self):
+        gate = VerificationGate()
+        finding = Finding(
+            concern=ConcernType.SECURITY, severity=Severity.HIGH,
+            file="x.py", line_start=1, line_end=1,
+            summary="Password", explanation="e",
+            confidence=0.85, evidence=[], agent_version="v", prompt_hash="h",
+        )
+        from verdity.coding_agent import ProposedFix
+        fix = ProposedFix(
+            finding_id=finding.finding_id, file=finding.file,
+            original_line=finding.line_start,
+            suggested_lines=["password = 'vault_password'"],
+            explanation="good", fix_type="secret_removal",
+        )
+        verdict = gate.run_checks(fix, finding)
+        secret_check = next(c for c in verdict.checks if c.name == "no_new_secrets")
+        assert secret_check.result == CheckResult.PASS
 
 
 # ═══════════════════════════════════════════════════════════════════════

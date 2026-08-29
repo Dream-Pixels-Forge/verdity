@@ -21,7 +21,7 @@ from verdity.semantic_index import SemanticIndex
 logger = logging.getLogger(__name__)
 
 TEST_PATTERNS: list[tuple[str, str, str, str]] = [
-    ("no_test_for_function", "def test_", "info", "Test function added — verify implementation coverage"),
+    ("test_function_added", "def test_", "info", "Test function added — verify implementation coverage"),
     ("untested_branch", "    pass", "medium", "Empty branch (pass) may indicate untested path"),
     ("mock_usage", "mock.patch", "info", "Mock usage detected — verify mock scope is appropriate"),
     ("assert_no_message", "assert ", "low", "Assertion found — verify test covers behavior not messages"),

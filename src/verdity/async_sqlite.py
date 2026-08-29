@@ -48,8 +48,9 @@ class AsyncConnection:
     async def execute_one(self, sql: str, params: Sequence[Any] | None = None) -> dict | None:
         """Execute SQL and return the FIRST row as a dict, or None."""
         conn = self._conn
-        cursor = conn.execute(sql, params or ())
-        return await self._loop.run_in_executor(None, lambda c=cursor: _row_to_dict(c.fetchone()))
+        return await self._loop.run_in_executor(
+            None, lambda: _row_to_dict(conn.execute(sql, params or ()).fetchone())
+        )
 
     async def executescript(self, sql: str) -> None:
         """Execute multiple SQL statements (no params, no return value)."""

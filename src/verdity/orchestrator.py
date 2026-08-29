@@ -88,11 +88,10 @@ def resolve_policy(event: VerdityEvent) -> ReviewPolicy:
     # In production, this comes from the GitHub API diff stats (additions + deletions).
     from verdity.config import get_settings
     settings = get_settings()
-    pr = event.pull_request
     # Use diff stats if available; fall back to 0
     diff_lines = 0
-    if pr is not None:
-        diff_lines = getattr(pr, "additions", 0) + getattr(pr, "deletions", 0)
+    if event.pull_request is not None:
+        diff_lines = getattr(event.pull_request, "additions", 0) + getattr(event.pull_request, "deletions", 0)
     is_large = diff_lines >= settings.large_pr_diff_threshold
     depth = "extended" if is_large else "standard"
     timeout = 15 * 60 if is_large else 5 * 60  # seconds
@@ -286,9 +285,9 @@ class Orchestrator:
             done, pending = await asyncio.wait(
                 tasks.values(),
                 timeout=float(policy.timeout_seconds),
-                return_when=asyncio.FIRST_EXCEPTION,
+                return_when=asyncio.ALL_COMPLETED,
             )
-            # Cancel any still-running specialists
+            # Cancel any still-running specialists (timed out)
             for task in pending:
                 task.cancel()
                 try:

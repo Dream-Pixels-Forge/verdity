@@ -58,6 +58,7 @@ class Worker:
         self._running = False
         self._tasks: set[asyncio.Task] = set()
         self._backoffs: dict[str, float] = {}  # repo_id → next backoff seconds
+        self._backoff_expiry_times: dict[str, float] = {}  # repo_id → monotonic expiry
 
     async def run_forever(self) -> None:
         """Main loop: dequeue and process events until shutdown."""
@@ -79,9 +80,21 @@ class Worker:
         repo_id = f"{envelope.event.repo.owner}/{envelope.event.repo.name}"
         if repo_id in self._backoffs:
             wait = self._backoffs[repo_id]
-            logger.debug("Backing off repo %s for %.1fs", repo_id, wait)
-            await asyncio.sleep(wait)
-            return
+            # Check if backoff has expired; if not, nack and sleep remaining time
+            import time
+            now = time.monotonic()
+            backoff_expiry = self._backoff_expiry_times.get(repo_id, 0)
+            if now < backoff_expiry:
+                remaining = backoff_expiry - now
+                logger.debug("Backing off repo %s for %.1fs remaining", repo_id, remaining)
+                # Put message back on queue for retry
+                msg_id = envelope.event.delivery_id
+                await self._queue.nack(msg_id, error_msg="backoff")
+                await asyncio.sleep(min(remaining, 1.0))
+                return
+            else:
+                # Backoff expired, clear it
+                self._backoff_expiry_times.pop(repo_id, None)
 
         # Limit concurrency
         while len(self._tasks) >= self._max_concurrent:
@@ -108,12 +121,16 @@ class Worker:
             logger.info("Processed delivery %s → run %s", msg_id, run_id)
             # Clear backoff on success
             self._backoffs.pop(repo_id, None)
+            self._backoff_expiry_times.pop(repo_id, None)
             await self._queue.acknowledge(msg_id)
         except Exception as exc:
             logger.error("Failed to process delivery %s: %s", msg_id, exc, exc_info=True)
             # Exponential backoff for this repo
+            import time
             current = self._backoffs.get(repo_id, self._backoff_initial)
-            self._backoffs[repo_id] = min(current * self._backoff_factor, self._backoff_max)
+            new_backoff = min(current * self._backoff_factor, self._backoff_max)
+            self._backoffs[repo_id] = new_backoff
+            self._backoff_expiry_times[repo_id] = time.monotonic() + new_backoff
             await self._queue.nack(msg_id, error_msg=str(exc))
 
     async def shutdown(self, signum: int | None = None, frame: Any = None) -> None:

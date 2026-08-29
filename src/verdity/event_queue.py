@@ -103,16 +103,29 @@ class EventQueue:
         if self._conn is None:
             raise RuntimeError("EventQueue is not connected. Call connect() first.")
         target_repo = repo_id or "%"
-        rows = await self._conn.execute(
-            """
-            SELECT id, message_id, envelope_json, retry_count
-            FROM queue_messages
-            WHERE state = 'pending' AND repo_id LIKE ?
-            ORDER BY created_at ASC
-            LIMIT 1
-            """,
-            (target_repo,),
-        )
+        if repo_id:
+            # Escape LIKE wildcards in repo_id to prevent cross-repo matching
+            escaped_repo = repo_id.replace("%", "\\%").replace("_", "\\_")
+            rows = await self._conn.execute(
+                """
+                SELECT id, message_id, envelope_json, retry_count
+                FROM queue_messages
+                WHERE state = 'pending' AND repo_id LIKE ? ESCAPE '\\'
+                ORDER BY created_at ASC
+                LIMIT 1
+                """,
+                (escaped_repo,),
+            )
+        else:
+            rows = await self._conn.execute(
+                """
+                SELECT id, message_id, envelope_json, retry_count
+                FROM queue_messages
+                WHERE state = 'pending'
+                ORDER BY created_at ASC
+                LIMIT 1
+                """,
+            )
         row = rows[0] if rows else None
 
         if row is None:

@@ -27,7 +27,7 @@ def verify_signature(
     """
     if not signature_header or not signature_header.startswith("sha256="):
         return False
-    expected = hmac.new(secret, raw_body, hashlib.sha256).hexdigest()
+    expected = hmac.HMAC(secret, raw_body, hashlib.sha256).hexdigest()
     provided = signature_header.split("=", 1)[1]
     return hmac.compare_digest(expected, provided)
 
@@ -56,5 +56,5 @@ def verify_with_rotation(
 
 def compute_signature(secret: bytes, raw_body: bytes) -> str:
     """Helper for tests — compute what the signature header should be."""
-    digest = hmac.new(secret, raw_body, hashlib.sha256).hexdigest()
+    digest = hmac.HMAC(secret, raw_body, hashlib.sha256).hexdigest()
     return f"sha256={digest}"

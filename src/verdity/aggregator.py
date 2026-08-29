@@ -85,13 +85,20 @@ class AggregatorAgent:
                 group_id_map[f.finding_id] = group_id
             merged_findings.append(best)
 
+        # ── Confidence filtering ──────────────────────────────────────
+        filtered_findings = [f for f in merged_findings if f.confidence >= confidence_threshold]
+
         # ── Ranking ─────────────────────────────────────────────────────
         # Composite score: severity_weight × confidence
         ranked: list[RankedFinding] = []
-        for f in merged_findings:
+        for f in filtered_findings:
             sev_rank = SEVERITY_RANK.get(f.severity, 0)
             rank_score = sev_rank * f.confidence
-            ranked.append(RankedFinding(finding=f, rank_score=round(rank_score, 3)))
+            dedup_gid = group_id_map.get(f.finding_id)
+            ranked.append(RankedFinding(
+                finding=f, rank_score=round(rank_score, 3),
+                dedup_group_id=dedup_gid,
+            ))
 
         ranked.sort(key=lambda r: r.rank_score, reverse=True)
 

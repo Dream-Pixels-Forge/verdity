@@ -64,13 +64,19 @@ def compute_confidence(finding: Finding, context: dict[str, Any] | None = None) 
     Compute deterministic multi-signal confidence score.
 
     Per constraint #5: confidence is never LLM self-reported.
-    Score = base_confidence × severity_weight + concern_boost, clamped to [0, 1].
+    Score = base_confidence × (1 - sev_weight) + sev_weight + concern_boost, clamped to [0, 1].
+
+    This treats severity as a floor/baseline rather than a multiplier:
+    - CRITICAL findings get a floor of 1.0 (always matter)
+    - LOW findings get a floor of 0.3
+    - The base confidence fills the gap between floor and 1.0
     """
     base = finding.confidence
     sev_weight = _SEVERITY_WEIGHTS.get(finding.severity, 0.3)
     concern_boost = _CONCERN_BOOST.get(finding.concern, 0.0)
 
-    score = base * sev_weight + concern_boost
+    # Blend: severity sets the floor, base fills remaining range
+    score = base * (1.0 - sev_weight) + sev_weight + concern_boost
     return round(max(0.0, min(1.0, score)), 3)
 
 

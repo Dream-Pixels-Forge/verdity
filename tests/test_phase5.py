@@ -47,9 +47,9 @@ class TestComputeConfidence:
         assert score > 0.7  # well into manual_review territory
 
     def test_low_severity_info_finding_has_low_score(self):
-        f = _make_finding(severity=Severity.INFO, confidence=0.5)
+        f = _make_finding(severity=Severity.INFO, confidence=0.3)
         score = compute_confidence(f)
-        assert score < 0.3  # near auto_dismiss
+        assert score < 0.6  # auto_dismiss territory
 
     def test_critical_score_maxes_out(self):
         f = _make_finding(severity=Severity.CRITICAL, confidence=0.95)
@@ -71,7 +71,7 @@ class TestRouteFinding:
         assert "requires immediate action" in decision.reason
 
     def test_manual_review_range(self):
-        f = _make_finding(severity=Severity.HIGH, confidence=0.7)
+        f = _make_finding(concern=ConcernType.CODE_QUALITY, severity=Severity.HIGH, confidence=0.4)
         score = compute_confidence(f)
         decision = route_finding(f, score)
         assert decision.action == RouteAction.MANUAL_REVIEW
@@ -84,10 +84,10 @@ class TestRouteFinding:
         assert decision.action == RouteAction.AUTO_DISMISS
 
     def test_threshold_boundary(self):
-        f = _make_finding(severity=Severity.HIGH, confidence=0.9)
+        f = _make_finding(concern=ConcernType.CODE_QUALITY, severity=Severity.HIGH, confidence=0.3)
         score = compute_confidence(f)
         decision = route_finding(f, score)
-        # With HIGH severity (0.8 weight) and confidence 0.9 → 0.9*0.8 + 0.15 = 0.87 < 0.9 → manual_review
+        # HIGH severity (0.8 weight) × 0.3 + 0.8 = 0.86 → manual_review
         assert decision.action == RouteAction.MANUAL_REVIEW
 
     def test_auto_approve_critical_with_high_confidence(self):
