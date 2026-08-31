@@ -14,6 +14,7 @@ Non-negotiable constraints satisfied:
 from __future__ import annotations
 
 import logging
+import re
 
 from verdity.agents.base import BaseSpecialistAgent
 from verdity.schemas import (
@@ -33,7 +34,7 @@ _SECRET_PATTERNS: list[tuple[str, str, str]] = [
     # (name, regex-like substring, severity)
     ("AWS_ACCESS_KEY", "aws_access_key", "high"),
     ("AWS_SECRET_KEY", "aws_secret_key", "high"),
-    ("PRIVATE_KEY", "-----BEGIN.*PRIVATE KEY-----", "critical"),
+    ("PRIVATE_KEY", "BEGIN PRIVATE KEY", "critical"),
     ("GITHUB_TOKEN", "ghp_", "high"),
     ("GITHUB_TOKEN_ALT", "github_pat_", "high"),
     ("SLACK_TOKEN", "xoxb-", "medium"),
@@ -53,6 +54,25 @@ _CWE_MAPPING: dict[str, str] = {
     "API_KEY_ASSIGN": "CWE-798",
     "HARDCODED_PASSWORD": "CWE-798",
 }
+
+# ── Vulnerability patterns (compiled regex for performance) ────────────
+# Pattern: (name, pattern_str, compiled_regex, severity, explanation)
+_VULN_PATTERNS: list[tuple[str, str, re.Pattern[str], str, str]] = [
+    (name, pat, re.compile(pat, re.IGNORECASE), sev, desc)
+    for name, pat, sev, desc in [
+        ("sql_injection", r'f"SELECT', "high", "Potential SQL injection via f-string"),
+        ("sql_injection2", r"' \+ request", "high", "Potential SQL injection via string concat"),
+        ("eval_usage", r'\beval\(', "critical", "Use of eval() — potential code injection"),
+        ("exec_usage", r'\bexec\(', "critical", "Use of exec() — potential code injection"),
+        ("shell_injection", r'subprocess\.call.*shell\s*=\s*True', "critical", "Shell injection risk"),
+        ("os_system", r'os\.system\(', "high", "os.system() — potential command injection"),
+        ("pickle_load", r'pickle\.load', "high", "Unsafe deserialization via pickle"),
+        ("yaml_unsafe", r'yaml\.load\(', "medium", "Unsafe YAML load — use yaml.safe_load"),
+        ("path_traversal", r'\.\./', "medium", "Potential path traversal — validate input"),
+        ("weak_hash", r'\bmd5\(', "medium", "Weak hash function — use SHA-256 or stronger"),
+        ("insecure_random", r'random\.randint', "low", "Cryptographically weak random"),
+    ]
+]
 
 
 class SecurityAgent(BaseSpecialistAgent):
@@ -141,21 +161,8 @@ class SecurityAgent(BaseSpecialistAgent):
         return findings
 
     def _scan_diff_for_vulnerabilities(self, diff_files: list[dict]) -> list[Finding]:
-        """Scan diff content for common vulnerability patterns."""
+        """Scan diff content for common vulnerability patterns using regex."""
         findings: list[Finding] = []
-        vuln_patterns: list[tuple[str, str, str, str]] = [
-            ("sql_injection", "f\"SELECT", "high", "Potential SQL injection via f-string"),
-            ("sql_injection2", "' + request", "high", "Potential SQL injection via string concat"),
-            ("eval_usage", "eval(", "critical", "Use of eval() — potential code injection"),
-            ("exec_usage", "exec(", "critical", "Use of exec() — potential code injection"),
-            ("shell_injection", "subprocess.call.*shell=True", "critical", "Shell injection risk"),
-            ("os_system", "os.system(", "high", "os.system() — potential command injection"),
-            ("pickle_load", "pickle.load", "high", "Unsafe deserialization via pickle"),
-            ("yaml_unsafe", "yaml.load(", "medium", "Unsafe YAML load — use yaml.safe_load"),
-            ("path_traversal", "../", "medium", "Potential path traversal — validate input"),
-            ("weak_hash", "md5(", "medium", "Weak hash function — use SHA-256 or stronger"),
-            ("insecure_random", "random.randint", "low", "Cryptographically weak random"),
-        ]
 
         for file_info in diff_files:
             path = file_info.get("path", "")
@@ -163,30 +170,29 @@ class SecurityAgent(BaseSpecialistAgent):
             additions = file_info.get("additions", "")
             scan_text = additions if additions else content
 
-            for name, pattern, severity, explanation in vuln_patterns:
-                if pattern.lower() in scan_text.lower():
-                    lines = scan_text.split("\n")
-                    for i, line in enumerate(lines, start=1):
-                        if pattern.lower() in line.lower():
-                            findings.append(Finding(
-                                concern=ConcernType.SECURITY,
-                                severity=self._str_to_severity(severity),
-                                file=path,
-                                line_start=i,
-                                line_end=i,
-                                summary=f"{name.replace('_', ' ').title()} detected",
-                                explanation=f"{explanation} at {path}:{i}",
-                                suggested_fix_diff=self._suggested_fix(name),
-                                confidence=0.75 if severity in ("high", "critical") else 0.55,
-                                evidence=[EvidenceItem(
-                                    tool="static_analyzer",
-                                    result=name,
-                                    query=pattern,
-                                )],
-                                agent_version=self.AGENT_VERSION,
-                                prompt_hash=self._prompt_hash("vuln_scan", path, str(i)),
-                            ))
-                            break
+            for name, pattern_str, compiled_re, severity, explanation in _VULN_PATTERNS:
+                match = compiled_re.search(scan_text)
+                if match:
+                    # Find the line number of the match
+                    line_start = scan_text[:match.start()].count("\n") + 1
+                    findings.append(Finding(
+                        concern=ConcernType.SECURITY,
+                        severity=self._str_to_severity(severity),
+                        file=path,
+                        line_start=line_start,
+                        line_end=line_start,
+                        summary=f"{name.replace('_', ' ').title()} detected",
+                        explanation=f"{explanation} at {path}:{line_start}",
+                        suggested_fix_diff=self._suggested_fix(name),
+                        confidence=0.75 if severity in ("high", "critical") else 0.55,
+                        evidence=[EvidenceItem(
+                            tool="static_analyzer",
+                            result=name,
+                            query=pattern_str,
+                        )],
+                        agent_version=self.AGENT_VERSION,
+                        prompt_hash=self._prompt_hash("vuln_scan", path, str(line_start)),
+                    ))
         return findings
 
     # ── Semantic Security Search ──────────────────────────────────────
@@ -257,8 +263,7 @@ class SecurityAgent(BaseSpecialistAgent):
     # ── Helpers ───────────────────────────────────────────────────────
 
     @staticmethod
-    def _str_to_severity(s: str) -> "Severity":
-        from verdity.schemas import Severity
+    def _str_to_severity(s: str) -> Severity:
         return Severity(s.lower())
 
     @staticmethod
