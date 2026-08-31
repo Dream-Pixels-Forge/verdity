@@ -519,3 +519,248 @@ class SemanticIndex:
             (repo_id,),
         )
         return rows[0]["cnt"] if rows else 0
+
+    # ── Full-Codebase Context (v0.3.0) ────────────────────────────────
+
+    async def get_full_context(
+        self,
+        repo_id: str,
+        file_path: str,
+        max_chunks: int = 20,
+    ) -> list[dict[str, Any]]:
+        """
+        Get full context for a file including related chunks from other files.
+        Uses symbol graph to find related code (callers, callees, imports).
+        Returns chunks ordered by relevance for agent context windows.
+        """
+        # Get chunks from the target file
+        file_chunks = await self._conn.execute(
+            """
+            SELECT chunk_id, file_path, start_line, end_line, content,
+                   language, symbols
+            FROM code_chunks
+            WHERE repo_id = ? AND file_path = ?
+            ORDER BY start_line ASC
+            """,
+            (repo_id, file_path),
+        )
+
+        # Collect symbols from this file
+        file_symbols: set[str] = set()
+        for chunk in file_chunks:
+            symbols = json.loads(chunk["symbols"]) if chunk["symbols"] else []
+            file_symbols.update(symbols)
+
+        # Find related symbols via call graph
+        related_symbols: set[str] = set()
+        for symbol in file_symbols:
+            # Find callers (who calls this symbol)
+            callers = await self.get_callers(repo_id, symbol, depth=2)
+            related_symbols.update(callers)
+
+            # Find callees (what this symbol calls)
+            callees = await self.get_callees(repo_id, symbol, depth=2)
+            related_symbols.update(callees)
+
+        # Get chunks containing related symbols
+        related_chunks: list[dict[str, Any]] = []
+        if related_symbols:
+            symbol_list = list(related_symbols)[:50]  # limit to prevent explosion
+            placeholders = ",".join("?" * len(symbol_list))
+            rows = await self._conn.execute(
+                f"""
+                SELECT chunk_id, file_path, start_line, end_line, content,
+                       language, symbols
+                FROM code_chunks
+                WHERE repo_id = ? AND file_path != ?
+                ORDER BY indexed_at DESC
+                LIMIT ?
+                """,
+                (repo_id, file_path, max_chunks),
+            )
+            for row in rows:
+                chunk_symbols = json.loads(row["symbols"]) if row["symbols"] else []
+                if any(s in symbol_list for s in chunk_symbols):
+                    related_chunks.append(dict(row))
+
+        # Combine and deduplicate
+        all_chunks = [dict(c) for c in file_chunks]
+        seen_ids = {c["chunk_id"] for c in all_chunks}
+        for chunk in related_chunks:
+            if chunk["chunk_id"] not in seen_ids:
+                all_chunks.append(chunk)
+                seen_ids.add(chunk["chunk_id"])
+
+        return all_chunks[:max_chunks]
+
+    async def get_file_dependencies(
+        self,
+        repo_id: str,
+        file_path: str,
+    ) -> dict[str, Any]:
+        """Get dependency information for a file."""
+        # Get imports for this file
+        rows = await self._conn.execute(
+            """
+            SELECT source_symbol, target_symbol
+            FROM symbol_edges
+            WHERE repo_id = ? AND source_symbol LIKE ? AND edge_type = 'imports'
+            """,
+            (repo_id, f"{file_path}%"),
+        )
+
+        imports = [dict(r) for r in rows]
+
+        # Get reverse dependencies (who imports this file)
+        reverse_rows = await self._conn.execute(
+            """
+            SELECT source_symbol, target_symbol
+            FROM symbol_edges
+            WHERE repo_id = ? AND target_symbol LIKE ? AND edge_type = 'imports'
+            """,
+            (repo_id, f"{file_path}%"),
+        )
+
+        reverse_deps = [dict(r) for r in reverse_rows]
+
+        return {
+            "file_path": file_path,
+            "imports": imports,
+            "imported_by": reverse_deps,
+            "import_count": len(imports),
+            "depended_on_by_count": len(reverse_deps),
+        }
+
+    async def index_full_repo(
+        self,
+        repo_id: str,
+        files: list[dict[str, Any]],
+        commit_sha: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Index entire repository for full-codebase context.
+
+        Args:
+            repo_id: Repository identifier (owner/name)
+            files: List of file dicts with keys: path, content, language
+            commit_sha: Git commit SHA
+
+        Returns:
+            Indexing statistics
+        """
+        total_chunks = 0
+        total_files = 0
+
+        for file_info in files:
+            file_path = file_info.get("path", "")
+            content = file_info.get("content", "")
+            language = file_info.get("language", "unknown")
+
+            if not content or not file_path:
+                continue
+
+            # Chunk the file
+            chunks = self._chunk_file(
+                repo_id=repo_id,
+                file_path=file_path,
+                content=content,
+                language=language,
+            )
+
+            if chunks:
+                await self.upsert_chunks(chunks)
+                total_chunks += len(chunks)
+                total_files += 1
+
+                # Mark as indexed
+                content_hash = hashlib.sha256(content.encode()).hexdigest()
+                await self.mark_file_indexed(
+                    repo_id, file_path, content_hash, commit_sha
+                )
+
+        return {
+            "repo_id": repo_id,
+            "files_indexed": total_files,
+            "chunks_indexed": total_chunks,
+            "commit_sha": commit_sha,
+        }
+
+    def _chunk_file(
+        self,
+        repo_id: str,
+        file_path: str,
+        content: str,
+        language: str,
+        chunk_size: int = 50,
+    ) -> list[CodeChunk]:
+        """Split a file into code chunks for indexing."""
+        lines = content.split("\n")
+        chunks: list[CodeChunk] = []
+
+        for i in range(0, len(lines), chunk_size):
+            end = min(i + chunk_size, len(lines))
+            chunk_content = "\n".join(lines[i:end])
+
+            # Extract symbols (simplified)
+            symbols = self._extract_symbols(chunk_content, language)
+
+            chunk = CodeChunk(
+                chunk_id=f"{repo_id}:{file_path}:{i}-{end}",
+                repo_id=repo_id,
+                file_path=file_path,
+                start_line=i + 1,
+                end_line=end,
+                content=chunk_content,
+                language=language,
+                symbols=symbols,
+            )
+            chunks.append(chunk)
+
+        return chunks
+
+    def _extract_symbols(self, content: str, language: str) -> list[str]:
+        """Extract symbols (functions, classes) from code content."""
+        import re
+
+        symbols: list[str] = []
+
+        if language == "python":
+            # Match function and class definitions
+            patterns = [
+                r"def\s+(\w+)",
+                r"class\s+(\w+)",
+                r"async\s+def\s+(\w+)",
+            ]
+            for pattern in patterns:
+                symbols.extend(re.findall(pattern, content))
+
+        elif language in ("javascript", "typescript"):
+            patterns = [
+                r"function\s+(\w+)",
+                r"class\s+(\w+)",
+                r"const\s+(\w+)\s*=",
+                r"export\s+(?:default\s+)?(?:function|class|const)\s+(\w+)",
+            ]
+            for pattern in patterns:
+                symbols.extend(re.findall(pattern, content))
+
+        elif language == "go":
+            patterns = [
+                r"func\s+(?:\(\w+\s+\*?\w+\)\s+)?(\w+)",
+                r"type\s+(\w+)\s+struct",
+                r"func\s+(\w+)\s*\(",
+            ]
+            for pattern in patterns:
+                symbols.extend(re.findall(pattern, content))
+
+        elif language == "rust":
+            patterns = [
+                r"fn\s+(\w+)",
+                r"pub\s+fn\s+(\w+)",
+                r"struct\s+(\w+)",
+                r"impl\s+(\w+)",
+            ]
+            for pattern in patterns:
+                symbols.extend(re.findall(pattern, content))
+
+        return list(set(symbols))  # deduplicate
