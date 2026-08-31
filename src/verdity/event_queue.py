@@ -95,17 +95,18 @@ class EventQueue:
         await self._conn.commit()
         return msg_id
 
-    async def consume(self, repo_id: str | None = None, timeout_ms: int = 500) -> QueueEnvelope | None:
+    async def consume(
+        self, repo_id: str | None = None, timeout_ms: int = 500
+    ) -> QueueEnvelope | None:
         """
         Dequeue the oldest pending message for the given repo (or any repo if None).
         Returns None if no messages are available.
         """
         if self._conn is None:
             raise RuntimeError("EventQueue is not connected. Call connect() first.")
-        target_repo = repo_id or "%"
         if repo_id:
             # Escape LIKE wildcards in repo_id to prevent cross-repo matching
-            escaped_repo = repo_id.replace("%", "\\%").replace("_", "\\_")
+            escaped_repo = repo_id.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             rows = await self._conn.execute(
                 """
                 SELECT id, message_id, envelope_json, retry_count

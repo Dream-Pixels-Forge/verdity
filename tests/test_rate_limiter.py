@@ -16,6 +16,7 @@ from verdity.rate_limiter import (
 @pytest.mark.asyncio
 async def test_with_github_backoff_success():
     """Successful call returns immediately without retries."""
+
     @with_github_backoff(max_retries=3)
     async def api_call():
         return "ok"
@@ -63,6 +64,7 @@ async def test_with_github_backoff_retries_on_transient_error():
 @pytest.mark.asyncio
 async def test_with_github_backoff_gives_up_after_max_retries():
     """Raises after max_retries exhausted."""
+
     @with_github_backoff(max_retries=1, base_delay=0.01)
     async def api_call():
         raise RuntimeError("permanent failure")
@@ -159,6 +161,7 @@ def test_github_backoff_state_current_delay():
 @pytest.mark.asyncio
 async def test_with_github_backoff_context_success():
     """Context wrapper succeeds on first try."""
+
     async def fake_api():
         return 42
 

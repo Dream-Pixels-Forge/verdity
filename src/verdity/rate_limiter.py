@@ -28,8 +28,8 @@ logger = logging.getLogger(__name__)
 
 # Default backoff settings
 _DEFAULT_MAX_RETRIES = 3
-_DEFAULT_BASE_DELAY = 1.0   # seconds
-_DEFAULT_MAX_DELAY = 60.0   # seconds
+_DEFAULT_BASE_DELAY = 1.0  # seconds
+_DEFAULT_MAX_DELAY = 60.0  # seconds
 
 
 class GitHubRateLimitError(Exception):
@@ -49,6 +49,7 @@ def with_github_backoff(
     Handles 403 responses with X-RateLimit-Remaining: 0 by waiting until
     the reset time. Other 4xx/5xx errors are retried up to max_retries.
     """
+
     def decorator(fn: Callable) -> Callable:
         @functools.wraps(fn)
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -76,14 +77,21 @@ def with_github_backoff(
                     if attempt < max_retries:
                         logger.warning(
                             "GitHub API error (attempt %d/%d): %s — retrying in %.1fs",
-                            attempt + 1, max_retries, exc, delay,
+                            attempt + 1,
+                            max_retries,
+                            exc,
+                            delay,
                         )
                         await asyncio.sleep(delay)
                         delay = min(delay * 2, max_delay)
                     else:
-                        logger.error("GitHub API permanently failed after %d retries: %s", max_retries, exc)
+                        logger.error(
+                            "GitHub API permanently failed after %d retries: %s", max_retries, exc
+                        )
             raise last_exc  # type: ignore[misc]
+
         return wrapper
+
     if func is not None:
         return decorator(func)
     return decorator
@@ -134,7 +142,7 @@ class GitHubBackoffState:
     def current_delay(self) -> float:
         """Return the next backoff delay."""
         if self.rate_limited:
-            return min(self.base_delay * (2 ** self._consecutive_errors), self.max_delay)
+            return min(self.base_delay * (2**self._consecutive_errors), self.max_delay)
         return self.base_delay
 
     async def wait_if_needed(self) -> None:

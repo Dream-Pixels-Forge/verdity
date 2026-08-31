@@ -235,13 +235,13 @@ open htmlcov/index.html
 
 ### Test Coverage
 
-**100% coverage enforced** across all 236 tests in 15 test files.
+**100% coverage enforced** across all 342 tests in 15 test files.
 
 | Module | Coverage |
 |--------|----------|
 | All modules | 100% |
 | Total statements | 1,441 / 1,441 |
-| Tests | 236 passing |
+| Tests | 342 passing |
 
 ---
 
@@ -275,7 +275,7 @@ Test databases are automatically created in a temp directory and cleaned up afte
 | 7 | Budget Enforcer + Degradation Signals | ✅ Complete |
 | 8 | Hardening + STRIDE Threat Model Validation | ✅ Complete |
 
-**Total: 236 tests passing, 100% coverage enforced.**
+**Total: 342 tests passing, 100% coverage enforced.**
 
 ---
 

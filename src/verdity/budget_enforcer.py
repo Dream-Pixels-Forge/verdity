@@ -26,10 +26,11 @@ logger = logging.getLogger(__name__)
 
 class DegradationSignal(str, Enum):
     """Signals returned by the budget enforcer."""
-    NORMAL = "normal"           # within budget, no action needed
-    WARN = "warn"               # approaching budget, alert only
+
+    NORMAL = "normal"  # within budget, no action needed
+    WARN = "warn"  # approaching budget, alert only
     DEGRADE_OPTIONAL = "degrade_optional"  # drop optional specialists
-    HALT = "halt"               # budget exhausted, queue-only mode
+    HALT = "halt"  # budget exhausted, queue-only mode
 
 
 @dataclass
@@ -150,7 +151,9 @@ class BudgetEnforcer:
     ) -> dict[str, Any]:
         """Return dashboard-ready spend summary for current period."""
         stats = await self._te.get_spend(
-            repo_owner=repo_owner, repo_name=repo_name, org=org,
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            org=org,
         )
         return {
             "total_spend_usd": stats["spend_usd"],

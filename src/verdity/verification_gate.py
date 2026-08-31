@@ -94,12 +94,22 @@ class VerificationGate:
                 verdict.passed = False
                 verdict.notes += f"Verifier disagreement: {intent_result.reason}\n"
         else:
-            verdict.checks.append(GateCheck(name="matches_intent", result=CheckResult.SKIP, reason="No verifier subagent configured"))
+            verdict.checks.append(
+                GateCheck(
+                    name="matches_intent",
+                    result=CheckResult.SKIP,
+                    reason="No verifier subagent configured",
+                )
+            )
 
         if verdict.passed:
             verdict.notes = "All verification checks passed."
-        logger.info("Verification gate %s for fix %s: %s",
-                     verdict.gate_id, proposed_fix.finding_id, verdict.passed)
+        logger.info(
+            "Verification gate %s for fix %s: %s",
+            verdict.gate_id,
+            proposed_fix.finding_id,
+            verdict.passed,
+        )
         return verdict
 
     # ── Deterministic Checks ──────────────────────────────────────────
@@ -136,6 +146,7 @@ class VerificationGate:
         (e.g. `password = "sk-..."`) — not keywords in comments or docstrings.
         """
         import re
+
         secret_pattern = re.compile(
             r"""(?:password|secret|api_key|token|credential)\s*=\s*(?:['"][^'"]{8,}['"]|"""  # string literal
             r"""['"][^'"]*['"])""",
@@ -179,56 +190,99 @@ class VerifierSubagent:
         # ── Intent matching per fix type ────────────────────────────────
         if proposed_fix.fix_type == "secret_removal":
             if "settings" in fix_code or "environ" in fix_code or "credentials" in fix_code:
-                return GateCheck(name="matches_intent", result=CheckResult.PASS,
-                                 reason="Fix correctly replaces hard-coded credential with config reference")
-            return GateCheck(name="matches_intent", result=CheckResult.FAIL,
-                             reason="Fix does not properly remove hard-coded credential")
+                return GateCheck(
+                    name="matches_intent",
+                    result=CheckResult.PASS,
+                    reason="Fix correctly replaces hard-coded credential with config reference",
+                )
+            return GateCheck(
+                name="matches_intent",
+                result=CheckResult.FAIL,
+                reason="Fix does not properly remove hard-coded credential",
+            )
 
         if proposed_fix.fix_type == "sql_fix":
             if "parameterized" in fix_code or "%s" in fix_code or "? " in fix_code:
-                return GateCheck(name="matches_intent", result=CheckResult.PASS,
-                                 reason="Fix uses parameterized query")
-            return GateCheck(name="matches_intent", result=CheckResult.FAIL,
-                             reason="Fix does not use parameterized query — SQL injection still possible")
+                return GateCheck(
+                    name="matches_intent",
+                    result=CheckResult.PASS,
+                    reason="Fix uses parameterized query",
+                )
+            return GateCheck(
+                name="matches_intent",
+                result=CheckResult.FAIL,
+                reason="Fix does not use parameterized query — SQL injection still possible",
+            )
 
         if proposed_fix.fix_type == "eval_replacement":
             if "literal_eval" in fix_code or "ast." in fix_code:
-                return GateCheck(name="matches_intent", result=CheckResult.PASS,
-                                 reason="Fix replaces eval with safe alternative")
-            return GateCheck(name="matches_intent", result=CheckResult.FAIL,
-                             reason="Fix still uses unsafe eval/exec pattern")
+                return GateCheck(
+                    name="matches_intent",
+                    result=CheckResult.PASS,
+                    reason="Fix replaces eval with safe alternative",
+                )
+            return GateCheck(
+                name="matches_intent",
+                result=CheckResult.FAIL,
+                reason="Fix still uses unsafe eval/exec pattern",
+            )
 
         if proposed_fix.fix_type == "pickle_replacement":
             if "json" in fix_code:
-                return GateCheck(name="matches_intent", result=CheckResult.PASS,
-                                 reason="Fix replaces pickle with JSON deserialization")
-            return GateCheck(name="matches_intent", result=CheckResult.FAIL,
-                             reason="Fix still uses unsafe pickle loading")
+                return GateCheck(
+                    name="matches_intent",
+                    result=CheckResult.PASS,
+                    reason="Fix replaces pickle with JSON deserialization",
+                )
+            return GateCheck(
+                name="matches_intent",
+                result=CheckResult.FAIL,
+                reason="Fix still uses unsafe pickle loading",
+            )
 
         if proposed_fix.fix_type == "hash_fix":
             if "sha256" in fix_code or "sha512" in fix_code:
-                return GateCheck(name="matches_intent", result=CheckResult.PASS,
-                                 reason="Fix uses stronger hash algorithm")
-            return GateCheck(name="matches_intent", result=CheckResult.FAIL,
-                             reason="Fix does not use stronger hash algorithm")
+                return GateCheck(
+                    name="matches_intent",
+                    result=CheckResult.PASS,
+                    reason="Fix uses stronger hash algorithm",
+                )
+            return GateCheck(
+                name="matches_intent",
+                result=CheckResult.FAIL,
+                reason="Fix does not use stronger hash algorithm",
+            )
 
         if proposed_fix.fix_type == "except_specific":
             if "except (" in fix_code:
-                return GateCheck(name="matches_intent", result=CheckResult.PASS,
-                                 reason="Fix catches specific exception types")
-            return GateCheck(name="matches_intent", result=CheckResult.FAIL,
-                             reason="Fix still uses bare except")
+                return GateCheck(
+                    name="matches_intent",
+                    result=CheckResult.PASS,
+                    reason="Fix catches specific exception types",
+                )
+            return GateCheck(
+                name="matches_intent", result=CheckResult.FAIL, reason="Fix still uses bare except"
+            )
 
         if proposed_fix.fix_type == "print_to_logging":
             if "logging" in fix_code and "logger" in fix_code:
-                return GateCheck(name="matches_intent", result=CheckResult.PASS,
-                                 reason="Fix replaces print with logging")
-            return GateCheck(name="matches_intent", result=CheckResult.FAIL,
-                             reason="Fix still uses print statement")
+                return GateCheck(
+                    name="matches_intent",
+                    result=CheckResult.PASS,
+                    reason="Fix replaces print with logging",
+                )
+            return GateCheck(
+                name="matches_intent",
+                result=CheckResult.FAIL,
+                reason="Fix still uses print statement",
+            )
 
         # Default: skip if fix type not recognized
-        return GateCheck(name="matches_intent", result=CheckResult.SKIP,
-                         reason=f"Unknown fix type: {proposed_fix.fix_type}")
+        return GateCheck(
+            name="matches_intent",
+            result=CheckResult.SKIP,
+            reason=f"Unknown fix type: {proposed_fix.fix_type}",
+        )
 
 
 class RegressionRunner:

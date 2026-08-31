@@ -12,6 +12,7 @@ from verdity.token_economics import TokenEconomicsService, estimate_cost
 @pytest.mark.asyncio
 async def test_record_and_sum_spend(token_economics: TokenEconomicsService):
     import uuid
+
     run_id = uuid.uuid4()
     await token_economics.record_call(
         review_run_id=run_id,
@@ -32,7 +33,9 @@ async def test_record_and_sum_spend(token_economics: TokenEconomicsService):
 @pytest.mark.asyncio
 async def test_budget_enforcement_within_range(token_economics: TokenEconomicsService):
     result = await token_economics.check_budget_enforcement(
-        repo_owner="acme", repo_name="widgets", budget_usd=100.0,
+        repo_owner="acme",
+        repo_name="widgets",
+        budget_usd=100.0,
     )
     assert result["within_budget"] is True
     assert result["degrade_signal"] is None
@@ -41,6 +44,7 @@ async def test_budget_enforcement_within_range(token_economics: TokenEconomicsSe
 @pytest.mark.asyncio
 async def test_budget_enforcement_halt(token_economics: TokenEconomicsService):
     import uuid
+
     # Accumulate spend above budget
     run_id = uuid.uuid4()
     await token_economics.record_call(
@@ -53,7 +57,9 @@ async def test_budget_enforcement_halt(token_economics: TokenEconomicsService):
         repo_name="widgets",
     )
     result = await token_economics.check_budget_enforcement(
-        repo_owner="acme", repo_name="widgets", budget_usd=100.0,
+        repo_owner="acme",
+        repo_name="widgets",
+        budget_usd=100.0,
     )
     assert result["within_budget"] is False
     assert result["degrade_signal"] == "halt"
@@ -62,7 +68,9 @@ async def test_budget_enforcement_halt(token_economics: TokenEconomicsService):
 @pytest.mark.asyncio
 async def test_zero_budget_means_unlimited(token_economics: TokenEconomicsService):
     result = await token_economics.check_budget_enforcement(
-        repo_owner="acme", repo_name="widgets", budget_usd=0.0,
+        repo_owner="acme",
+        repo_name="widgets",
+        budget_usd=0.0,
     )
     assert result["within_budget"] is True
 
@@ -94,20 +102,36 @@ class TestEstimateCost:
 @pytest.mark.asyncio
 async def test_get_spend_by_org(token_economics: TokenEconomicsService):
     import uuid
+
     await token_economics.record_call(
-        review_run_id=uuid.uuid4(), agent_name="sec", model="m",
-        input_tokens=1000, output_tokens=500,
-        repo_owner="acme", repo_name="w1", org="acme-org",
+        review_run_id=uuid.uuid4(),
+        agent_name="sec",
+        model="m",
+        input_tokens=1000,
+        output_tokens=500,
+        repo_owner="acme",
+        repo_name="w1",
+        org="acme-org",
     )
     await token_economics.record_call(
-        review_run_id=uuid.uuid4(), agent_name="sec", model="m",
-        input_tokens=2000, output_tokens=1000,
-        repo_owner="acme", repo_name="w2", org="acme-org",
+        review_run_id=uuid.uuid4(),
+        agent_name="sec",
+        model="m",
+        input_tokens=2000,
+        output_tokens=1000,
+        repo_owner="acme",
+        repo_name="w2",
+        org="acme-org",
     )
     await token_economics.record_call(
-        review_run_id=uuid.uuid4(), agent_name="sec", model="m",
-        input_tokens=500, output_tokens=200,
-        repo_owner="other", repo_name="x", org="other-org",
+        review_run_id=uuid.uuid4(),
+        agent_name="sec",
+        model="m",
+        input_tokens=500,
+        output_tokens=200,
+        repo_owner="other",
+        repo_name="x",
+        org="other-org",
     )
     result = await token_economics.get_spend_by_org()
     assert len(result) >= 2
@@ -119,15 +143,26 @@ async def test_get_spend_by_org(token_economics: TokenEconomicsService):
 @pytest.mark.asyncio
 async def test_get_spend_by_repo(token_economics: TokenEconomicsService):
     import uuid
+
     await token_economics.record_call(
-        review_run_id=uuid.uuid4(), agent_name="sec", model="m",
-        input_tokens=1000, output_tokens=500,
-        repo_owner="acme", repo_name="widgets", org="acme-org",
+        review_run_id=uuid.uuid4(),
+        agent_name="sec",
+        model="m",
+        input_tokens=1000,
+        output_tokens=500,
+        repo_owner="acme",
+        repo_name="widgets",
+        org="acme-org",
     )
     await token_economics.record_call(
-        review_run_id=uuid.uuid4(), agent_name="sec", model="m",
-        input_tokens=2000, output_tokens=1000,
-        repo_owner="acme", repo_name="gadget", org="acme-org",
+        review_run_id=uuid.uuid4(),
+        agent_name="sec",
+        model="m",
+        input_tokens=2000,
+        output_tokens=1000,
+        repo_owner="acme",
+        repo_name="gadget",
+        org="acme-org",
     )
     result = await token_economics.get_spend_by_repo()
     assert len(result) >= 2
@@ -139,13 +174,18 @@ async def test_get_spend_by_repo(token_economics: TokenEconomicsService):
 @pytest.mark.asyncio
 async def test_record_call_raises_when_not_connected():
     import uuid
+
     svc = TokenEconomicsService(db_path=":memory:")
     # Do NOT call connect()
     with pytest.raises(RuntimeError, match="not connected"):
         await svc.record_call(
-            review_run_id=uuid.uuid4(), agent_name="sec", model="m",
-            input_tokens=1000, output_tokens=500,
-            repo_owner="acme", repo_name="w",
+            review_run_id=uuid.uuid4(),
+            agent_name="sec",
+            model="m",
+            input_tokens=1000,
+            output_tokens=500,
+            repo_owner="acme",
+            repo_name="w",
         )
 
 

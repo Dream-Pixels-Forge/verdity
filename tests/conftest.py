@@ -30,10 +30,14 @@ def _setup_test_env_and_tmpdir():
     os.environ.setdefault("WEBHOOK_HMAC_SECRET_PREVIOUS", "")
     os.environ.setdefault("GITHUB_APP_ID", "12345")
     os.environ.setdefault("GITHUB_APP_INSTALLATION_ID", "98765")
-    os.environ.setdefault("GITHUB_APP_PRIVATE_KEY", "-----BEGIN RSA PRIVATE KEY-----\\ntest\\n-----END RSA PRIVATE KEY-----")
+    os.environ.setdefault(
+        "GITHUB_APP_PRIVATE_KEY",
+        "-----BEGIN RSA PRIVATE KEY-----\\ntest\\n-----END RSA PRIVATE KEY-----",
+    )
     yield
     # Cleanup temp DB files after all tests
     import shutil
+
     if os.path.isdir(_TEST_DB_DIR):
         shutil.rmtree(_TEST_DB_DIR, ignore_errors=True)
 
@@ -41,6 +45,7 @@ def _setup_test_env_and_tmpdir():
 def get_test_db_path(suffix: str = ".db") -> str:
     """Return a unique temp SQLite path for a test fixture."""
     import uuid
+
     return os.path.join(_TEST_DB_DIR, f"verdity-{uuid.uuid4().hex[:8]}{suffix}")
 
 
@@ -51,6 +56,7 @@ def get_test_db_path(suffix: str = ".db") -> str:
 def settings():
     """Return a test settings instance with temp-file backends."""
     from verdity.config import get_settings
+
     get_settings.cache_clear()
     return get_settings()
 
@@ -105,28 +111,39 @@ async def semantic_index() -> AsyncGenerator[SemanticIndex, None]:
 @pytest_asyncio.fixture
 async def gateway_client(settings) -> AsyncGenerator[AsyncClient, None]:
     """Build an AsyncClient against the gateway app with test state initialized."""
-    from verdity.gateway.app import app
-    from verdity.event_queue import EventQueue
-    from verdity.audit_store import AuditStore
+    from verdity.gateway.app import app, DeliveryCache, _RateLimiter
 
     app.state.delivery_ids = set()
     app.state._delivery_cache_ts = {}
     app.state._last_eviction = 0.0
+    app.state._rate_limiter = _RateLimiter()
     app.state.queue = EventQueue(db_path=get_test_db_path("_gwqueue.db"))
     app.state.audit = AuditStore(db_path=get_test_db_path("_gwaudit.db"))
     await app.state.queue.connect()
     await app.state.audit.connect()
 
+    # Initialize persistent delivery cache
+    delivery_cache = DeliveryCache(db_path=get_test_db_path("_delivery_cache.db"))
+    await delivery_cache.connect()
+    app.state._delivery_cache = delivery_cache
+    # Load recent delivery IDs into memory
+    recent_ids = await delivery_cache.load_recent()
+    app.state.delivery_ids.update(recent_ids)
+
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
 
+    await delivery_cache.close()
     await app.state.queue.close()
     await app.state.audit.close()
     for attr in ("queue", "audit"):
         db_path = getattr(app.state, attr)._db_path
         if db_path and os.path.exists(db_path):
             os.remove(db_path)
+    delivery_db = delivery_cache._db_path
+    if delivery_db and os.path.exists(delivery_db):
+        os.remove(delivery_db)
 
 
 # ── Services dict fixture (used by orchestrator tests) ────────────────

@@ -30,13 +30,28 @@ class AsyncConnection:
         self._conn.row_factory = self.row_factory
         await self._loop.run_in_executor(
             None,
-            lambda c=self._conn: (c.execute("PRAGMA journal_mode=WAL"), c.execute("PRAGMA synchronous=NORMAL")),
+            lambda c=self._conn: (
+                c.execute("PRAGMA journal_mode=WAL"),
+                c.execute("PRAGMA synchronous=NORMAL"),
+            ),
         )
 
     async def close(self) -> None:
         if self._conn:
             await self._loop.run_in_executor(None, self._conn.close)
             self._conn = None
+
+    async def __aenter__(self) -> AsyncConnection:
+        await self.connect()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> None:
+        await self.close()
 
     async def execute(self, sql: str, params: Sequence[Any] | None = None) -> list[dict]:
         """Execute SQL and return ALL rows as a list of dicts. For queries."""

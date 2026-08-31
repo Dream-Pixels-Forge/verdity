@@ -9,7 +9,13 @@ import uuid
 
 from verdity.audit_store import AuditStore
 from verdity.event_queue import EventQueue
-from verdity.orchestrator import Orchestrator, ReviewRun, RunStatus, resolve_policy, resolve_specialists
+from verdity.orchestrator import (
+    Orchestrator,
+    ReviewRun,
+    RunStatus,
+    resolve_policy,
+    resolve_specialists,
+)
 from verdity.schemas import (
     ConcernType,
     Finding,
@@ -79,7 +85,7 @@ class TestResolvePolicy:
             delivery_id="del-inst",
             trigger_type=TriggerType.INSTALLATION_CREATED,
             repo=RepoRef(owner="acme", name="r", id=1),
-       )
+        )
         policy = resolve_policy(event)
         assert policy.timeout_seconds == 10
         assert policy.budget_tokens == 1000
@@ -174,8 +180,10 @@ class TestOrchestratorRun:
     @pytest.mark.asyncio
     async def test_specialist_timeout_handled(self, services, sample_pr_event):
         """Constraint #3: specialist timeout must not block the run."""
+
         async def slow_specialist(ctx, index, te, audit):
             import asyncio
+
             await asyncio.sleep(10)  # way longer than timeout
             return SpecialistResponse(
                 review_run_id=ctx.review_run_id,
@@ -206,6 +214,7 @@ class TestOrchestratorRun:
     @pytest.mark.asyncio
     async def test_specialist_failure_handled(self, services, sample_pr_event):
         """A failing specialist must not crash the run."""
+
         async def failing_specialist(ctx, index, te, audit):
             raise RuntimeError("intentional failure")
 
@@ -251,8 +260,10 @@ class TestOrchestratorRun:
         result = await agent.run(
             ctx=SpecialistContext(
                 review_run_id=run_id,
-                repo_owner="acme", repo_name="widgets",
-                base_sha="abc", head_sha="def",
+                repo_owner="acme",
+                repo_name="widgets",
+                base_sha="abc",
+                head_sha="def",
                 diff_files=diff_files,
                 policy=policy,
             ),
@@ -293,8 +304,10 @@ class TestOrchestratorRun:
         result = await agent.run(
             ctx=SpecialistContext(
                 review_run_id=run_id,
-                repo_owner="acme", repo_name="widgets",
-                base_sha="abc", head_sha="def",
+                repo_owner="acme",
+                repo_name="widgets",
+                base_sha="abc",
+                head_sha="def",
                 diff_files=diff_files,
                 policy=ReviewPolicy(),
             ),
@@ -317,14 +330,21 @@ class TestOrchestratorRun:
         run_id = uuid.uuid4()
 
         diff_files = [
-            {"path": "x.py", "content": "eval(user_input)", "additions": "eval(user_input)", "deletions": ""},
+            {
+                "path": "x.py",
+                "content": "eval(user_input)",
+                "additions": "eval(user_input)",
+                "deletions": "",
+            },
         ]
 
         await agent.run(
             ctx=SpecialistContext(
                 review_run_id=run_id,
-                repo_owner="acme", repo_name="widgets",
-                base_sha="abc", head_sha="def",
+                repo_owner="acme",
+                repo_name="widgets",
+                base_sha="abc",
+                head_sha="def",
                 diff_files=diff_files,
                 policy=ReviewPolicy(),
             ),
@@ -344,6 +364,7 @@ class TestConfidenceComputation:
 
     def test_secret_in_comment_has_low_confidence(self):
         from verdity.agents.security import SecurityAgent
+
         agent = SecurityAgent()
         # Pattern in a comment should reduce confidence
         conf = agent._compute_secret_confidence("AWS_ACCESS_KEY", "# aws_access_key = 'old'")
@@ -351,12 +372,14 @@ class TestConfidenceComputation:
 
     def test_private_key_pattern_has_high_confidence(self):
         from verdity.agents.security import SecurityAgent
+
         agent = SecurityAgent()
         conf = agent._compute_secret_confidence("PRIVATE_KEY", "-----BEGIN RSA PRIVATE KEY-----")
         assert conf >= 0.9  # definitive marker
 
     def test_secret_in_new_code_boosted(self):
         from verdity.agents.security import SecurityAgent
+
         agent = SecurityAgent()
         conf = agent._compute_secret_confidence("AWS_ACCESS_KEY", "+ aws_access_key = 'new_value'")
         assert conf >= 0.85  # new code = higher confidence

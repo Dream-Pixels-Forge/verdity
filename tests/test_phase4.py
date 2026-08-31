@@ -66,8 +66,10 @@ class TestCodeQualityAgent:
         result = await agent.run(
             ctx=SpecialistContext(
                 review_run_id=run_id,
-                repo_owner="acme", repo_name="widgets",
-                base_sha="abc", head_sha="def",
+                repo_owner="acme",
+                repo_name="widgets",
+                base_sha="abc",
+                head_sha="def",
                 diff_files=sample_diff_files,
                 policy=ReviewPolicy(),
             ),
@@ -85,12 +87,21 @@ class TestCodeQualityAgent:
     @pytest.mark.asyncio
     async def test_produces_schema_valid_findings(self, services):
         agent = CodeQualityAgent()
-        diff_files = [{"path": "x.py", "content": "except:\n    pass", "additions": "except:\n    pass\n", "deletions": ""}]
+        diff_files = [
+            {
+                "path": "x.py",
+                "content": "except:\n    pass",
+                "additions": "except:\n    pass\n",
+                "deletions": "",
+            }
+        ]
         result = await agent.run(
             ctx=SpecialistContext(
                 review_run_id=uuid.uuid4(),
-                repo_owner="acme", repo_name="w",
-                base_sha="", head_sha="",
+                repo_owner="acme",
+                repo_name="w",
+                base_sha="",
+                head_sha="",
                 diff_files=diff_files,
                 policy=ReviewPolicy(),
             ),
@@ -112,8 +123,10 @@ class TestTestingAgent:
         result = await agent.run(
             ctx=SpecialistContext(
                 review_run_id=run_id,
-                repo_owner="acme", repo_name="widgets",
-                base_sha="abc", head_sha="def",
+                repo_owner="acme",
+                repo_name="widgets",
+                base_sha="abc",
+                head_sha="def",
                 diff_files=sample_diff_files,
                 policy=ReviewPolicy(),
             ),
@@ -136,8 +149,10 @@ class TestDocumentationAgent:
         result = await agent.run(
             ctx=SpecialistContext(
                 review_run_id=run_id,
-                repo_owner="acme", repo_name="widgets",
-                base_sha="abc", head_sha="def",
+                repo_owner="acme",
+                repo_name="widgets",
+                base_sha="abc",
+                head_sha="def",
                 diff_files=sample_diff_files,
                 policy=ReviewPolicy(),
             ),
@@ -164,37 +179,41 @@ class TestAggregatorAgent:
                 review_run_id=run_id,
                 specialist="security",
                 status="complete",
-                findings=[Finding(
-                    concern=ConcernType.SECURITY,
-                    severity=Severity.HIGH,
-                    file="src/auth.py",
-                    line_start=10,
-                    line_end=10,
-                    summary="Hardcoded password",
-                    explanation="password found",
-                    confidence=0.85,
-                    evidence=[],
-                    agent_version="security-agent@0.1.0",
-                    prompt_hash="abc",
-                )],
+                findings=[
+                    Finding(
+                        concern=ConcernType.SECURITY,
+                        severity=Severity.HIGH,
+                        file="src/auth.py",
+                        line_start=10,
+                        line_end=10,
+                        summary="Hardcoded password",
+                        explanation="password found",
+                        confidence=0.85,
+                        evidence=[],
+                        agent_version="security-agent@0.1.0",
+                        prompt_hash="abc",
+                    )
+                ],
             ),
             SpecialistResponse(
                 review_run_id=run_id,
                 specialist="code_quality",
                 status="complete",
-                findings=[Finding(
-                    concern=ConcernType.CODE_QUALITY,
-                    severity=Severity.LOW,
-                    file="src/auth.py",
-                    line_start=10,
-                    line_end=10,
-                    summary="Magic number",
-                    explanation="magic number",
-                    confidence=0.75,
-                    evidence=[],
-                    agent_version="code-quality-agent@0.1.0",
-                    prompt_hash="def",
-                )],
+                findings=[
+                    Finding(
+                        concern=ConcernType.CODE_QUALITY,
+                        severity=Severity.LOW,
+                        file="src/auth.py",
+                        line_start=10,
+                        line_end=10,
+                        summary="Magic number",
+                        explanation="magic number",
+                        confidence=0.75,
+                        evidence=[],
+                        agent_version="code-quality-agent@0.1.0",
+                        prompt_hash="def",
+                    )
+                ],
             ),
         ]
 
@@ -214,24 +233,44 @@ class TestAggregatorAgent:
 
         responses = [
             SpecialistResponse(
-                review_run_id=run_id, specialist="security", status="complete",
-                findings=[Finding(
-                    concern=ConcernType.SECURITY, severity=Severity.HIGH,
-                    file="src/x.py", line_start=5, line_end=5,
-                    summary="Secret A", explanation="e1",
-                    confidence=0.9, evidence=[],
-                    agent_version="v1", prompt_hash="a",
-                )],
+                review_run_id=run_id,
+                specialist="security",
+                status="complete",
+                findings=[
+                    Finding(
+                        concern=ConcernType.SECURITY,
+                        severity=Severity.HIGH,
+                        file="src/x.py",
+                        line_start=5,
+                        line_end=5,
+                        summary="Secret A",
+                        explanation="e1",
+                        confidence=0.9,
+                        evidence=[],
+                        agent_version="v1",
+                        prompt_hash="a",
+                    )
+                ],
             ),
             SpecialistResponse(
-                review_run_id=run_id, specialist="security", status="complete",
-                findings=[Finding(
-                    concern=ConcernType.SECURITY, severity=Severity.MEDIUM,
-                    file="src/x.py", line_start=5, line_end=5,
-                    summary="Secret B", explanation="e2",
-                    confidence=0.7, evidence=[],
-                    agent_version="v1", prompt_hash="b",
-                )],
+                review_run_id=run_id,
+                specialist="security",
+                status="complete",
+                findings=[
+                    Finding(
+                        concern=ConcernType.SECURITY,
+                        severity=Severity.MEDIUM,
+                        file="src/x.py",
+                        line_start=5,
+                        line_end=5,
+                        summary="Secret B",
+                        explanation="e2",
+                        confidence=0.7,
+                        evidence=[],
+                        agent_version="v1",
+                        prompt_hash="b",
+                    )
+                ],
             ),
         ]
 
@@ -248,14 +287,24 @@ class TestAggregatorAgent:
         repo = RepoRef(owner="acme", name="w", id=1)
         responses = [
             SpecialistResponse(
-                review_run_id=run_id, specialist="security", status="complete",
-                findings=[Finding(
-                    concern=ConcernType.SECURITY, severity=Severity.CRITICAL,
-                    file="src/x.py", line_start=1, line_end=1,
-                    summary="SQL injection", explanation="bad",
-                    confidence=0.95, evidence=[],
-                    agent_version="v1", prompt_hash="a",
-                )],
+                review_run_id=run_id,
+                specialist="security",
+                status="complete",
+                findings=[
+                    Finding(
+                        concern=ConcernType.SECURITY,
+                        severity=Severity.CRITICAL,
+                        file="src/x.py",
+                        line_start=1,
+                        line_end=1,
+                        summary="SQL injection",
+                        explanation="bad",
+                        confidence=0.95,
+                        evidence=[],
+                        agent_version="v1",
+                        prompt_hash="a",
+                    )
+                ],
             ),
         ]
         output = agent.aggregate(run_id, repo, responses)
@@ -272,12 +321,21 @@ class TestCodeQualityRegex:
         # Create a diff with a long function that matches the regex pattern
         # The pattern is: re:def .*\\(.*\\):\\n.{200,}
         long_body = "x" * 250  # 250 characters > 200 threshold
-        diff_files = [{"path": "x.py", "content": f"def long_func():\n{long_body}", "additions": f"def long_func():\n{long_body}", "deletions": ""}]
+        diff_files = [
+            {
+                "path": "x.py",
+                "content": f"def long_func():\n{long_body}",
+                "additions": f"def long_func():\n{long_body}",
+                "deletions": "",
+            }
+        ]
         result = await agent.run(
             ctx=SpecialistContext(
                 review_run_id=uuid.uuid4(),
-                repo_owner="acme", repo_name="w",
-                base_sha="", head_sha="",
+                repo_owner="acme",
+                repo_name="w",
+                base_sha="",
+                head_sha="",
                 diff_files=diff_files,
                 policy=ReviewPolicy(),
             ),

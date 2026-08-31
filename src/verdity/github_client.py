@@ -62,6 +62,24 @@ class GitHubClient:
         self._installationToken: str | None = None
         self._token_expires_at: float = 0.0
 
+        # Shared HTTP client with connection pooling
+        self._client: httpx.AsyncClient | None = None
+
+    # ── Client Management ─────────────────────────────────────────────
+
+    def _get_client(self) -> httpx.AsyncClient:
+        """Return the shared HTTP client, creating it lazily if needed."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(
+                timeout=30.0,
+                limits=httpx.Limits(
+                    max_connections=10,
+                    max_keepalive_connections=5,
+                    keepalive_expiry=30,
+                ),
+            )
+        return self._client
+
     # ── Authentication ────────────────────────────────────────────────
 
     def _generate_jwt(self) -> str:
@@ -143,19 +161,17 @@ class GitHubClient:
         Post a top-level comment on a PR.
         Returns the GitHub issue comment object.
         """
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            headers = await self._auth_headers(client)
-            resp = await client.post(
-                f"{self._base_url}/repos/{owner}/{repo}/issues/{pr_number}/comments",
-                json={"body": body},
-                headers=headers,
-            )
-            if resp.status_code not in (200, 201):
-                raise GitHubClientError(
-                    f"Failed to post PR comment: {resp.status_code} {resp.text}"
-                )
-            logger.info("Posted PR comment on %s/%s#%d", owner, repo, pr_number)
-            return resp.json()
+        client = self._get_client()
+        headers = await self._auth_headers(client)
+        resp = await client.post(
+            f"{self._base_url}/repos/{owner}/{repo}/issues/{pr_number}/comments",
+            json={"body": body},
+            headers=headers,
+        )
+        if resp.status_code not in (200, 201):
+            raise GitHubClientError(f"Failed to post PR comment: {resp.status_code} {resp.text}")
+        logger.info("Posted PR comment on %s/%s#%d", owner, repo, pr_number)
+        return resp.json()
 
     async def post_pr_review(
         self,
@@ -181,17 +197,17 @@ class GitHubClient:
         if comments:
             payload["comments"] = comments
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            headers = await self._auth_headers(client)
-            resp = await client.post(
-                f"{self._base_url}/repos/{owner}/{repo}/pulls/{pr_number}/reviews",
-                json=payload,
-                headers=headers,
-            )
-            if resp.status_code not in (200, 201):
-                raise GitHubClientError(f"Failed to post PR review: {resp.status_code} {resp.text}")
-            logger.info("Posted PR review on %s/%s#%d (event=%s)", owner, repo, pr_number, event)
-            return resp.json()
+        client = self._get_client()
+        headers = await self._auth_headers(client)
+        resp = await client.post(
+            f"{self._base_url}/repos/{owner}/{repo}/pulls/{pr_number}/reviews",
+            json=payload,
+            headers=headers,
+        )
+        if resp.status_code not in (200, 201):
+            raise GitHubClientError(f"Failed to post PR review: {resp.status_code} {resp.text}")
+        logger.info("Posted PR review on %s/%s#%d (event=%s)", owner, repo, pr_number, event)
+        return resp.json()
 
     async def post_inline_comment(
         self,
@@ -215,42 +231,53 @@ class GitHubClient:
             "line": line,
             "side": side,
         }
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            headers = await self._auth_headers(client)
-            resp = await client.post(
-                f"{self._base_url}/repos/{owner}/{repo}/pulls/{pull_number}/comments",
-                json=payload,
-                headers=headers,
+        client = self._get_client()
+        headers = await self._auth_headers(client)
+        resp = await client.post(
+            f"{self._base_url}/repos/{owner}/{repo}/pulls/{pull_number}/comments",
+            json=payload,
+            headers=headers,
+        )
+        if resp.status_code not in (200, 201):
+            raise GitHubClientError(
+                f"Failed to post inline comment: {resp.status_code} {resp.text}"
             )
-            if resp.status_code not in (200, 201):
-                raise GitHubClientError(
-                    f"Failed to post inline comment: {resp.status_code} {resp.text}"
-                )
-            logger.info(
-                "Posted inline comment on %s/%s#%d (%s:%d)",
-                owner,
-                repo,
-                pull_number,
-                path,
-                line,
-            )
-            return resp.json()
+        logger.info(
+            "Posted inline comment on %s/%s#%d (%s:%d)",
+            owner,
+            repo,
+            pull_number,
+            path,
+            line,
+        )
+        return resp.json()
 
     # ── Utility ───────────────────────────────────────────────────────
 
     async def get_pr(self, owner: str, repo: str, pr_number: int) -> dict[str, Any]:
         """Fetch PR metadata from GitHub."""
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            headers = await self._auth_headers(client)
-            resp = await client.get(
-                f"{self._base_url}/repos/{owner}/{repo}/pulls/{pr_number}",
-                headers=headers,
-            )
-            if resp.status_code != 200:
-                raise GitHubClientError(f"Failed to get PR: {resp.status_code} {resp.text}")
-            return resp.json()
+        client = self._get_client()
+        headers = await self._auth_headers(client)
+        resp = await client.get(
+            f"{self._base_url}/repos/{owner}/{repo}/pulls/{pr_number}",
+            headers=headers,
+        )
+        if resp.status_code != 200:
+            raise GitHubClientError(f"Failed to get PR: {resp.status_code} {resp.text}")
+        return resp.json()
 
     async def close(self) -> None:
-        """Release cached tokens (best-effort cleanup)."""
+        """Release cached tokens and close the HTTP client."""
         self._jwt = None
         self._installationToken = None
+        if self._client and not self._client.is_closed:
+            await self._client.aclose()
+            self._client = None
+
+    async def __aenter__(self) -> "GitHubClient":
+        """Async context manager entry."""
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Async context manager exit - ensures client is closed."""
+        await self.close()

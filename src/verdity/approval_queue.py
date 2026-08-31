@@ -150,7 +150,6 @@ class ApprovalQueueStore:
             )
         else:
             rows = await self._conn.execute(
-                "SELECT status, COUNT(*) as cnt FROM approval_queue "
-                "GROUP BY status",
+                "SELECT status, COUNT(*) as cnt FROM approval_queue GROUP BY status",
             )
         return {r["status"]: r["cnt"] for r in rows}

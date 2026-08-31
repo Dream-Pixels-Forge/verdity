@@ -65,7 +65,9 @@ def normalize_webhook(
         if action:
             normalized += f".{action}"
         logger.warning("Unknown event+action: %s/%s — using generic trigger", event_name, action)
-        trigger = TriggerType.PR_OPENED  # safe fallback; the raw event name is preserved in delivery_id
+        trigger = (
+            TriggerType.PR_OPENED
+        )  # safe fallback; the raw event name is preserved in delivery_id
 
     repo = _extract_repo(payload)
 

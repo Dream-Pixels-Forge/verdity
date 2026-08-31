@@ -62,15 +62,20 @@ _VULN_PATTERNS: list[tuple[str, str, re.Pattern[str], str, str]] = [
     for name, pat, sev, desc in [
         ("sql_injection", r'f"SELECT', "high", "Potential SQL injection via f-string"),
         ("sql_injection2", r"' \+ request", "high", "Potential SQL injection via string concat"),
-        ("eval_usage", r'\beval\(', "critical", "Use of eval() — potential code injection"),
-        ("exec_usage", r'\bexec\(', "critical", "Use of exec() — potential code injection"),
-        ("shell_injection", r'subprocess\.call.*shell\s*=\s*True', "critical", "Shell injection risk"),
-        ("os_system", r'os\.system\(', "high", "os.system() — potential command injection"),
-        ("pickle_load", r'pickle\.load', "high", "Unsafe deserialization via pickle"),
-        ("yaml_unsafe", r'yaml\.load\(', "medium", "Unsafe YAML load — use yaml.safe_load"),
-        ("path_traversal", r'\.\./', "medium", "Potential path traversal — validate input"),
-        ("weak_hash", r'\bmd5\(', "medium", "Weak hash function — use SHA-256 or stronger"),
-        ("insecure_random", r'random\.randint', "low", "Cryptographically weak random"),
+        ("eval_usage", r"\beval\(", "critical", "Use of eval() — potential code injection"),
+        ("exec_usage", r"\bexec\(", "critical", "Use of exec() — potential code injection"),
+        (
+            "shell_injection",
+            r"subprocess\.call.*shell\s*=\s*True",
+            "critical",
+            "Shell injection risk",
+        ),
+        ("os_system", r"os\.system\(", "high", "os.system() — potential command injection"),
+        ("pickle_load", r"pickle\.load", "high", "Unsafe deserialization via pickle"),
+        ("yaml_unsafe", r"yaml\.load\(", "medium", "Unsafe YAML load — use yaml.safe_load"),
+        ("path_traversal", r"\.\./", "medium", "Potential path traversal — validate input"),
+        ("weak_hash", r"\bmd5\(", "medium", "Weak hash function — use SHA-256 or stronger"),
+        ("insecure_random", r"random\.randint", "low", "Cryptographically weak random"),
     ]
 ]
 
@@ -102,9 +107,19 @@ class SecurityAgent(BaseSpecialistAgent):
 
         # ── Pass 2: Semantic search for security-relevant patterns ────
         security_queries = [
-            "authentication", "authorization", "session", "token",
-            "password", "crypto", "hash", "encryption", "SQL injection",
-            "XSS", "CSRF", "deserialization", "file upload",
+            "authentication",
+            "authorization",
+            "session",
+            "token",
+            "password",
+            "crypto",
+            "hash",
+            "encryption",
+            "SQL injection",
+            "XSS",
+            "CSRF",
+            "deserialization",
+            "file upload",
         ]
         semantic_findings = await self._semantic_security_search(
             ctx=ctx,
@@ -138,25 +153,29 @@ class SecurityAgent(BaseSpecialistAgent):
                         if pattern_str.lower() in line.lower():
                             severity = self._str_to_severity(severity_str)
                             cwe = _CWE_MAPPING.get(pattern_name, "CWE-798")
-                            findings.append(Finding(
-                                concern=ConcernType.SECURITY,
-                                severity=severity,
-                                file=path,
-                                line_start=i,
-                                line_end=i,
-                                summary=f"Potential {pattern_name.replace('_', ' ')} detected",
-                                explanation=f"Pattern '{pattern_str}' found in {path}:{i}. "
-                                            f"This may be a hard-coded credential. {cwe}",
-                                suggested_fix_diff=None,
-                                confidence=self._compute_secret_confidence(pattern_name, line),
-                                evidence=[EvidenceItem(
-                                    tool="secret_scanner",
-                                    result=cwe,
-                                    query=pattern_str,
-                                )],
-                                agent_version=self.AGENT_VERSION,
-                                prompt_hash=self._prompt_hash("secret_scan", path, str(i)),
-                            ))
+                            findings.append(
+                                Finding(
+                                    concern=ConcernType.SECURITY,
+                                    severity=severity,
+                                    file=path,
+                                    line_start=i,
+                                    line_end=i,
+                                    summary=f"Potential {pattern_name.replace('_', ' ')} detected",
+                                    explanation=f"Pattern '{pattern_str}' found in {path}:{i}. "
+                                    f"This may be a hard-coded credential. {cwe}",
+                                    suggested_fix_diff=None,
+                                    confidence=self._compute_secret_confidence(pattern_name, line),
+                                    evidence=[
+                                        EvidenceItem(
+                                            tool="secret_scanner",
+                                            result=cwe,
+                                            query=pattern_str,
+                                        )
+                                    ],
+                                    agent_version=self.AGENT_VERSION,
+                                    prompt_hash=self._prompt_hash("secret_scan", path, str(i)),
+                                )
+                            )
                             break
         return findings
 
@@ -174,25 +193,29 @@ class SecurityAgent(BaseSpecialistAgent):
                 match = compiled_re.search(scan_text)
                 if match:
                     # Find the line number of the match
-                    line_start = scan_text[:match.start()].count("\n") + 1
-                    findings.append(Finding(
-                        concern=ConcernType.SECURITY,
-                        severity=self._str_to_severity(severity),
-                        file=path,
-                        line_start=line_start,
-                        line_end=line_start,
-                        summary=f"{name.replace('_', ' ').title()} detected",
-                        explanation=f"{explanation} at {path}:{line_start}",
-                        suggested_fix_diff=self._suggested_fix(name),
-                        confidence=0.75 if severity in ("high", "critical") else 0.55,
-                        evidence=[EvidenceItem(
-                            tool="static_analyzer",
-                            result=name,
-                            query=pattern_str,
-                        )],
-                        agent_version=self.AGENT_VERSION,
-                        prompt_hash=self._prompt_hash("vuln_scan", path, str(line_start)),
-                    ))
+                    line_start = scan_text[: match.start()].count("\n") + 1
+                    findings.append(
+                        Finding(
+                            concern=ConcernType.SECURITY,
+                            severity=self._str_to_severity(severity),
+                            file=path,
+                            line_start=line_start,
+                            line_end=line_start,
+                            summary=f"{name.replace('_', ' ').title()} detected",
+                            explanation=f"{explanation} at {path}:{line_start}",
+                            suggested_fix_diff=self._suggested_fix(name),
+                            confidence=0.75 if severity in ("high", "critical") else 0.55,
+                            evidence=[
+                                EvidenceItem(
+                                    tool="static_analyzer",
+                                    result=name,
+                                    query=pattern_str,
+                                )
+                            ],
+                            agent_version=self.AGENT_VERSION,
+                            prompt_hash=self._prompt_hash("vuln_scan", path, str(line_start)),
+                        )
+                    )
         return findings
 
     # ── Semantic Security Search ──────────────────────────────────────
@@ -210,7 +233,9 @@ class SecurityAgent(BaseSpecialistAgent):
         for query in queries:
             try:
                 results = await semantic_index.search_by_text(
-                    f"{ctx.repo_owner}/{ctx.repo_name}", query, limit=3,
+                    f"{ctx.repo_owner}/{ctx.repo_name}",
+                    query,
+                    limit=3,
                 )
                 for chunk in results:
                     if chunk["file_path"] not in diff_paths:
@@ -218,27 +243,33 @@ class SecurityAgent(BaseSpecialistAgent):
                     content = chunk["content"]
                     security_keywords = ["auth", "token", "password", "secret", "key", "session"]
                     if any(kw in content.lower() for kw in security_keywords):
-                        findings.append(Finding(
-                            concern=ConcernType.SECURITY,
-                            severity=self._str_to_severity("medium"),
-                            file=chunk["file_path"],
-                            line_start=chunk["start_line"],
-                            line_end=chunk["end_line"],
-                            summary=f"Security-relevant code near search term: '{query}'",
-                            explanation=(
-                                f"File {chunk['file_path']} contains both '{query}' and "
-                                f"security keywords. Review for proper handling."
-                            ),
-                            suggested_fix_diff=None,
-                            confidence=0.45,
-                            evidence=[EvidenceItem(
-                                tool="semantic_search",
-                                query=query,
-                                result=f"matched at {chunk['file_path']}:{chunk['start_line']}",
-                            )],
-                            agent_version=self.AGENT_VERSION,
-                            prompt_hash=self._prompt_hash("semantic_search", query, chunk["file_path"]),
-                        ))
+                        findings.append(
+                            Finding(
+                                concern=ConcernType.SECURITY,
+                                severity=self._str_to_severity("medium"),
+                                file=chunk["file_path"],
+                                line_start=chunk["start_line"],
+                                line_end=chunk["end_line"],
+                                summary=f"Security-relevant code near search term: '{query}'",
+                                explanation=(
+                                    f"File {chunk['file_path']} contains both '{query}' and "
+                                    f"security keywords. Review for proper handling."
+                                ),
+                                suggested_fix_diff=None,
+                                confidence=0.45,
+                                evidence=[
+                                    EvidenceItem(
+                                        tool="semantic_search",
+                                        query=query,
+                                        result=f"matched at {chunk['file_path']}:{chunk['start_line']}",
+                                    )
+                                ],
+                                agent_version=self.AGENT_VERSION,
+                                prompt_hash=self._prompt_hash(
+                                    "semantic_search", query, chunk["file_path"]
+                                ),
+                            )
+                        )
             except Exception as exc:
                 logger.debug("Semantic search for '%s' failed: %s", query, exc)
 
@@ -269,7 +300,7 @@ class SecurityAgent(BaseSpecialistAgent):
     @staticmethod
     def _suggested_fix(vuln_name: str) -> str | None:
         fixes: dict[str, str] = {
-            "sql_injection": "- cursor.execute(f\"SELECT ...\")\n+ cursor.execute(\"SELECT ... WHERE id = %s\", (user_id,))",
+            "sql_injection": '- cursor.execute(f"SELECT ...")\n+ cursor.execute("SELECT ... WHERE id = %s", (user_id,))',
             "eval_usage": "- result = eval(user_input)\n+ result = ast.literal_eval(user_input)  # or a safer alternative",
             "exec_usage": "- exec(user_code)\n+ # Avoid exec; use a sandboxed environment or pre-compiled functions",
             "pickle_load": "- data = pickle.load(f)\n+ data = json.load(f)  # or use a safe deserializer",

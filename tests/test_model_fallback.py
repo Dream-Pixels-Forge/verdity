@@ -9,7 +9,6 @@ import pytest
 
 from verdity.model_fallback import (
     FallbackState,
-    ModelCallResult,
     ModelConfig,
     MultiModelFallback,
 )
@@ -121,10 +120,20 @@ class TestMultiModelFallbackCall:
 
         fallback = MultiModelFallback(
             models=[
-                ModelConfig(name="m1", provider="test", model_id="slow-model",
-                           priority=0, timeout_seconds=0.1),
-                ModelConfig(name="m2", provider="test", model_id="fast-model",
-                           priority=1, timeout_seconds=1.0),
+                ModelConfig(
+                    name="m1",
+                    provider="test",
+                    model_id="slow-model",
+                    priority=0,
+                    timeout_seconds=0.1,
+                ),
+                ModelConfig(
+                    name="m2",
+                    provider="test",
+                    model_id="fast-model",
+                    priority=1,
+                    timeout_seconds=1.0,
+                ),
             ]
         )
 
