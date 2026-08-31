@@ -77,10 +77,13 @@ class AggregatorAgent:
         for key, group in dedup_groups.items():
             group_id = uuid.uuid4()
             # Pick the highest-confidence finding from the group
-            best = max(group, key=lambda f: (
-                SEVERITY_RANK.get(f.severity, 0),
-                f.confidence,
-            ))
+            best = max(
+                group,
+                key=lambda f: (
+                    SEVERITY_RANK.get(f.severity, 0),
+                    f.confidence,
+                ),
+            )
             for f in group:
                 group_id_map[f.finding_id] = group_id
             merged_findings.append(best)
@@ -95,10 +98,13 @@ class AggregatorAgent:
             sev_rank = SEVERITY_RANK.get(f.severity, 0)
             rank_score = sev_rank * f.confidence
             dedup_gid = group_id_map.get(f.finding_id)
-            ranked.append(RankedFinding(
-                finding=f, rank_score=round(rank_score, 3),
-                dedup_group_id=dedup_gid,
-            ))
+            ranked.append(
+                RankedFinding(
+                    finding=f,
+                    rank_score=round(rank_score, 3),
+                    dedup_group_id=dedup_gid,
+                )
+            )
 
         ranked.sort(key=lambda r: r.rank_score, reverse=True)
 
@@ -107,8 +113,13 @@ class AggregatorAgent:
 
         # ── Audit log ───────────────────────────────────────────────────
         # Log aggregation decision
-        logger.info("Aggregator run %s: %d → %d findings (grouped into %d)",
-                     review_run_id, len(all_findings), len(merged_findings), len(dedup_groups))
+        logger.info(
+            "Aggregator run %s: %d → %d findings (grouped into %d)",
+            review_run_id,
+            len(all_findings),
+            len(merged_findings),
+            len(dedup_groups),
+        )
 
         return AggregatorOutput(
             review_run_id=review_run_id,
@@ -150,10 +161,16 @@ class AggregatorAgent:
             lines.append("")
             for r in ranked[:10]:  # top 10
                 f = r.finding
-                emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🔵", "info": "⚪"}.get(
-                    f.severity.value, "⚪"
+                emoji = {
+                    "critical": "🔴",
+                    "high": "🟠",
+                    "medium": "🟡",
+                    "low": "🔵",
+                    "info": "⚪",
+                }.get(f.severity.value, "⚪")
+                lines.append(
+                    f"- {emoji} **[{f.severity.value.upper()}]** `{f.file}:{f.line_start}` — {f.summary}"
                 )
-                lines.append(f"- {emoji} **[{f.severity.value.upper()}]** `{f.file}:{f.line_start}` — {f.summary}")
                 if f.explanation:
                     lines.append(f"  > {f.explanation}")
             if len(ranked) > 10:

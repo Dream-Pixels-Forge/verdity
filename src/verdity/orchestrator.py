@@ -52,6 +52,7 @@ class RunStatus(str, Enum):
 @dataclass
 class ReviewRun:
     """In-memory durable state for a single PR review run."""
+
     review_run_id: uuid.UUID
     event: VerdityEvent
     status: RunStatus = RunStatus.PENDING
@@ -87,11 +88,14 @@ def resolve_policy(event: VerdityEvent) -> ReviewPolicy:
     # Determine depth based on PR size heuristic
     # In production, this comes from the GitHub API diff stats (additions + deletions).
     from verdity.config import get_settings
+
     settings = get_settings()
     # Use diff stats if available; fall back to 0
     diff_lines = 0
     if event.pull_request is not None:
-        diff_lines = getattr(event.pull_request, "additions", 0) + getattr(event.pull_request, "deletions", 0)
+        diff_lines = getattr(event.pull_request, "additions", 0) + getattr(
+            event.pull_request, "deletions", 0
+        )
     is_large = diff_lines >= settings.large_pr_diff_threshold
     depth = "extended" if is_large else "standard"
     timeout = 15 * 60 if is_large else 5 * 60  # seconds
@@ -207,7 +211,10 @@ class Orchestrator:
         run.policy = policy
         logger.info(
             "Run %s: policy resolved — depth=%s timeout=%ds budget=%d tokens",
-            review_run_id, policy.depth, policy.timeout_seconds, policy.budget_tokens,
+            review_run_id,
+            policy.depth,
+            policy.timeout_seconds,
+            policy.budget_tokens,
         )
 
         # Resolve which specialists to run
@@ -221,7 +228,9 @@ class Orchestrator:
         for name in specialist_names:
             fn = self._specialists.get(name)
             if fn is None:
-                logger.warning("Run %s: specialist '%s' not registered — skipping", review_run_id, name)
+                logger.warning(
+                    "Run %s: specialist '%s' not registered — skipping", review_run_id, name
+                )
                 run.specialist_results[name] = SpecialistResponse(
                     review_run_id=review_run_id,
                     specialist=name,
@@ -252,9 +261,7 @@ class Orchestrator:
             payload={
                 "status": run.status.value,
                 "specialists_ran": list(run.specialist_results.keys()),
-                "findings_total": sum(
-                    len(r.findings) for r in run.specialist_results.values()
-                ),
+                "findings_total": sum(len(r.findings) for r in run.specialist_results.values()),
                 "cost_usd": sum(r.cost_usd for r in run.specialist_results.values()),
             },
             related_run_id=review_run_id,
@@ -262,7 +269,8 @@ class Orchestrator:
 
         logger.info(
             "Run %s: %s — %d findings across %d specialists",
-            review_run_id, run.status.value,
+            review_run_id,
+            run.status.value,
             sum(len(r.findings) for r in run.specialist_results.values()),
             len(run.specialist_results),
         )
@@ -336,14 +344,21 @@ class Orchestrator:
             policy=policy,
         )
         try:
-            result = await asyncio.wait_for(fn(ctx, self._index, self._te, self._audit),
-                                             timeout=float(policy.timeout_seconds))
+            result = await asyncio.wait_for(
+                fn(ctx, self._index, self._te, self._audit), timeout=float(policy.timeout_seconds)
+            )
             if not isinstance(result, SpecialistResponse):
-                raise TypeError(f"Specialist '{name}' returned non-SpecialistResponse: {type(result)}")
+                raise TypeError(
+                    f"Specialist '{name}' returned non-SpecialistResponse: {type(result)}"
+                )
             return result
         except asyncio.TimeoutError:
-            logger.warning("Run %s: specialist '%s' timed out after %ds",
-                           run.review_run_id, name, policy.timeout_seconds)
+            logger.warning(
+                "Run %s: specialist '%s' timed out after %ds",
+                run.review_run_id,
+                name,
+                policy.timeout_seconds,
+            )
             return SpecialistResponse(
                 review_run_id=run.review_run_id,
                 specialist=name,
@@ -352,8 +367,7 @@ class Orchestrator:
                 error=f"Timed out after {policy.timeout_seconds}s",
             )
         except Exception as exc:
-            logger.error("Run %s: specialist '%s' failed: %s",
-                         run.review_run_id, name, exc)
+            logger.error("Run %s: specialist '%s' failed: %s", run.review_run_id, name, exc)
             return SpecialistResponse(
                 review_run_id=run.review_run_id,
                 specialist=name,

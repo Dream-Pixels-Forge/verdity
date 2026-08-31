@@ -12,6 +12,7 @@ import logging
 from abc import ABC, abstractmethod
 
 from verdity.audit_store import AuditStore
+from verdity.model_fallback import MultiModelFallback
 from verdity.schemas import (
     ConcernType,
     Finding,
@@ -35,6 +36,9 @@ class BaseSpecialistAgent(ABC):
     _input_tokens_per_finding: int = 300
     _output_tokens_per_finding: int = 50
 
+    def __init__(self, fallback: MultiModelFallback | None = None) -> None:
+        self._fallback = fallback
+
     async def run(
         self,
         ctx: SpecialistContext,
@@ -49,7 +53,9 @@ class BaseSpecialistAgent(ABC):
         findings = await self._scan(ctx, semantic_index)
 
         # Estimate input tokens from diff content (chars ÷ 4 ≈ tokens)
-        total_chars = sum(len(f.get("content", "") + f.get("additions", "")) for f in ctx.diff_files)
+        total_chars = sum(
+            len(f.get("content", "") + f.get("additions", "")) for f in ctx.diff_files
+        )
         input_tokens = max(total_chars // 4, len(findings) * self._input_tokens_per_finding)
         output_tokens = len(findings) * self._output_tokens_per_finding
 
@@ -82,7 +88,9 @@ class BaseSpecialistAgent(ABC):
 
         logger.info(
             "%s run %s: %d findings",
-            self.SPECIALIST_NAME, ctx.review_run_id, len(findings),
+            self.SPECIALIST_NAME,
+            ctx.review_run_id,
+            len(findings),
         )
         return SpecialistResponse(
             review_run_id=ctx.review_run_id,

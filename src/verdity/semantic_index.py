@@ -25,13 +25,14 @@ from typing import Any
 @dataclass
 class CodeChunk:
     """A chunk of source code indexed for semantic search."""
+
     chunk_id: str
-    repo_id: str              # "owner/name"
+    repo_id: str  # "owner/name"
     file_path: str
     start_line: int
     end_line: int
-    content: str              # The actual source code text
-    language: str             # e.g. "python", "typescript"
+    content: str  # The actual source code text
+    language: str  # e.g. "python", "typescript"
     symbols: list[str] = field(default_factory=list)  # functions/classes in this chunk
     embedding: list[float] | None = None  # populated after embedding
 
@@ -39,19 +40,21 @@ class CodeChunk:
 @dataclass
 class SymbolEdge:
     """An edge in the symbol graph (call/import relationship)."""
+
     edge_id: str
     repo_id: str
-    source_symbol: str        # e.g. "module.func" or "module.Class"
+    source_symbol: str  # e.g. "module.func" or "module.Class"
     target_symbol: str
-    edge_type: str            # "calls" | "imports" | "implements" | "extends"
+    edge_type: str  # "calls" | "imports" | "implements" | "extends"
 
 
 @dataclass
 class FileMetadata:
     """Per-file metadata for incremental indexing."""
+
     repo_id: str
     file_path: str
-    content_hash: str         # sha256 of file content
+    content_hash: str  # sha256 of file content
     last_indexed_sha: str | None = None  # git SHA of last successful index
     chunk_count: int = 0
 
@@ -84,9 +87,9 @@ class DevEmbeddingGenerator(EmbeddingGenerator):
         for chunk in chunks:
             h = hashlib.sha256(chunk.content.encode()).hexdigest()
             # Deterministic but content-dependent vector
-            vec = [float(int(h[i*2:i*2+2], 16)) / 255.0 for i in range(self.DIM)]
+            vec = [float(int(h[i * 2 : i * 2 + 2], 16)) / 255.0 for i in range(self.DIM)]
             # Normalize
-            mag = (sum(x*x for x in vec) ** 0.5) or 1.0
+            mag = (sum(x * x for x in vec) ** 0.5) or 1.0
             vectors.append([x / mag for x in vec])
         return vectors
 
@@ -151,6 +154,7 @@ class SemanticIndex:
 
     async def connect(self) -> None:
         from verdity.async_sqlite import AsyncConnection
+
         self._conn = AsyncConnection(self._db_path)
         await self._conn.connect()
         await self._conn.executescript(self.SCHEMA_SQL)
@@ -276,6 +280,7 @@ class SemanticIndex:
         )
 
         import math
+
         query_mag = math.sqrt(sum(v * v for v in query_vector)) or 1.0
         results = []
         for row in rows:
@@ -419,7 +424,13 @@ class SemanticIndex:
                 VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(edge_id) DO NOTHING
                 """,
-                (edge.edge_id, edge.repo_id, edge.source_symbol, edge.target_symbol, edge.edge_type),
+                (
+                    edge.edge_id,
+                    edge.repo_id,
+                    edge.source_symbol,
+                    edge.target_symbol,
+                    edge.edge_type,
+                ),
             )
         await self._conn.commit()
         return len(edges)

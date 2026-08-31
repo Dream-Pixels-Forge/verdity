@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ModelConfig:
     """Configuration for a single model provider."""
+
     name: str
     provider: str  # "openai", "anthropic", "deepseek", "local"
     model_id: str
@@ -34,6 +35,7 @@ class ModelConfig:
 @dataclass
 class ModelCallResult:
     """Result of a model call attempt."""
+
     success: bool
     content: str | None = None
     error: str | None = None
@@ -48,6 +50,7 @@ class ModelCallResult:
 @dataclass
 class FallbackState:
     """Tracks cooldown state for models experiencing errors."""
+
     model_name: str
     failure_count: int = 0
     last_failure_time: float = 0.0
@@ -131,7 +134,9 @@ class MultiModelFallback:
 
         logger.warning(
             "Model %s failed (count=%d, cooldown=%.0fs)",
-            model_name, state.failure_count, cooldown,
+            model_name,
+            state.failure_count,
+            cooldown,
         )
 
     def record_success(self, model_name: str) -> None:
@@ -201,7 +206,10 @@ class MultiModelFallback:
                 self.record_failure(model.name)
                 logger.warning(
                     "Model %s timed out (%.0fms, attempt %d/%d)",
-                    model.name, duration, attempt + 1, max_retries,
+                    model.name,
+                    duration,
+                    attempt + 1,
+                    max_retries,
                 )
 
             except Exception as exc:
@@ -210,7 +218,11 @@ class MultiModelFallback:
                 self.record_failure(model.name)
                 logger.warning(
                     "Model %s failed: %s (%.0fms, attempt %d/%d)",
-                    model.name, last_error, duration, attempt + 1, max_retries,
+                    model.name,
+                    last_error,
+                    duration,
+                    attempt + 1,
+                    max_retries,
                 )
 
         return ModelCallResult(
@@ -228,7 +240,8 @@ class MultiModelFallback:
                     "name": m.name,
                     "provider": m.provider,
                     "model_id": m.model_id,
-                    "available": self._state[m.name].is_available and self._state[m.name].cooldown_until <= now,
+                    "available": self._state[m.name].is_available
+                    and self._state[m.name].cooldown_until <= now,
                     "failure_count": self._state[m.name].failure_count,
                     "cooldown_remaining": max(0, self._state[m.name].cooldown_until - now),
                 }

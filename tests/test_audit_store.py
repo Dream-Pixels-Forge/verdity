@@ -60,6 +60,7 @@ async def test_append_multiple_events_same_run(audit_store: AuditStore):
 @pytest.mark.asyncio
 async def test_payload_is_persisted_as_json(audit_store: AuditStore):
     import json
+
     payload = {"nested": {"value": 42}, "list": [1, 2, 3]}
     await audit_store.append(
         event_type="test.event",
