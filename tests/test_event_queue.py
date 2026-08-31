@@ -7,7 +7,7 @@ from __future__ import annotations
 import pytest
 
 from verdity.event_queue import EventQueue
-from verdity.schemas import QueueEnvelope, TriggerType, VerdityEvent, RepoRef
+from verdity.schemas import QueueEnvelope, RepoRef, TriggerType, VerdityEvent
 
 
 @pytest.fixture

@@ -474,8 +474,9 @@ async def test_run_forever_processes_and_stops():
 @pytest.mark.asyncio
 async def test_main_wrapper():
     """main() parses args and calls asyncio.run with _run_worker."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
     from verdity.worker import main
-    from unittest.mock import patch, AsyncMock, MagicMock
 
     mock_queue = MagicMock()
     mock_queue.connect = AsyncMock()
@@ -529,8 +530,9 @@ async def test_main_wrapper():
 @pytest.mark.asyncio
 async def test_run_entrypoint_calls_main():
     """run_entrypoint delegates to main."""
-    from verdity.worker import run_entrypoint
     from unittest.mock import patch
+
+    from verdity.worker import run_entrypoint
 
     with patch("verdity.worker.main") as mock_main:
         run_entrypoint(["--queue-dsn", "sqlite:///t.db", "--audit-path", "a.db"])

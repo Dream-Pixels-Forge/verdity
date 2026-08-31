@@ -5,10 +5,11 @@ Comprehensive coverage tests — fills all remaining uncovered branches.
 from __future__ import annotations
 
 import asyncio
-import pytest
 import time
 import uuid
 from datetime import datetime
+
+import pytest
 
 from verdity.agents.documentation import DocumentationAgent
 from verdity.agents.security import SecurityAgent
@@ -18,7 +19,7 @@ from verdity.approval_queue import ApprovalQueueStore
 from verdity.async_sqlite import AsyncConnection
 from verdity.coding_agent import CodingAgent
 from verdity.event_queue import EventQueue
-from verdity.orchestrator import Orchestrator, resolve_policy, resolve_specialists, RunStatus
+from verdity.orchestrator import Orchestrator, RunStatus, resolve_policy, resolve_specialists
 from verdity.schemas import (
     ConcernType,
     Finding,
@@ -41,7 +42,6 @@ from verdity.verification_gate import (
     VerificationGate,
     VerifierSubagent,
 )
-
 
 # ═══════════════════════════════════════════════════════════════════════
 # Documentation Agent — all branches
@@ -629,6 +629,7 @@ class TestGitHubClientContextManager:
     async def test_close_with_mock_client(self):
         """Test close() when _client exists and needs to be closed."""
         from unittest.mock import AsyncMock
+
         from verdity.github_client import GitHubClient
 
         client = GitHubClient(
@@ -651,6 +652,7 @@ class TestGitHubClientContextManager:
     async def test_close_with_already_closed_client(self):
         """Test close() when _client is already closed."""
         from unittest.mock import AsyncMock
+
         from verdity.github_client import GitHubClient
 
         client = GitHubClient(
@@ -850,6 +852,7 @@ class TestBudgetEnforcerExtra:
     @pytest.mark.asyncio
     async def test_dashboard_stats(self, token_economics):
         import uuid
+
         from verdity.budget_enforcer import dashboard_stats
 
         # Seed some data so grouped queries return results
@@ -1149,8 +1152,9 @@ class TestOrchestratorExtra:
         assert run.status in (RunStatus.COMPLETED, RunStatus.FAILED)
 
     def test_list_runs_returns_sorted_descending(self, services, queue):
-        from verdity.orchestrator import ReviewRun
         from datetime import timedelta, timezone
+
+        from verdity.orchestrator import ReviewRun
 
         orch = Orchestrator(
             queue=queue,
@@ -1315,6 +1319,7 @@ class TestGatewaySecurity:
     @pytest.mark.asyncio
     async def test_path_traversal_rejected(self, gateway_client, settings):
         import json
+
         from verdity.hmac_verify import compute_signature
 
         payload = {
@@ -1534,6 +1539,7 @@ class TestGatewayMiddlewarePaths:
     async def test_content_length_none_passes_through(self, gateway_client, settings):
         """When Content-Length header is absent, middleware should not reject."""
         import json
+
         from verdity.hmac_verify import compute_signature
 
         payload = {
@@ -2208,8 +2214,9 @@ class TestGatewayCoverage:
             _sanitize_path("src/app.py;rm -rf")
 
     def test_cache_eviction_removes_expired(self):
-        from verdity.gateway.app import _cleanup_delivery_cache, DELIVERY_CACHE_TTL_SECONDS
         import time
+
+        from verdity.gateway.app import DELIVERY_CACHE_TTL_SECONDS, _cleanup_delivery_cache
 
         class State:
             delivery_ids = {"old-id", "new-id"}
@@ -2224,6 +2231,7 @@ class TestGatewayCoverage:
 
     def test_cache_eviction_no_expired(self):
         import time
+
         from verdity.gateway.app import _cleanup_delivery_cache
 
         class State:
@@ -2237,6 +2245,7 @@ class TestGatewayCoverage:
     async def test_middleware_valueerror_content_length(self, gateway_client):
         """When Content-Length is not a valid integer, middleware should not crash."""
         import json
+
         from verdity.hmac_verify import compute_signature
 
         payload = {
@@ -2562,6 +2571,7 @@ class TestGatewayErrorPaths:
     async def test_body_too_large_after_read(self, gateway_client, settings):
         """When body exceeds limit after read (no Content-Length header), return 413."""
         import json
+
         from verdity.hmac_verify import compute_signature
 
         # Create a payload that would exceed limit if sent as raw bytes
@@ -2592,8 +2602,9 @@ class TestGatewayErrorPaths:
     async def test_queue_failure_returns_503(self, gateway_client, settings):
         """When queue.publish raises, should return 503."""
         import json
-        from verdity.hmac_verify import compute_signature
+
         from verdity.gateway.app import app
+        from verdity.hmac_verify import compute_signature
 
         # Temporarily replace queue with one that raises
         original_queue = app.state.queue
@@ -2633,8 +2644,9 @@ class TestGatewayErrorPaths:
     @pytest.mark.asyncio
     async def test_normalize_error_returns_400(self, gateway_client, settings):
         """When normalize_webhook raises, should return 400."""
-        from unittest.mock import patch
         import json
+        from unittest.mock import patch
+
         from verdity.hmac_verify import compute_signature
 
         payload = {"action": "opened"}
@@ -2665,8 +2677,9 @@ class TestOrchestratorGatherExceptions:
     @pytest.mark.asyncio
     async def test_task_cancelled_error_handled(self, services, queue):
         """When a task is cancelled during gather, the exception is caught."""
-        from verdity.orchestrator import ReviewRun
         import asyncio
+
+        from verdity.orchestrator import ReviewRun
 
         async def cancel_me_agent(run, index, te, audit):
             await asyncio.sleep(10)
@@ -2834,9 +2847,9 @@ class TestGatewayLifespan:
     @pytest.mark.asyncio
     async def test_lifespan_startup_and_shutdown(self):
         """Test that lifespan correctly initializes and cleans up services."""
-        from verdity.gateway.app import app
-        from verdity.event_queue import EventQueue
         from verdity.audit_store import AuditStore
+        from verdity.event_queue import EventQueue
+        from verdity.gateway.app import app
 
         # The app's lifespan is already registered; we just verify it works
         async with app.router.lifespan_context(app):
@@ -2880,6 +2893,7 @@ class TestGatewayLifespan:
         """Lines 244-248: pending tasks are cancelled when gather times out."""
         import asyncio
         from unittest.mock import AsyncMock, patch
+
         from verdity.orchestrator import ReviewRun
         from verdity.schemas import ReviewPolicy
 
@@ -2920,6 +2934,7 @@ class TestGatewayLifespan:
         """Line 253: skip collection when name is already in specialist_results."""
         import asyncio
         from unittest.mock import AsyncMock, patch
+
         from verdity.orchestrator import ReviewRun
         from verdity.schemas import ReviewPolicy
 
@@ -2968,6 +2983,7 @@ class TestGatewayLifespan:
     async def test_orchestrator_gather_task_result_raises(self, services, queue):
         """Lines 257-259: task.result() exception is caught and marked failed."""
         from unittest.mock import AsyncMock, patch
+
         from verdity.orchestrator import ReviewRun
         from verdity.schemas import ReviewPolicy
 
@@ -3013,8 +3029,9 @@ class TestOrchestratorGatherExceptionsExtra:
     @pytest.mark.asyncio
     async def test_task_cancelled_during_gather(self, services, queue):
         """When gather timeout fires, pending tasks are cancelled."""
-        from verdity.orchestrator import ReviewRun
         import asyncio
+
+        from verdity.orchestrator import ReviewRun
 
         async def slow_agent(run, index, te, audit):
             await asyncio.sleep(100)
@@ -3511,6 +3528,7 @@ class TestGatewayMiddleware:
         app.state._last_eviction = 0.0  # force eviction on next request
         # Make a valid request to trigger the middleware
         import json
+
         from verdity.hmac_verify import compute_signature
 
         payload = {

@@ -8,8 +8,8 @@ import pytest
 
 from verdity.semantic_index import (
     CodeChunk,
-    SymbolEdge,
     SemanticIndex,
+    SymbolEdge,
 )
 
 

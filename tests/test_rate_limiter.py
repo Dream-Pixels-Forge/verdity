@@ -229,7 +229,7 @@ async def test_with_github_backoff_decorator_factory():
 @pytest.mark.asyncio
 async def test_with_github_backoff_context_last_exc_raised():
     """Context wrapper raises last exception after exhausting retries."""
-    from verdity.rate_limiter import with_github_backoff_context, GitHubBackoffState
+    from verdity.rate_limiter import GitHubBackoffState, with_github_backoff_context
 
     async def always_fails():
         raise RuntimeError("final error")

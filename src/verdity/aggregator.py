@@ -16,8 +16,8 @@ from verdity.schemas import (
     Finding,
     RankedFinding,
     RepoRef,
-    SpecialistResponse,
     Severity,
+    SpecialistResponse,
 )
 
 logger = logging.getLogger(__name__)

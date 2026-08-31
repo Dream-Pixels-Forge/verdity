@@ -4,8 +4,9 @@ Tests for Phase 7: Budget Enforcement and Dashboard.
 
 from __future__ import annotations
 
-import pytest
 import uuid
+
+import pytest
 
 from verdity.budget_enforcer import BudgetEnforcer, DegradationSignal
 from verdity.token_economics import TokenEconomicsService

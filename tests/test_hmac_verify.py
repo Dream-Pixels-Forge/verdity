@@ -4,13 +4,11 @@ Tests for HMAC signature verification (non-negotiable constraint #1).
 
 from __future__ import annotations
 
-
 from verdity.hmac_verify import (
     compute_signature,
     verify_signature,
     verify_with_rotation,
 )
-
 
 SECRET = b"my-webhook-secret"
 BODY = b'{"action":"opened","repository":{"id":1}}'

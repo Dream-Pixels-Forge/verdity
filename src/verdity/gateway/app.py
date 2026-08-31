@@ -29,8 +29,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
-from verdity.audit_store import AuditStore
 from verdity.async_sqlite import AsyncConnection
+from verdity.audit_store import AuditStore
 from verdity.config import get_settings
 from verdity.event_queue import EventQueue
 from verdity.hmac_verify import verify_with_rotation

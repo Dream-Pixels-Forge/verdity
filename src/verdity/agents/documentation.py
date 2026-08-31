@@ -14,8 +14,8 @@ from verdity.schemas import (
     ConcernType,
     EvidenceItem,
     Finding,
-    SpecialistContext,
     Severity,
+    SpecialistContext,
 )
 from verdity.semantic_index import SemanticIndex
 

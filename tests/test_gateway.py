@@ -20,9 +20,8 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
-from verdity.hmac_verify import compute_signature
 from verdity.event_queue import EventQueue
-
+from verdity.hmac_verify import compute_signature
 
 WEBHOOK_SECRET = b"test-hmac-secret-key-for-dev-only"
 
@@ -59,9 +58,8 @@ def _sign(body: bytes) -> str:
 @pytest_asyncio.fixture
 async def gateway_client_and_queue() -> AsyncGenerator[tuple[AsyncClient, EventQueue], None]:
     """Create gateway client and expose the queue for inspection."""
-    from verdity.gateway.app import app
     from verdity.audit_store import AuditStore
-    from verdity.gateway.app import _RateLimiter, DeliveryCache
+    from verdity.gateway.app import DeliveryCache, _RateLimiter, app
 
     app.state.delivery_ids = set()
     app.state._delivery_cache_ts = {}
@@ -248,9 +246,8 @@ async def test_rate_limit_returns_429_after_exceeding_limit(gateway_client_and_q
 @pytest.mark.asyncio
 async def test_rate_limit_different_ips_are_independent():
     """Rate limit is per-IP — two different client IPs are tracked separately."""
-    from verdity.gateway.app import app
     from verdity.audit_store import AuditStore
-    from verdity.gateway.app import _RateLimiter, DeliveryCache
+    from verdity.gateway.app import DeliveryCache, _RateLimiter, app
 
     app.state.delivery_ids = set()
     app.state._delivery_cache_ts = {}
@@ -326,9 +323,8 @@ async def test_rate_limit_different_ips_are_independent():
 @pytest.mark.asyncio
 async def test_delivery_cache_persists_across_restart(tmp_path):
     """Delivery IDs persisted to SQLite survive a simulated restart."""
-    from verdity.gateway.app import app
     from verdity.audit_store import AuditStore
-    from verdity.gateway.app import _RateLimiter, DeliveryCache
+    from verdity.gateway.app import DeliveryCache, _RateLimiter, app
 
     cache_db = str(tmp_path / "delivery_cache.db")
     delivery_id = str(uuid.uuid4())
@@ -403,9 +399,8 @@ async def test_delivery_cache_persists_across_restart(tmp_path):
 @pytest.mark.asyncio
 async def test_delivery_cache_persist_called_on_accept(tmp_path):
     """When a new webhook is accepted, its delivery ID is persisted to the DB."""
-    from verdity.gateway.app import app
     from verdity.audit_store import AuditStore
-    from verdity.gateway.app import _RateLimiter, DeliveryCache
+    from verdity.gateway.app import DeliveryCache, _RateLimiter, app
 
     cache_db = str(tmp_path / "delivery_cache.db")
     delivery_id = str(uuid.uuid4())
