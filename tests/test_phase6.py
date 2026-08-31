@@ -4,14 +4,13 @@ Tests for Phase 6: Coding Agent, Verification Gate, Verifier Subagent, Regressio
 
 from __future__ import annotations
 
-
 from verdity.coding_agent import CodingAgent, ProposedFix
 from verdity.schemas import ConcernType, Finding, Severity
 from verdity.verification_gate import (
     CheckResult,
     RegressionRunner,
-    VerifierSubagent,
     VerificationGate,
+    VerifierSubagent,
 )
 
 

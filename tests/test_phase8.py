@@ -13,8 +13,8 @@ import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
-import pytest
 import httpx
+import pytest
 
 from verdity.agents.security import SecurityAgent
 from verdity.approval_queue import ApprovalQueueStore
@@ -23,7 +23,7 @@ from verdity.budget_enforcer import BudgetEnforcer, DegradationSignal
 from verdity.coding_agent import CodingAgent
 from verdity.event_queue import EventQueue
 from verdity.gateway.app import app
-from verdity.hmac_verify import verify_signature, compute_signature
+from verdity.hmac_verify import compute_signature, verify_signature
 from verdity.orchestrator import Orchestrator, resolve_specialists
 from verdity.router import RouteAction, compute_confidence, route_finding
 from verdity.schemas import (
@@ -39,7 +39,6 @@ from verdity.schemas._models import SpecialistContext
 from verdity.semantic_index import SemanticIndex
 from verdity.token_economics import TokenEconomicsService
 from verdity.webhook_normalizer import normalize_webhook
-
 
 # ═══════════════════════════════════════════════════════════════════════
 # Section 3 Checklist: Production-Ready Criteria
@@ -355,6 +354,7 @@ class TestSTRIDEChecklist:
     def S_spoofing_secret_rotation(self):
         """Spoofing: leaked secret → dual-secret rotation support."""
         import inspect
+
         from verdity.hmac_verify import verify_with_rotation
 
         src = inspect.getsource(verify_with_rotation)
@@ -365,6 +365,7 @@ class TestSTRIDEChecklist:
     def S_tampering_replay_detection(self):
         """Tampering: replay attack → delivery ID dedupe cache."""
         import inspect
+
         from verdity.gateway.app import app
 
         # Gateway must check delivery_id in state
@@ -394,8 +395,9 @@ class TestSTRIDEChecklist:
 
     def S_repudiation_audit_trail(self):
         """Repudiation: no record of decisions → append-only audit log."""
-        from verdity.audit_store import AuditStore
         import inspect
+
+        from verdity.audit_store import AuditStore
 
         src = inspect.getsource(AuditStore.append)
         assert "checksum" in src.lower() or "sha256" in src.lower(), (
@@ -415,6 +417,7 @@ class TestSTRIDEChecklist:
     def S_information_disclosure_tenant_isolation(self):
         """Info Disclosure: cross-tenant leakage → all stores partitioned by repo/org."""
         import inspect
+
         from verdity.semantic_index import SemanticIndex
 
         src = inspect.getsource(SemanticIndex.search)
@@ -450,7 +453,7 @@ class TestSTRIDEChecklist:
 
     def S_elevation_independent_verifier(self):
         """Elevation: coding agent self-review → independent verifier subagent."""
-        from verdity.verification_gate import VerifierSubagent, CodingAgent
+        from verdity.verification_gate import CodingAgent, VerifierSubagent
 
         # Verifier and CodingAgent are different classes
         assert VerifierSubagent is not CodingAgent
@@ -551,25 +554,25 @@ async def test_all_tests_pass_at_least_90_coverage():
     # The actual coverage check is enforced by pytest-cov's --cov-fail-under=100
     # in pyproject.toml, so we just verify key modules import cleanly.
     import verdity
-    import verdity.gateway.app
-    import verdity.orchestrator
-    import verdity.agents.security
     import verdity.agents.code_quality
-    import verdity.agents.testing
     import verdity.agents.documentation
+    import verdity.agents.security
+    import verdity.agents.testing
     import verdity.aggregator
-    import verdity.router
     import verdity.approval_queue
-    import verdity.coding_agent
-    import verdity.verification_gate
-    import verdity.budget_enforcer
-    import verdity.token_economics
-    import verdity.semantic_index
-    import verdity.hmac_verify
     import verdity.audit_store
-    import verdity.event_queue
-    import verdity.webhook_normalizer
+    import verdity.budget_enforcer
+    import verdity.coding_agent
     import verdity.config
+    import verdity.event_queue
+    import verdity.gateway.app
+    import verdity.hmac_verify
+    import verdity.orchestrator
+    import verdity.router
+    import verdity.semantic_index
+    import verdity.token_economics
+    import verdity.verification_gate
+    import verdity.webhook_normalizer
 
     # All imports succeed — structure is intact for full coverage
     assert verdity.__version__ == "0.2.1"

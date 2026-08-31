@@ -4,8 +4,9 @@ Tests for the Orchestrator (Phase 3).
 
 from __future__ import annotations
 
-import pytest
 import uuid
+
+import pytest
 
 from verdity.audit_store import AuditStore
 from verdity.event_queue import EventQueue

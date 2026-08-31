@@ -16,7 +16,6 @@ from typing import Any
 
 from verdity.async_sqlite import AsyncConnection
 
-
 # ── Price tables (per 1M tokens) — update when models change ─────────
 
 _PRICE_TABLE: dict[str, dict[str, float]] = {

@@ -16,7 +16,6 @@ from verdity.event_queue import EventQueue
 from verdity.semantic_index import SemanticIndex
 from verdity.token_economics import TokenEconomicsService
 
-
 # ── Temp DB directory (project-local .verdity-tests/) ─────────────────
 
 _TEST_DB_DIR = os.path.join(os.path.dirname(__file__), ".verdity-tests")
@@ -111,7 +110,7 @@ async def semantic_index() -> AsyncGenerator[SemanticIndex, None]:
 @pytest_asyncio.fixture
 async def gateway_client(settings) -> AsyncGenerator[AsyncClient, None]:
     """Build an AsyncClient against the gateway app with test state initialized."""
-    from verdity.gateway.app import app, DeliveryCache, _RateLimiter
+    from verdity.gateway.app import DeliveryCache, _RateLimiter, app
 
     app.state.delivery_ids = set()
     app.state._delivery_cache_ts = {}

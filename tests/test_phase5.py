@@ -4,8 +4,9 @@ Tests for Phase 5: Confidence Router + Approval Queue.
 
 from __future__ import annotations
 
-import pytest
 import uuid
+
+import pytest
 
 from verdity.approval_queue import ApprovalQueueStore
 from verdity.router import (

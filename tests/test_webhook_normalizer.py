@@ -101,6 +101,7 @@ class TestUnknownEvent:
 class TestDeliveryIdValidation:
     def test_empty_delivery_id_raises(self):
         import pytest
+
         from verdity.schemas import VerdityEvent
 
         with pytest.raises(Exception):  # Pydantic validation error

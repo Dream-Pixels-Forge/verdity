@@ -4,13 +4,15 @@ Tests for Phase 4: Code Quality, Testing, Documentation agents + Aggregator.
 
 from __future__ import annotations
 
-import pytest
 import uuid
+
+import pytest
 
 from verdity.agents.code_quality import CodeQualityAgent
 from verdity.agents.documentation import DocumentationAgent
 from verdity.agents.testing import TestingAgent
 from verdity.aggregator import AggregatorAgent
+from verdity.audit_store import AuditStore
 from verdity.schemas import (
     AggregatorOutput,
     ConcernType,
@@ -20,7 +22,6 @@ from verdity.schemas import (
     Severity,
     SpecialistResponse,
 )
-from verdity.audit_store import AuditStore
 from verdity.schemas._models import SpecialistContext
 from verdity.semantic_index import SemanticIndex
 from verdity.token_economics import TokenEconomicsService
