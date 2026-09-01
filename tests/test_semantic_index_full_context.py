@@ -201,6 +201,7 @@ impl Qux {}
 class TestIncrementalReindexing:
     @pytest.mark.asyncio
     async def test_get_files_needing_reindex(self):
+        import hashlib
         index = SemanticIndex(db_path=":memory:")
         await index.connect()
 
@@ -211,9 +212,13 @@ class TestIncrementalReindexing:
         ]
         await index.index_full_repo("test/repo", files)
 
+        # Compute actual hashes
+        hash1 = hashlib.sha256(b"content1").hexdigest()
+        hash2 = hashlib.sha256(b"content2").hexdigest()
+
         # Check which files need reindexing
         file_hashes = {
-            "file1.py": "hash1",  # same
+            "file1.py": hash1,  # same
             "file2.py": "hash2_new",  # changed
             "file3.py": "hash3",  # new
         }

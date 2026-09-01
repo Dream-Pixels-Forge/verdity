@@ -14,5 +14,6 @@ __version__ = "0.3.0"
 __all__ = [
     "__version__",
     "MCPServer",
+    "create_mcp_server",
     "ReviewRules",
 ]

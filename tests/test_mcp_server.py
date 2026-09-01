@@ -62,7 +62,7 @@ class TestMCPServer:
     @pytest.mark.asyncio
     async def test_call_tool_review_quality(self):
         server = MCPServer()
-        with patch("verdity.agents.quality.CodeQualityAgent") as mock_agent:
+        with patch("verdity.agents.code_quality.CodeQualityAgent") as mock_agent:
             mock_instance = MagicMock()
             mock_result = MagicMock()
             mock_result.findings = []

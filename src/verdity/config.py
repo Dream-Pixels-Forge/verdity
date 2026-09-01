@@ -85,3 +85,6 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Return a cached Settings instance. Cached so environment is read once."""
     return Settings()
+
+
+InspectorConfig = Settings

@@ -13,12 +13,40 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from .agents.base import AgentInput
 from .config import InspectorConfig
 from .model_fallback import MultiModelFallback
 from .orchestrator import Orchestrator
+from .schemas import (
+    ConcernType,
+    Finding,
+    ReviewPolicy,
+    Severity,
+)
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class AgentInput:
+    """Input for a specialist agent (MCP interface)."""
+    diff: str
+    context: str = ""
+    file_path: str = ""
+    language: str = ""
+    diff_files: List[Dict[str, Any]] = field(default_factory=list)
+
+
+def _diff_to_files(diff: str, file_path: str = "") -> List[Dict[str, Any]]:
+    """Convert a unified diff string to diff_files format."""
+    if not diff:
+        return []
+    if file_path:
+        return [{"path": file_path, "content": diff, "additions": diff, "deletions": ""}]
+    return [{"path": "unknown", "content": diff, "additions": diff, "deletions": ""}]
 
 logger = logging.getLogger(__name__)
 
@@ -315,175 +343,211 @@ class MCPServer:
 
     async def _review_security(self, args: Dict[str, Any]) -> Dict[str, Any]:
         """Run security review."""
-        diff = args["diff"]
-        context = args.get("context", "")
-        file_path = args.get("file_path", "")
-        language = args.get("language", "")
+        from .agents.security import SecurityAgent
+        from .semantic_index import SemanticIndex
+        from .token_economics import TokenEconomicsService
+        from .audit_store import AuditStore
+        from .schemas import SpecialistContext
 
-        agent_input = AgentInput(
-            diff=diff,
-            context=context,
-            file_path=file_path,
-            language=language,
+        diff = args.get("diff", "")
+        file_path = args.get("file_path", "")
+
+        ctx = SpecialistContext(
+            review_run_id=uuid.uuid4(),
+            repo_owner="mcp",
+            repo_name="client",
+            base_sha="",
+            head_sha="",
+            diff_files=_diff_to_files(diff, file_path),
+            policy=ReviewPolicy(),
         )
 
-        from .agents.security import SecurityAgent
-        agent = SecurityAgent(multi_model=self.multi_model)
-        result = await agent.run(agent_input)
+        agent = SecurityAgent(fallback=self.multi_model)
+        index = SemanticIndex()
+        economics = TokenEconomicsService()
+        audit = AuditStore()
 
-        return {
-            "findings": [
+        try:
+            result = await agent.run(ctx, index, economics, audit)
+            findings = [
                 {
-                    "rule_id": f.rule_id,
-                    "message": f.message,
-                    "file_path": f.file_path,
-                    "line": f.line,
+                    "rule_id": f"security-{i}",
+                    "message": f.summary,
+                    "file_path": f.file,
+                    "line": f.line_start,
                     "severity": f.severity.value if hasattr(f.severity, 'value') else str(f.severity),
                     "confidence": f.confidence,
                 }
-                for f in result.findings
-            ],
-            "summary": result.summary,
-            "agent": "security",
-        }
+                for i, f in enumerate(result.findings)
+            ]
+            return {"findings": findings, "summary": result.summary, "agent": "security"}
+        except Exception as e:
+            return {"findings": [], "summary": str(e), "agent": "security", "error": str(e)}
 
     async def _review_quality(self, args: Dict[str, Any]) -> Dict[str, Any]:
         """Run code quality review."""
-        diff = args["diff"]
-        context = args.get("context", "")
-        file_path = args.get("file_path", "")
-        language = args.get("language", "")
+        from .agents.code_quality import CodeQualityAgent
+        from .semantic_index import SemanticIndex
+        from .token_economics import TokenEconomicsService
+        from .audit_store import AuditStore
+        from .schemas import SpecialistContext
 
-        agent_input = AgentInput(
-            diff=diff,
-            context=context,
-            file_path=file_path,
-            language=language,
+        diff = args.get("diff", "")
+        file_path = args.get("file_path", "")
+
+        ctx = SpecialistContext(
+            review_run_id=uuid.uuid4(),
+            repo_owner="mcp",
+            repo_name="client",
+            base_sha="",
+            head_sha="",
+            diff_files=_diff_to_files(diff, file_path),
+            policy=ReviewPolicy(),
         )
 
-        from .agents.quality import CodeQualityAgent
-        agent = CodeQualityAgent(multi_model=self.multi_model)
-        result = await agent.run(agent_input)
+        agent = CodeQualityAgent(fallback=self.multi_model)
+        index = SemanticIndex()
+        economics = TokenEconomicsService()
+        audit = AuditStore()
 
-        return {
-            "findings": [
+        try:
+            result = await agent.run(ctx, index, economics, audit)
+            findings = [
                 {
-                    "rule_id": f.rule_id,
-                    "message": f.message,
-                    "file_path": f.file_path,
-                    "line": f.line,
+                    "rule_id": f"quality-{i}",
+                    "message": f.summary,
+                    "file_path": f.file,
+                    "line": f.line_start,
                     "severity": f.severity.value if hasattr(f.severity, 'value') else str(f.severity),
                     "confidence": f.confidence,
                 }
-                for f in result.findings
-            ],
-            "summary": result.summary,
-            "agent": "quality",
-        }
+                for i, f in enumerate(result.findings)
+            ]
+            return {"findings": findings, "summary": result.summary, "agent": "quality"}
+        except Exception as e:
+            return {"findings": [], "summary": str(e), "agent": "quality", "error": str(e)}
 
     async def _review_testing(self, args: Dict[str, Any]) -> Dict[str, Any]:
         """Run testing review."""
-        diff = args["diff"]
-        context = args.get("context", "")
-        file_path = args.get("file_path", "")
-        language = args.get("language", "")
+        from .agents.testing import TestingAgent
+        from .semantic_index import SemanticIndex
+        from .token_economics import TokenEconomicsService
+        from .audit_store import AuditStore
+        from .schemas import SpecialistContext
 
-        agent_input = AgentInput(
-            diff=diff,
-            context=context,
-            file_path=file_path,
-            language=language,
+        diff = args.get("diff", "")
+        file_path = args.get("file_path", "")
+
+        ctx = SpecialistContext(
+            review_run_id=uuid.uuid4(),
+            repo_owner="mcp",
+            repo_name="client",
+            base_sha="",
+            head_sha="",
+            diff_files=_diff_to_files(diff, file_path),
+            policy=ReviewPolicy(),
         )
 
-        from .agents.testing import TestingAgent
-        agent = TestingAgent(multi_model=self.multi_model)
-        result = await agent.run(agent_input)
+        agent = TestingAgent(fallback=self.multi_model)
+        index = SemanticIndex()
+        economics = TokenEconomicsService()
+        audit = AuditStore()
 
-        return {
-            "findings": [
+        try:
+            result = await agent.run(ctx, index, economics, audit)
+            findings = [
                 {
-                    "rule_id": f.rule_id,
-                    "message": f.message,
-                    "file_path": f.file_path,
-                    "line": f.line,
+                    "rule_id": f"testing-{i}",
+                    "message": f.summary,
+                    "file_path": f.file,
+                    "line": f.line_start,
                     "severity": f.severity.value if hasattr(f.severity, 'value') else str(f.severity),
                     "confidence": f.confidence,
                 }
-                for f in result.findings
-            ],
-            "summary": result.summary,
-            "agent": "testing",
-        }
+                for i, f in enumerate(result.findings)
+            ]
+            return {"findings": findings, "summary": result.summary, "agent": "testing"}
+        except Exception as e:
+            return {"findings": [], "summary": str(e), "agent": "testing", "error": str(e)}
 
     async def _review_documentation(self, args: Dict[str, Any]) -> Dict[str, Any]:
         """Run documentation review."""
-        diff = args["diff"]
-        context = args.get("context", "")
-        file_path = args.get("file_path", "")
-        language = args.get("language", "")
+        from .agents.documentation import DocumentationAgent
+        from .semantic_index import SemanticIndex
+        from .token_economics import TokenEconomicsService
+        from .audit_store import AuditStore
+        from .schemas import SpecialistContext
 
-        agent_input = AgentInput(
-            diff=diff,
-            context=context,
-            file_path=file_path,
-            language=language,
+        diff = args.get("diff", "")
+        file_path = args.get("file_path", "")
+
+        ctx = SpecialistContext(
+            review_run_id=uuid.uuid4(),
+            repo_owner="mcp",
+            repo_name="client",
+            base_sha="",
+            head_sha="",
+            diff_files=_diff_to_files(diff, file_path),
+            policy=ReviewPolicy(),
         )
 
-        from .agents.documentation import DocumentationAgent
-        agent = DocumentationAgent(multi_model=self.multi_model)
-        result = await agent.run(agent_input)
+        agent = DocumentationAgent(fallback=self.multi_model)
+        index = SemanticIndex()
+        economics = TokenEconomicsService()
+        audit = AuditStore()
 
-        return {
-            "findings": [
+        try:
+            result = await agent.run(ctx, index, economics, audit)
+            findings = [
                 {
-                    "rule_id": f.rule_id,
-                    "message": f.message,
-                    "file_path": f.file_path,
-                    "line": f.line,
+                    "rule_id": f"docs-{i}",
+                    "message": f.summary,
+                    "file_path": f.file,
+                    "line": f.line_start,
                     "severity": f.severity.value if hasattr(f.severity, 'value') else str(f.severity),
                     "confidence": f.confidence,
                 }
-                for f in result.findings
-            ],
-            "summary": result.summary,
-            "agent": "documentation",
-        }
+                for i, f in enumerate(result.findings)
+            ]
+            return {"findings": findings, "summary": result.summary, "agent": "documentation"}
+        except Exception as e:
+            return {"findings": [], "summary": str(e), "agent": "documentation", "error": str(e)}
 
     async def _review_full(self, args: Dict[str, Any]) -> Dict[str, Any]:
         """Run full review with all agents."""
-        diff = args["diff"]
-        context = args.get("context", "")
-        file_path = args.get("file_path", "")
-        language = args.get("language", "")
-
-        agent_input = AgentInput(
-            diff=diff,
-            context=context,
-            file_path=file_path,
-            language=language,
-        )
-
         if not self._orchestrator:
             await self.initialize()
 
-        result = await self._orchestrator.review(agent_input)
+        diff = args.get("diff", "")
+        file_path = args.get("file_path", "")
 
-        return {
-            "findings": [
+        from .schemas import SpecialistContext
+        ctx = SpecialistContext(
+            review_run_id=uuid.uuid4(),
+            repo_owner="mcp",
+            repo_name="client",
+            base_sha="",
+            head_sha="",
+            diff_files=_diff_to_files(diff, file_path),
+            policy=ReviewPolicy(),
+        )
+
+        try:
+            result = await self._orchestrator.review(ctx)
+            findings = [
                 {
-                    "rule_id": f.rule_id,
-                    "message": f.message,
-                    "file_path": f.file_path,
-                    "line": f.line,
+                    "rule_id": f"full-{i}",
+                    "message": f.summary,
+                    "file_path": f.file,
+                    "line": f.line_start,
                     "severity": f.severity.value if hasattr(f.severity, 'value') else str(f.severity),
                     "confidence": f.confidence,
-                    "agent": f.agent if hasattr(f, 'agent') else 'unknown',
                 }
-                for f in result.findings
-            ],
-            "summary": result.summary,
-            "agent": "full",
-        }
+                for i, f in enumerate(result.findings)
+            ]
+            return {"findings": findings, "summary": result.summary, "agent": "full"}
+        except Exception as e:
+            return {"findings": [], "summary": str(e), "agent": "full", "error": str(e)}
 
     async def _generate_fix(self, args: Dict[str, Any]) -> Dict[str, Any]:
         """Generate a fix for a finding."""
