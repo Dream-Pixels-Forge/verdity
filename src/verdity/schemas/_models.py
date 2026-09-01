@@ -49,6 +49,8 @@ class PullRequestRef(BaseModel):
     head_sha: StrictStr
     base_sha: StrictStr
     draft: bool = False
+    additions: int = 0
+    deletions: int = 0
 
 
 # ── Main Event ───────────────────────────────────────────────────────

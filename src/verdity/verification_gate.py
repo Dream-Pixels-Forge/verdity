@@ -134,26 +134,48 @@ class VerificationGate:
 
         Only inspects non-comment lines for actual secret assignment patterns
         (e.g. `password = "sk-..."`) — not keywords in comments or docstrings.
+        Uses precise regex patterns to detect secret assignments while allowing
+        reading from environment/vault sources.
         """
         import re
-        secret_pattern = re.compile(
-            r"""(?:password|secret|api_key|token|credential)\s*=\s*(?:['"][^'"]{8,}['"]|"""  # string literal
-            r"""['"][^'"]*['"])""",
-            re.IGNORECASE,
-        )
+        # Patterns that indicate reading from env/vault (safe)
+        env_read_patterns = [
+            r"os\.environ\.get?\s*\(['\"]",
+            r"os\.getenv\s*\(['\"]",
+            r"from\s+vault",
+            r"settings\.[a-zA-Z_]+",  # settings access is allowed
+        ]
+        # Patterns that indicate hard-coded secret assignment (unsafe)
+        # Match: keyword = "value" or keyword = 'value' where value is 8+ chars
+        # The value is checked to ensure it doesn't look like an env/vault reference
+        secret_assignment_patterns = [
+            r"(?:password|secret|api_key|token|credential)\s*=\s*(?:'([^']+)'|\"([^\"]+)\")",
+        ]
         env_sources = ("settings", "os.environ", "os.getenv", "getenv", "environ", "vault")
         for line in fix.suggested_lines:
             stripped = line.strip()
             if stripped.startswith("#") or stripped.startswith('"""') or stripped.startswith("'''"):
                 continue
-            if secret_pattern.search(stripped):
-                if any(src in stripped for src in env_sources):
-                    continue  # reading from env/vault is ok
-                return GateCheck(
-                    name="no_new_secrets",
-                    result=CheckResult.FAIL,
-                    reason=f"Potential hard-coded secret in fix line: {stripped}",
-                )
+            # Check if line reads from env/vault first
+            is_env_read = any(
+                re.search(pattern, stripped) for pattern in env_read_patterns
+            )
+            if is_env_read:
+                continue  # reading from env/vault is ok
+            # Check for hard-coded secret assignment
+            for pattern in secret_assignment_patterns:
+                match = re.search(pattern, stripped, re.IGNORECASE)
+                if match:
+                    # Extract the assigned value (group 1 for single quotes, group 2 for double quotes)
+                    assigned_value = match.group(1) or match.group(2)
+                    # Check if the value looks like an env/vault reference
+                    if assigned_value and any(src in assigned_value.lower() for src in env_sources):
+                        continue  # reading from env/vault is ok
+                    return GateCheck(
+                        name="no_new_secrets",
+                        result=CheckResult.FAIL,
+                        reason=f"Potential hard-coded secret in fix line: {stripped}",
+                    )
         return GateCheck(name="no_new_secrets", result=CheckResult.PASS)
 
 

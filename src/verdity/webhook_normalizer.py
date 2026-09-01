@@ -60,12 +60,25 @@ def normalize_webhook(
     """
     trigger = _TRIGGER_MAP.get((event_name, action))
     if trigger is None:
-        # Normalize unknown events gracefully — fall back to a generic trigger
-        normalized = event_name.lower().replace("_", ".")
-        if action:
-            normalized += f".{action}"
-        logger.warning("Unknown event+action: %s/%s — using generic trigger", event_name, action)
-        trigger = TriggerType.PR_OPENED  # safe fallback; the raw event name is preserved in delivery_id
+        # Try mapping by event name only (without action)
+        name_only_trigger = _TRIGGER_MAP.get((event_name, None))
+        if name_only_trigger is not None:
+            logger.warning(
+                "Unknown action '%s' for event %s — using trigger %s from event name only",
+                action, event_name, name_only_trigger,
+            )
+            trigger = name_only_trigger
+        else:
+            # Normalize unknown events gracefully — fall back to a generic trigger
+            normalized = event_name.lower().replace("_", ".")
+            if action:
+                normalized += f".{action}"
+            logger.warning(
+                "Unknown event+action: %s/%s — using generic trigger PR_OPENED "
+                "(raw event name preserved in delivery_id for debugging)",
+                event_name, action,
+            )
+            trigger = TriggerType.PR_OPENED  # safe fallback; the raw event name is preserved in delivery_id
 
     repo = _extract_repo(payload)
 
@@ -78,6 +91,8 @@ def normalize_webhook(
             head_sha=(pr.get("head") or {}).get("sha", ""),
             base_sha=(pr.get("base") or {}).get("sha", ""),
             draft=pr.get("draft", False),
+            additions=pr.get("additions", 0) or 0,
+            deletions=pr.get("deletions", 0) or 0,
         )
 
     # For push events, capture the new HEAD ref
