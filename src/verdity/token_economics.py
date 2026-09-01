@@ -16,7 +16,6 @@ from typing import Any
 
 from verdity.async_sqlite import AsyncConnection
 
-
 # ── Price tables (per 1M tokens) — update when models change ─────────
 
 _PRICE_TABLE: dict[str, dict[str, float]] = {
@@ -180,8 +179,12 @@ class TokenEconomicsService:
                    "degrade_signal": str | None}
         """
         if budget_usd <= 0:
-            return {"within_budget": True, "spend_usd": 0.0, "budget_usd": budget_usd,
-                    "degrade_signal": None}
+            return {
+                "within_budget": True,
+                "spend_usd": 0.0,
+                "budget_usd": budget_usd,
+                "degrade_signal": None,
+            }
 
         stats = await self.get_spend(repo_owner=repo_owner, repo_name=repo_name)
         spend = stats["spend_usd"]

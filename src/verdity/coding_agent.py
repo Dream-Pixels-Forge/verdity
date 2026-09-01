@@ -21,6 +21,7 @@ AGENT_VERSION = "coding-agent@0.1.0"
 @dataclass
 class ProposedFix:
     """A proposed code change for a single finding."""
+
     finding_id: uuid.UUID
     file: str
     original_line: int
@@ -61,7 +62,7 @@ class CodingAgent:
                 explanation="Hard-coded credential should use environment variable or secrets manager",
                 fix_type="secret_removal",
             )
-        elif "sql" in summary and ("injection" in summary or "f\"" in finding.explanation):
+        elif "sql" in summary and ("injection" in summary or 'f"' in finding.explanation):
             return ProposedFix(
                 finding_id=finding.finding_id,
                 file=finding.file,
@@ -69,7 +70,7 @@ class CodingAgent:
                 suggested_lines=[
                     "# Use parameterized query instead of f-string",
                     f"# Original at {finding.file}:{finding.line_start}",
-                    "cursor.execute(\"SELECT * FROM users WHERE id = %s\", (user_id,))",
+                    'cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))',
                 ],
                 explanation="Replace string concatenation with parameterized query",
                 fix_type="sql_fix",

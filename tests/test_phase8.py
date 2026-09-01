@@ -13,8 +13,8 @@ import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
-import pytest
 import httpx
+import pytest
 
 from verdity.agents.security import SecurityAgent
 from verdity.approval_queue import ApprovalQueueStore
@@ -23,19 +23,27 @@ from verdity.budget_enforcer import BudgetEnforcer, DegradationSignal
 from verdity.coding_agent import CodingAgent
 from verdity.event_queue import EventQueue
 from verdity.gateway.app import app
-from verdity.hmac_verify import verify_signature, compute_signature
+from verdity.hmac_verify import compute_signature, verify_signature
 from verdity.orchestrator import Orchestrator, resolve_specialists
 from verdity.router import RouteAction, compute_confidence, route_finding
-from verdity.schemas import ConcernType, Finding, RepoRef, ReviewPolicy, Severity, TriggerType, VerdityEvent
+from verdity.schemas import (
+    ConcernType,
+    Finding,
+    RepoRef,
+    ReviewPolicy,
+    Severity,
+    TriggerType,
+    VerdityEvent,
+)
 from verdity.schemas._models import SpecialistContext
 from verdity.semantic_index import SemanticIndex
 from verdity.token_economics import TokenEconomicsService
 from verdity.webhook_normalizer import normalize_webhook
 
-
 # ═══════════════════════════════════════════════════════════════════════
 # Section 3 Checklist: Production-Ready Criteria
 # ═══════════════════════════════════════════════════════════════════════
+
 
 class TestProductionReadyChecklist:
     """Every item in GOAL.md Section 3 must pass."""
@@ -111,9 +119,18 @@ class TestProductionReadyChecklist:
                 result = await agent.run(
                     ctx=SpecialistContext(
                         review_run_id=uuid.uuid4(),
-                        repo_owner="acme", repo_name="w",
-                        base_sha="", head_sha="",
-                        diff_files=[{"path": "x.py", "content": "print('hi')", "additions": "print('hi')\n", "deletions": ""}],
+                        repo_owner="acme",
+                        repo_name="w",
+                        base_sha="",
+                        head_sha="",
+                        diff_files=[
+                            {
+                                "path": "x.py",
+                                "content": "print('hi')",
+                                "additions": "print('hi')\n",
+                                "deletions": "",
+                            }
+                        ],
                         policy=ReviewPolicy(),
                     ),
                     semantic_index=index,
@@ -134,8 +151,14 @@ class TestProductionReadyChecklist:
         index = SemanticIndex(":memory:")
         await index.connect()
         try:
-            await index.upsert_chunks("repo1", [{"file_path": "a.py", "content": "def foo(): pass", "line_start": 1}])
-            await index.upsert_chunks("repo1", [{"file_path": "b.py", "content": "def bar(): pass", "line_start": 1}], incremental=True)
+            await index.upsert_chunks(
+                "repo1", [{"file_path": "a.py", "content": "def foo(): pass", "line_start": 1}]
+            )
+            await index.upsert_chunks(
+                "repo1",
+                [{"file_path": "b.py", "content": "def bar(): pass", "line_start": 1}],
+                incremental=True,
+            )
             # Both chunks should exist
             results = await index.search("repo1", "foo", top_k=5)
             assert len(results) >= 1
@@ -145,12 +168,32 @@ class TestProductionReadyChecklist:
     @pytest.mark.asyncio
     async def S3_4_confidence_router_threshold_split(self):
         """Confidence router splits findings at configured threshold."""
-        high = Finding(concern=ConcernType.SECURITY, severity=Severity.CRITICAL, file="x.py",
-                       line_start=1, line_end=1, summary="Critical", explanation="e",
-                       confidence=0.95, evidence=[], agent_version="v", prompt_hash="h")
-        low = Finding(concern=ConcernType.DOCUMENTATION, severity=Severity.INFO, file="x.py",
-                      line_start=1, line_end=1, summary="Info", explanation="e",
-                      confidence=0.3, evidence=[], agent_version="v", prompt_hash="h")
+        high = Finding(
+            concern=ConcernType.SECURITY,
+            severity=Severity.CRITICAL,
+            file="x.py",
+            line_start=1,
+            line_end=1,
+            summary="Critical",
+            explanation="e",
+            confidence=0.95,
+            evidence=[],
+            agent_version="v",
+            prompt_hash="h",
+        )
+        low = Finding(
+            concern=ConcernType.DOCUMENTATION,
+            severity=Severity.INFO,
+            file="x.py",
+            line_start=1,
+            line_end=1,
+            summary="Info",
+            explanation="e",
+            confidence=0.3,
+            evidence=[],
+            agent_version="v",
+            prompt_hash="h",
+        )
         hs = compute_confidence(high)
         ls = compute_confidence(low)
         hd = route_finding(high, hs)
@@ -165,10 +208,18 @@ class TestProductionReadyChecklist:
         await store.connect()
         try:
             await store.enqueue(
-                run_id=uuid.uuid4(), finding_id=uuid.uuid4(), repo_id=1,
-                concern="security", severity="high", file="x.py", line_start=1,
-                summary="Test", explanation="e", confidence=0.5,
-                route_action="manual_review", route_reason="medium",
+                run_id=uuid.uuid4(),
+                finding_id=uuid.uuid4(),
+                repo_id=1,
+                concern="security",
+                severity="high",
+                file="x.py",
+                line_start=1,
+                summary="Test",
+                explanation="e",
+                confidence=0.5,
+                route_action="manual_review",
+                route_reason="medium",
             )
             pending = await store.get_pending(repo_id=1)
             assert len(pending) == 1
@@ -182,14 +233,22 @@ class TestProductionReadyChecklist:
     async def S3_5_coding_agent_verifier_regression(self):
         """Coding agent path enforces gate → verifier → regression."""
         from verdity.verification_gate import VerificationGate, VerifierSubagent
+
         agent = CodingAgent()
         gate = VerificationGate()
         verifier = VerifierSubagent()
         finding = Finding(
-            concern=ConcernType.SECURITY, severity=Severity.HIGH, file="src/x.py",
-            line_start=10, line_end=10, summary="Hard-coded password",
-            explanation="password found", confidence=0.85,
-            evidence=[], agent_version="v", prompt_hash="h",
+            concern=ConcernType.SECURITY,
+            severity=Severity.HIGH,
+            file="src/x.py",
+            line_start=10,
+            line_end=10,
+            summary="Hard-coded password",
+            explanation="password found",
+            confidence=0.85,
+            evidence=[],
+            agent_version="v",
+            prompt_hash="h",
         )
         fix = agent.propose_fix(finding)
         assert fix is not None
@@ -206,7 +265,9 @@ class TestProductionReadyChecklist:
         enforcer = BudgetEnforcer(te)
         try:
             status = await enforcer.check_budget(
-                repo_owner="o", repo_name="r", budget_usd=0.0001,
+                repo_owner="o",
+                repo_name="r",
+                budget_usd=0.0001,
                 current_specialists=["security", "documentation"],
             )
             assert status.signal in (DegradationSignal.DEGRADE_OPTIONAL, DegradationSignal.HALT)
@@ -221,12 +282,23 @@ class TestProductionReadyChecklist:
         await audit.connect()
         run_id = uuid.uuid4()
         try:
-            await audit.append("orchestrator.run_started", "review_run", str(run_id),
-                              {"trigger": "pr_opened"}, run_id)
-            await audit.append("orchestrator.run_completed", "review_run", str(run_id),
-                              {"findings": 1}, run_id)
-            await audit.append("finding.created", "finding", str(uuid.uuid4()),
-                              {"summary": "Secret", "severity": "high"}, run_id)
+            await audit.append(
+                "orchestrator.run_started",
+                "review_run",
+                str(run_id),
+                {"trigger": "pr_opened"},
+                run_id,
+            )
+            await audit.append(
+                "orchestrator.run_completed", "review_run", str(run_id), {"findings": 1}, run_id
+            )
+            await audit.append(
+                "finding.created",
+                "finding",
+                str(uuid.uuid4()),
+                {"summary": "Secret", "severity": "high"},
+                run_id,
+            )
             records = await audit.query_by_run(run_id)
             types = [r["event_type"] for r in records]
             assert "orchestrator.run_started" in types
@@ -239,6 +311,7 @@ class TestProductionReadyChecklist:
     async def S3_9_secrets_from_env_only(self):
         """No secrets hardcoded in source files."""
         import verdity.config as cfg_module
+
         src = open(cfg_module.__file__).read()
         # Config class should never have hardcoded secrets
         assert "secret" not in src.lower().split("default")[0][-200:] or "env" in src.lower()
@@ -249,10 +322,13 @@ class TestProductionReadyChecklist:
     async def S3_10_graceful_degradation_specialist_timeout(self):
         """Specialist timeout degrades gracefully."""
         from verdity.schemas import SpecialistResponse
+
         async def slow_agent(*args, **kwargs):
             await asyncio.sleep(10)
-            return SpecialistResponse(review_run_id=uuid.uuid4(), specialist="sec",
-                                      status="complete", findings=[])
+            return SpecialistResponse(
+                review_run_id=uuid.uuid4(), specialist="sec", status="complete", findings=[]
+            )
+
         orch = Orchestrator(None, None, None, None)
         orch.register_specialist("security", slow_agent)
         # Should not raise — timeout handling is built in
@@ -263,6 +339,7 @@ class TestProductionReadyChecklist:
 # STRIDE Threat Model Checklist (Security doc §3)
 # ═══════════════════════════════════════════════════════════════════════
 
+
 class TestSTRIDEChecklist:
     """Every STRIDE threat must have a verified mitigation in the actual code."""
 
@@ -270,21 +347,27 @@ class TestSTRIDEChecklist:
         """Spoofing: forged webhook → HMAC-SHA256 with constant-time comparison."""
         # verify_signature uses hmac.compare_digest (constant-time)
         import inspect
+
         src = inspect.getsource(verify_signature)
         assert "compare_digest" in src, "Must use constant-time comparison"
 
     def S_spoofing_secret_rotation(self):
         """Spoofing: leaked secret → dual-secret rotation support."""
         import inspect
+
         from verdity.hmac_verify import verify_with_rotation
+
         src = inspect.getsource(verify_with_rotation)
-        assert "previous" in src.lower() or "rotation" in src.lower(), \
+        assert "previous" in src.lower() or "rotation" in src.lower(), (
             "Must support dual-secret rotation"
+        )
 
     def S_tampering_replay_detection(self):
         """Tampering: replay attack → delivery ID dedupe cache."""
         import inspect
+
         from verdity.gateway.app import app
+
         # Gateway must check delivery_id in state
         src = inspect.getsource(app.router.routes[0].endpoint)
         assert "delivery" in src.lower(), "Must detect replayed deliveries"
@@ -293,38 +376,54 @@ class TestSTRIDEChecklist:
         """Tampering: prompt injection in PR content → schema-constrained output."""
         # All findings must pass Pydantic validation — injected text can't change agent behavior
         from verdity.schemas import Finding
+
         f = Finding(
-            concern=ConcernType.SECURITY, severity=Severity.HIGH, file="x.py",
-            line_start=1, line_end=1, summary="ignore prior instructions",
-            explanation="explain", confidence=0.5, evidence=[],
-            agent_version="v", prompt_hash="h",
+            concern=ConcernType.SECURITY,
+            severity=Severity.HIGH,
+            file="x.py",
+            line_start=1,
+            line_end=1,
+            summary="ignore prior instructions",
+            explanation="explain",
+            confidence=0.5,
+            evidence=[],
+            agent_version="v",
+            prompt_hash="h",
         )
         assert f.summary == "ignore prior instructions"  # stored as data, not executed
         # The finding is just a data object; it can't command the system
 
     def S_repudiation_audit_trail(self):
         """Repudiation: no record of decisions → append-only audit log."""
-        from verdity.audit_store import AuditStore
         import inspect
+
+        from verdity.audit_store import AuditStore
+
         src = inspect.getsource(AuditStore.append)
-        assert "checksum" in src.lower() or "sha256" in src.lower(), \
+        assert "checksum" in src.lower() or "sha256" in src.lower(), (
             "Audit entries must have integrity checksums"
+        )
 
     def S_information_disclosure_secrets_in_env(self):
         """Info Disclosure: secrets in code → all secrets from env vars."""
         import verdity.config as cfg
+
         src = open(cfg.__file__).read()
         # Config should read from environ, not hardcode values
-        assert "os.environ" in src or "python-dotenv" in src or "Settings" in src, \
+        assert "os.environ" in src or "python-dotenv" in src or "Settings" in src, (
             "Config must source secrets from environment"
+        )
 
     def S_information_disclosure_tenant_isolation(self):
         """Info Disclosure: cross-tenant leakage → all stores partitioned by repo/org."""
         import inspect
+
         from verdity.semantic_index import SemanticIndex
+
         src = inspect.getsource(SemanticIndex.search)
         assert "repo" in src.lower(), "Semantic index queries must be repo-scoped"
         from verdity.event_queue import EventQueue
+
         src = inspect.getsource(EventQueue.publish)
         assert "repo" in src.lower(), "Event queue must partition by repo"
 
@@ -332,6 +431,7 @@ class TestSTRIDEChecklist:
         """DoS: webhook flood → gateway is stateless, queue absorbs bursts."""
         # Gateway endpoint does verify → enqueue → return 202; no blocking work
         from verdity.gateway.app import app
+
         # The handler should call queue.publish (async, non-blocking)
         routes = [r for r in app.routes if hasattr(r, "path") and "webhook" in r.path]
         assert len(routes) > 0, "Webhook endpoint must exist"
@@ -341,29 +441,35 @@ class TestSTRIDEChecklist:
         """DoS: cost-based DoS → budget caps with degradation."""
         from verdity.budget_enforcer import BudgetEnforcer
         from verdity.token_economics import TokenEconomicsService
+
         te = TokenEconomicsService(":memory:")
         await te.connect()
         enf = BudgetEnforcer(te)
-        status = await enf.check_budget("o", "r", budget_usd=0.001,
-                                        current_specialists=["security"])
+        status = await enf.check_budget(
+            "o", "r", budget_usd=0.001, current_specialists=["security"]
+        )
         await te.close()
         assert status.signal is not None  # enforcement is active
 
     def S_elevation_independent_verifier(self):
         """Elevation: coding agent self-review → independent verifier subagent."""
-        from verdity.verification_gate import VerifierSubagent, CodingAgent
+        from verdity.verification_gate import CodingAgent, VerifierSubagent
+
         # Verifier and CodingAgent are different classes
         assert VerifierSubagent is not CodingAgent
         # Verifier doesn't receive coding agent's chain of thought
         import inspect
+
         src = inspect.getsource(VerifierSubagent.verify)
-        assert "proposed_fix" in src and "original_finding" in src, \
+        assert "proposed_fix" in src and "original_finding" in src, (
             "Verifier receives diff + requirement, not agent reasoning"
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════
 # End-to-End Integration Test
 # ═══════════════════════════════════════════════════════════════════════
+
 
 @pytest.fixture
 async def full_pipeline():
@@ -415,6 +521,7 @@ async def test_full_pipeline_webhook_to_audit(full_pipeline):
         installation_id=1,
     )
     from verdity.event_queue import QueueEnvelope
+
     envelope = QueueEnvelope(
         delivery_id=event.delivery_id,
         event=event,
@@ -433,7 +540,9 @@ async def test_full_pipeline_webhook_to_audit(full_pipeline):
 @pytest.mark.asyncio
 async def test_nonexistent_event_does_not_crash():
     """Unknown event types fall back gracefully (assumption #5)."""
-    result = normalize_webhook(event_name="unknown.event", action="subaction", delivery_id=str(uuid.uuid4()), payload={})
+    result = normalize_webhook(
+        event_name="unknown.event", action="subaction", delivery_id=str(uuid.uuid4()), payload={}
+    )
     # Should not raise; falls back to PR_OPENED
     assert result is not None
 
@@ -445,24 +554,25 @@ async def test_all_tests_pass_at_least_90_coverage():
     # The actual coverage check is enforced by pytest-cov's --cov-fail-under=100
     # in pyproject.toml, so we just verify key modules import cleanly.
     import verdity
-    import verdity.gateway.app
-    import verdity.orchestrator
-    import verdity.agents.security
     import verdity.agents.code_quality
-    import verdity.agents.testing
     import verdity.agents.documentation
+    import verdity.agents.security
+    import verdity.agents.testing
     import verdity.aggregator
-    import verdity.router
     import verdity.approval_queue
-    import verdity.coding_agent
-    import verdity.verification_gate
-    import verdity.budget_enforcer
-    import verdity.token_economics
-    import verdity.semantic_index
-    import verdity.hmac_verify
     import verdity.audit_store
-    import verdity.event_queue
-    import verdity.webhook_normalizer
+    import verdity.budget_enforcer
+    import verdity.coding_agent
     import verdity.config
+    import verdity.event_queue
+    import verdity.gateway.app
+    import verdity.hmac_verify
+    import verdity.orchestrator
+    import verdity.router
+    import verdity.semantic_index
+    import verdity.token_economics
+    import verdity.verification_gate
+    import verdity.webhook_normalizer
+
     # All imports succeed — structure is intact for full coverage
-    assert verdity.__version__ == "0.2.0"
+    assert verdity.__version__ == "0.2.1"

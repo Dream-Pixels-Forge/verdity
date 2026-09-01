@@ -58,8 +58,9 @@ class TestPrOpened:
             },
             "repository": {"id": 1, "name": "r", "owner": {"login": "o"}},
         }
-        event = normalize_webhook(event_name="pull_request", action="opened",
-                                  delivery_id=delivery_id, payload=payload)
+        event = normalize_webhook(
+            event_name="pull_request", action="opened", delivery_id=delivery_id, payload=payload
+        )
         assert event.pull_request.draft is True
 
 
@@ -71,8 +72,10 @@ class TestPushEvent:
             "repository": {"id": 1, "name": "main-repo", "owner": {"login": "acme"}},
         }
         event = normalize_webhook(
-            event_name="push", action=None,
-            delivery_id=delivery_id, payload=payload,
+            event_name="push",
+            action=None,
+            delivery_id=delivery_id,
+            payload=payload,
         )
         assert event.trigger_type == TriggerType.PUSH
         assert event.push_ref == "newheadsha123"
@@ -85,8 +88,10 @@ class TestUnknownEvent:
             "repository": {"id": 1, "name": "r", "owner": {"login": "o"}},
         }
         event = normalize_webhook(
-            event_name="nonexistent_event", action=None,
-            delivery_id=delivery_id, payload=payload,
+            event_name="nonexistent_event",
+            action=None,
+            delivery_id=delivery_id,
+            payload=payload,
         )
         # Should not raise; trigger_type should reflect the event name
         assert event.trigger_type is not None
@@ -96,7 +101,9 @@ class TestUnknownEvent:
 class TestDeliveryIdValidation:
     def test_empty_delivery_id_raises(self):
         import pytest
+
         from verdity.schemas import VerdityEvent
+
         with pytest.raises(Exception):  # Pydantic validation error
             VerdityEvent(
                 delivery_id="",

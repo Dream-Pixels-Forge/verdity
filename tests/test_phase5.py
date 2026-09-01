@@ -4,8 +4,9 @@ Tests for Phase 5: Confidence Router + Approval Queue.
 
 from __future__ import annotations
 
-import pytest
 import uuid
+
+import pytest
 
 from verdity.approval_queue import ApprovalQueueStore
 from verdity.router import (
@@ -105,7 +106,9 @@ class TestComputeBatchRouting:
             _make_finding(severity=Severity.INFO, confidence=0.3, summary="I1"),
             _make_finding(severity=Severity.HIGH, confidence=0.6, summary="H1"),
         ]
-        results = compute_batch_routing([RankedFinding(finding=f, rank_score=0.0) for f in findings])
+        results = compute_batch_routing(
+            [RankedFinding(finding=f, rank_score=0.0) for f in findings]
+        )
         assert len(results) == 3
         actions = {r.action for _, r in results}
         assert RouteAction.AUTO_APPROVE in actions
@@ -173,10 +176,18 @@ class TestApprovalQueueStore:
     async def test_stats_across_statuses(self, approval_store):
         for i in range(3):
             await approval_store.enqueue(
-                run_id=uuid.uuid4(), finding_id=uuid.uuid4(), repo_id=1,
-                concern="q", severity="low", file="f.py", line_start=i,
-                summary=str(i), explanation=None, confidence=0.4,
-                route_action="auto_dismiss", route_reason="low",
+                run_id=uuid.uuid4(),
+                finding_id=uuid.uuid4(),
+                repo_id=1,
+                concern="q",
+                severity="low",
+                file="f.py",
+                line_start=i,
+                summary=str(i),
+                explanation=None,
+                confidence=0.4,
+                route_action="auto_dismiss",
+                route_reason="low",
             )
         stats = await approval_store.stats(repo_id=1)
         assert stats.get("pending", 0) == 3

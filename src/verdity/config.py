@@ -34,9 +34,7 @@ class Settings(BaseSettings):
     github_app_installation_id: str = Field(
         ..., description="Installation ID for the org/repo target"
     )
-    github_app_private_key: SecretStr = Field(
-        ..., description="PEM private key for the GitHub App"
-    )
+    github_app_private_key: SecretStr = Field(..., description="PEM private key for the GitHub App")
 
     # ── Event Queue ──────────────────────────────────────────────────
     # Production: redis:// or similar. Dev: sqlite-backed queue.
@@ -75,7 +73,9 @@ class Settings(BaseSettings):
     # PRs with total diff lines (additions + deletions) above this threshold
     # are treated as "large" (extended review).
     large_pr_diff_threshold: int = Field(
-        default=500, ge=1, description="Total diff lines (additions+deletions) above which the PR is considered large"
+        default=500,
+        ge=1,
+        description="Total diff lines (additions+deletions) above which the PR is considered large",
     )
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}

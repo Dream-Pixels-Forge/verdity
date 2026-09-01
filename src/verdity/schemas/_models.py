@@ -15,7 +15,6 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, StrictStr, field_validator
 
-
 # ── Trigger Types ────────────────────────────────────────────────────
 
 
@@ -94,6 +93,7 @@ class ReviewPolicy(BaseModel):
 
 class SpecialistContext(BaseModel):
     """Bundle of context passed to every specialist agent."""
+
     review_run_id: uuid.UUID
     repo_owner: str
     repo_name: str

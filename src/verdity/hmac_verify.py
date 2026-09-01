@@ -8,8 +8,8 @@ No endpoint skips this, including in dev/staging. No bypass flag.
 
 from __future__ import annotations
 
-import hmac
 import hashlib
+import hmac
 
 
 def verify_signature(

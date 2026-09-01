@@ -7,7 +7,7 @@ from __future__ import annotations
 import pytest
 
 from verdity.event_queue import EventQueue
-from verdity.schemas import QueueEnvelope, TriggerType, VerdityEvent, RepoRef
+from verdity.schemas import QueueEnvelope, RepoRef, TriggerType, VerdityEvent
 
 
 @pytest.fixture
@@ -95,10 +95,12 @@ async def test_queue_stats(queue: EventQueue, sample_event):
 @pytest.mark.asyncio
 async def test_repo_partitioning(queue: EventQueue, sample_event):
     evt_a = sample_event.model_copy()
-    evt_b = sample_event.model_copy(update={
-        "repo": RepoRef(owner="other", name="repo", id=999),
-        "delivery_id": "del-other-001",
-    })
+    evt_b = sample_event.model_copy(
+        update={
+            "repo": RepoRef(owner="other", name="repo", id=999),
+            "delivery_id": "del-other-001",
+        }
+    )
 
     await queue.publish(QueueEnvelope(event=evt_a))
     await queue.publish(QueueEnvelope(event=evt_b))

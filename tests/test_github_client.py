@@ -13,7 +13,6 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 
 from verdity.github_client import GitHubClient, GitHubClientError
 
-
 # ── Fixtures ──────────────────────────────────────────────────────────
 
 

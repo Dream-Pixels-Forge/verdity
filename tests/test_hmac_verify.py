@@ -4,14 +4,11 @@ Tests for HMAC signature verification (non-negotiable constraint #1).
 
 from __future__ import annotations
 
-
-
 from verdity.hmac_verify import (
     compute_signature,
     verify_signature,
     verify_with_rotation,
 )
-
 
 SECRET = b"my-webhook-secret"
 BODY = b'{"action":"opened","repository":{"id":1}}'
@@ -23,7 +20,14 @@ class TestVerifySignature:
         assert verify_signature(SECRET, BODY, sig) is True
 
     def test_invalid_signature(self):
-        assert verify_signature(SECRET, BODY, "sha256=0000000000000000000000000000000000000000000000000000000000000000") is False
+        assert (
+            verify_signature(
+                SECRET,
+                BODY,
+                "sha256=0000000000000000000000000000000000000000000000000000000000000000",
+            )
+            is False
+        )
 
     def test_missing_header(self):
         assert verify_signature(SECRET, BODY, "") is False
@@ -42,8 +46,11 @@ class TestVerifySignature:
         We can't easily test timing, but we verify the function exists and works.
         """
         import inspect
+
         source = inspect.getsource(verify_signature)
-        assert "compare_digest" in source, "Must use hmac.compare_digest for constant-time comparison"
+        assert "compare_digest" in source, (
+            "Must use hmac.compare_digest for constant-time comparison"
+        )
 
 
 class TestVerifyWithRotation:

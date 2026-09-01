@@ -8,8 +8,8 @@ import pytest
 
 from verdity.semantic_index import (
     CodeChunk,
-    SymbolEdge,
     SemanticIndex,
+    SymbolEdge,
 )
 
 
@@ -171,16 +171,28 @@ async def test_embedded_vector_is_deterministic(index: SemanticIndex, sample_chu
 @pytest.mark.asyncio
 async def test_cross_repo_isolation(index: SemanticIndex):
     """Chunks from different repos must not leak into each other's search."""
-    chunks_a = [CodeChunk(
-        chunk_id="a1", repo_id="org/a", file_path="x.py",
-        start_line=1, end_line=2, content="secret from repo a",
-        language="python",
-    )]
-    chunks_b = [CodeChunk(
-        chunk_id="b1", repo_id="org/b", file_path="x.py",
-        start_line=1, end_line=2, content="secret from repo b",
-        language="python",
-    )]
+    chunks_a = [
+        CodeChunk(
+            chunk_id="a1",
+            repo_id="org/a",
+            file_path="x.py",
+            start_line=1,
+            end_line=2,
+            content="secret from repo a",
+            language="python",
+        )
+    ]
+    chunks_b = [
+        CodeChunk(
+            chunk_id="b1",
+            repo_id="org/b",
+            file_path="x.py",
+            start_line=1,
+            end_line=2,
+            content="secret from repo b",
+            language="python",
+        )
+    ]
     await index.upsert_chunks(chunks_a)
     await index.upsert_chunks(chunks_b)
 

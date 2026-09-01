@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from verdity.orchestrator import Orchestrator
 from verdity.worker import Worker
 
 
@@ -289,6 +291,7 @@ async def test_worker_run_forever_concurrency_wait():
     # Manually fill _tasks to simulate concurrency limit
     async def dummy():
         return None
+
     t = asyncio.create_task(dummy())
     worker._tasks.add(t)
     assert len(worker._tasks) == 1
@@ -306,6 +309,7 @@ async def test_worker_run_forever_concurrency_wait():
 def test_parse_args_defaults():
     """parse_args() returns defaults when no args provided."""
     from verdity.worker import parse_args
+
     args = parse_args([])
     assert args.queue_dsn == "sqlite:///verdity_queue.db"
     assert args.audit_path == "verdity_audit.db"
@@ -316,7 +320,10 @@ def test_parse_args_defaults():
 def test_parse_args_custom():
     """parse_args() parses custom CLI arguments."""
     from verdity.worker import parse_args
-    args = parse_args(["--log-level", "DEBUG", "--max-concurrent", "8", "--audit-path", "/tmp/audit.db"])
+
+    args = parse_args(
+        ["--log-level", "DEBUG", "--max-concurrent", "8", "--audit-path", "/tmp/audit.db"]
+    )
     assert args.log_level == "DEBUG"
     assert args.max_concurrent == 8
     assert args.audit_path == "/tmp/audit.db"
@@ -362,6 +369,7 @@ async def test_drain_one_backoff_not_expired():
     worker._backoffs["backoff/pending"] = 5.0  # 5 second backoff
     # Set expiry to 10 seconds in the future
     import time
+
     worker._backoff_expiry_times["backoff/pending"] = time.monotonic() + 10.0
 
     with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
@@ -392,6 +400,7 @@ async def test_drain_one_backoff_expired():
     worker._backoffs["backoff/expired"] = 5.0
     # Set expiry to 1 second in the past (already expired)
     import time
+
     worker._backoff_expiry_times["backoff/expired"] = time.monotonic() - 1.0
 
     await worker._drain_one()
@@ -421,6 +430,7 @@ async def test_drain_one_concurrency_wait():
     # Add a completed task to simulate concurrency limit
     async def fast_task():
         return None
+
     t = asyncio.create_task(fast_task())
     await t  # Let it complete
     worker._tasks.add(t)
@@ -464,8 +474,9 @@ async def test_run_forever_processes_and_stops():
 @pytest.mark.asyncio
 async def test_main_wrapper():
     """main() parses args and calls asyncio.run with _run_worker."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
     from verdity.worker import main
-    from unittest.mock import patch, AsyncMock, MagicMock
 
     mock_queue = MagicMock()
     mock_queue.connect = AsyncMock()
@@ -489,21 +500,27 @@ async def test_main_wrapper():
     mock_worker.shutdown = AsyncMock()
 
     with patch("verdity.worker.parse_args") as mock_parse:
-        mock_parse.return_value = type("Args", (), {
-            "queue_dsn": "sqlite:///test.db",
-            "audit_path": "test_audit.db",
-            "max_concurrent": 2,
-            "log_level": "DEBUG",
-        })()
+        mock_parse.return_value = type(
+            "Args",
+            (),
+            {
+                "queue_dsn": "sqlite:///test.db",
+                "audit_path": "test_audit.db",
+                "max_concurrent": 2,
+                "log_level": "DEBUG",
+            },
+        )()
         with patch("verdity.worker._setup_logging"):
             with patch("verdity.worker.Worker", return_value=mock_worker):
                 with patch("verdity.worker.asyncio.get_running_loop") as mock_loop:
                     mock_loop.return_value.add_signal_handler = MagicMock()
                     with patch("verdity.worker.asyncio.run") as mock_run:
+
                         def _consume_coro(coro):
                             # Properly consume the coroutine to avoid
                             # "coroutine was never awaited" RuntimeWarning
                             coro.close()
+
                         mock_run.side_effect = _consume_coro
                         main()
                         mock_parse.assert_called_once_with(None)
@@ -513,8 +530,9 @@ async def test_main_wrapper():
 @pytest.mark.asyncio
 async def test_run_entrypoint_calls_main():
     """run_entrypoint delegates to main."""
-    from verdity.worker import run_entrypoint
     from unittest.mock import patch
+
+    from verdity.worker import run_entrypoint
 
     with patch("verdity.worker.main") as mock_main:
         run_entrypoint(["--queue-dsn", "sqlite:///t.db", "--audit-path", "a.db"])
@@ -629,6 +647,80 @@ def test_setup_logging():
     _setup_logging("DEBUG")
     _setup_logging("INFO")
     _setup_logging("WARNING")
+
+
+@pytest.mark.asyncio
+async def test_run_worker_registers_all_specialists():
+    """_run_worker() must register all four specialist agents with the orchestrator."""
+    from verdity.worker import _run_worker
+
+    # Track specialist registrations on the real Orchestrator class
+    registered_specialists: dict[str, Any] = {}
+    original_register = Orchestrator.register_specialist
+
+    def capturing_register(self, name, fn):
+        registered_specialists[name] = fn
+        return original_register(self, name, fn)
+
+    mock_worker = MagicMock()
+    mock_worker.run_forever = AsyncMock()
+    mock_worker.shutdown = AsyncMock()
+
+    args = type(
+        "Args",
+        (),
+        {
+            "queue_dsn": "sqlite:///test.db",
+            "audit_path": "test_audit.db",
+            "max_concurrent": 2,
+            "log_level": "DEBUG",
+        },
+    )()
+
+    with patch.object(Orchestrator, "register_specialist", capturing_register):
+        with patch("verdity.audit_store.AuditStore") as MockAudit:
+            mock_audit = MagicMock()
+            mock_audit.connect = AsyncMock()
+            mock_audit.close = AsyncMock()
+            MockAudit.return_value = mock_audit
+
+            with patch("verdity.semantic_index.SemanticIndex") as MockIndex:
+                mock_index = MagicMock()
+                mock_index.connect = AsyncMock()
+                mock_index.close = AsyncMock()
+                MockIndex.return_value = mock_index
+
+                with patch("verdity.token_economics.TokenEconomicsService") as MockTE:
+                    mock_te = MagicMock()
+                    mock_te.connect = AsyncMock()
+                    mock_te.close = AsyncMock()
+                    MockTE.return_value = mock_te
+
+                    with patch("verdity.worker.EventQueue") as MockQueue:
+                        mock_queue = MagicMock()
+                        mock_queue.connect = AsyncMock()
+                        mock_queue.close = AsyncMock()
+                        MockQueue.return_value = mock_queue
+
+                        with patch("verdity.worker.Worker", return_value=mock_worker):
+                            with patch("verdity.worker.asyncio.get_running_loop") as mock_loop:
+                                mock_loop.return_value.add_signal_handler = MagicMock()
+                                with patch("verdity.worker.asyncio.run") as mock_run:
+
+                                    async def consume_coro(coro):
+                                        await coro
+
+                                    mock_run.side_effect = consume_coro
+                                    await _run_worker(args)
+
+    # Verify all four specialists were registered
+    assert "security" in registered_specialists, "security specialist not registered"
+    assert "code_quality" in registered_specialists, "code_quality specialist not registered"
+    assert "testing" in registered_specialists, "testing specialist not registered"
+    assert "documentation" in registered_specialists, "documentation specialist not registered"
+    assert len(registered_specialists) == 4, (
+        f"Expected 4 specialists, got {len(registered_specialists)}"
+    )
 
 
 @pytest.mark.asyncio

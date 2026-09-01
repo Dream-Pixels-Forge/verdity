@@ -23,11 +23,13 @@ from __future__ import annotations
 import logging
 import re
 import time
+from collections import defaultdict
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
+from verdity.async_sqlite import AsyncConnection
 from verdity.audit_store import AuditStore
 from verdity.config import get_settings
 from verdity.event_queue import EventQueue
@@ -40,8 +42,125 @@ logger = logging.getLogger(__name__)
 # ── Security constants ────────────────────────────────────────────────
 
 MAX_WEBHOOK_BODY_BYTES = 10 * 1024 * 1024  # 10 MiB — GitHub's practical limit
-DELIVERY_CACHE_TTL_SECONDS = 24 * 3600    # 24 hours
-_eviction_interval_seconds = 300           # evict every 5 minutes
+DELIVERY_CACHE_TTL_SECONDS = 24 * 3600  # 24 hours
+_eviction_interval_seconds = 300  # evict every 5 minutes
+RATE_LIMIT_MAX_REQUESTS = 100  # per IP per window
+RATE_LIMIT_WINDOW_SECONDS = 60  # sliding window in seconds
+
+
+class _RateLimiter:
+    """In-memory sliding-window rate limiter, per client IP.
+
+    Tracks timestamps of recent requests and rejects when the count
+    within the window exceeds the limit. Returns the number of seconds
+    the caller should retry after.
+    """
+
+    def __init__(
+        self,
+        max_requests: int = RATE_LIMIT_MAX_REQUESTS,
+        window_seconds: float = RATE_LIMIT_WINDOW_SECONDS,
+    ) -> None:
+        self._max = max_requests
+        self._window = window_seconds
+        self._buckets: dict[str, list[float]] = defaultdict(list)
+
+    def _client_ip(self, request: Request) -> str:
+        """Extract client IP from forwarded headers or direct connection."""
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+        return request.client.host if request.client else "unknown"
+
+    def _evict(self, timestamps: list[float], now: float) -> None:
+        """Remove timestamps older than the window."""
+        cutoff = now - self._window
+        while timestamps and timestamps[0] < cutoff:
+            timestamps.pop(0)
+
+    def is_allowed(self, request: Request) -> tuple[bool, float]:
+        """Check if the request is within the rate limit.
+
+        Returns (allowed, retry_after_seconds).
+        """
+        now = time.time()
+        ip = self._client_ip(request)
+        timestamps = self._buckets[ip]
+        self._evict(timestamps, now)
+        if len(timestamps) >= self._max:
+            oldest = timestamps[0]
+            retry_after = self._window - (now - oldest)
+            return False, max(retry_after, 1.0)
+        timestamps.append(now)
+        return True, 0.0
+
+
+class DeliveryCache:
+    """Persistent delivery-ID dedup cache backed by SQLite.
+
+    On startup, loads recent delivery IDs into the in-memory set.
+    On each new delivery ID, persists it alongside adding to the in-memory set.
+    Evicts expired entries periodically.
+    """
+
+    CREATE_TABLE_SQL = """
+        CREATE TABLE IF NOT EXISTS delivery_cache (
+            delivery_id TEXT PRIMARY KEY,
+            created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_delivery_created ON delivery_cache(created_at);
+    """
+
+    def __init__(self, db_path: str = ":memory:") -> None:
+        self._db_path = db_path
+        self._conn: AsyncConnection | None = None
+
+    async def connect(self) -> None:
+        self._conn = AsyncConnection(self._db_path)
+        await self._conn.connect()
+        await self._conn.executescript(self.CREATE_TABLE_SQL)
+        await self._conn.commit()
+
+    async def close(self) -> None:
+        if self._conn:
+            await self._conn.close()
+            self._conn = None
+
+    async def add(self, delivery_id: str) -> None:
+        """Persist a delivery ID. Idempotent — INSERT OR IGNORE."""
+        if self._conn is None:
+            raise RuntimeError("DeliveryCache is not connected. Call connect() first.")
+        await self._conn.execute(
+            "INSERT OR IGNORE INTO delivery_cache (delivery_id) VALUES (?)",
+            (delivery_id,),
+        )
+        await self._conn.commit()
+
+    async def load_recent(self) -> set[str]:
+        """Load delivery IDs that haven't expired yet."""
+        if self._conn is None:
+            raise RuntimeError("DeliveryCache is not connected. Call connect() first.")
+        cutoff_epoch = time.time() - DELIVERY_CACHE_TTL_SECONDS
+        cutoff_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(cutoff_epoch))
+        rows = await self._conn.execute(
+            "SELECT delivery_id FROM delivery_cache WHERE created_at >= ?",
+            (cutoff_iso,),
+        )
+        return {row["delivery_id"] for row in rows}
+
+    async def evict_expired(self) -> int:
+        """Remove expired entries. Returns the number of rows deleted."""
+        if self._conn is None:
+            raise RuntimeError("DeliveryCache is not connected. Call connect() first.")
+        cutoff_epoch = time.time() - DELIVERY_CACHE_TTL_SECONDS
+        cutoff_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(cutoff_epoch))
+        rows = await self._conn.execute(
+            "DELETE FROM delivery_cache WHERE created_at < ?",
+            (cutoff_iso,),
+        )
+        await self._conn.commit()
+        return len(rows)
+
 
 # Sanitize file paths: reject absolute paths, path traversal, null bytes
 _SAFE_PATH_RE = re.compile(r"^[\w\-./]+$")
@@ -72,9 +191,13 @@ def _add_security_headers(response: Response) -> None:
 
 
 def _cleanup_delivery_cache(state) -> None:
-    """Remove expired entries from the delivery-ID cache."""
+    """Remove expired entries from the in-memory delivery-ID cache."""
     now = time.time()
-    expired = [k for k, ts in getattr(state, "_delivery_cache_ts", {}).items() if now - ts > DELIVERY_CACHE_TTL_SECONDS]
+    expired = [
+        k
+        for k, ts in getattr(state, "_delivery_cache_ts", {}).items()
+        if now - ts > DELIVERY_CACHE_TTL_SECONDS
+    ]
     for k in expired:
         state.delivery_ids.discard(k)
         state._delivery_cache_ts.pop(k, None)
@@ -91,11 +214,34 @@ async def lifespan(app: FastAPI):
     await app.state.queue.connect()
     app.state.audit = AuditStore(db_path=settings.audit_sqlite_path)
     await app.state.audit.connect()
-    app.state.delivery_ids: set[str] = set()
+    app.state._rate_limiter = _RateLimiter()
+
+    # Persistent delivery-ID cache
+    delivery_cache_path = getattr(settings, "delivery_cache_sqlite_path", None)
+    if delivery_cache_path is None:
+        # Derive from audit path as a sensible default
+        import pathlib
+
+        _base = pathlib.Path(settings.audit_sqlite_path).parent
+        delivery_cache_path = str(_base / "delivery_cache.db")
+    app.state._delivery_cache = DeliveryCache(db_path=delivery_cache_path)
+    await app.state._delivery_cache.connect()
+
+    # Load persisted delivery IDs into memory
+    app.state.delivery_ids: set[str] = await app.state._delivery_cache.load_recent()
     app.state._delivery_cache_ts: dict[str, float] = {}
     app.state._last_eviction: float = time.time()
-    logger.info("Ingestion Gateway initialized")
+    logger.info(
+        "Ingestion Gateway initialized (loaded %d cached delivery IDs)",
+        len(app.state.delivery_ids),
+    )
     yield
+    # Evict expired entries from persistent cache before closing
+    try:
+        await app.state._delivery_cache.evict_expired()
+    except Exception:  # pragma: no cover
+        pass  # best-effort during shutdown
+    await app.state._delivery_cache.close()
     await app.state.queue.close()
     await app.state.audit.close()
     logger.info("Ingestion Gateway shut down")
@@ -127,6 +273,24 @@ async def security_middleware(request: Request, call_next):
     response = await call_next(request)
     _add_security_headers(response)
     return response
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    """Rate-limit POST /verdity/webhooks/github by client IP."""
+    if request.method == "POST" and request.url.path == "/verdity/webhooks/github":
+        limiter: _RateLimiter | None = getattr(request.app.state, "_rate_limiter", None)
+        if limiter is not None:
+            allowed, retry_after = limiter.is_allowed(request)
+            if not allowed:
+                response = JSONResponse(
+                    status_code=429,
+                    content={"detail": "Rate limit exceeded. Try again later."},
+                )
+                response.headers["Retry-After"] = str(int(retry_after))
+                _add_security_headers(response)
+                return response
+    return await call_next(request)
 
 
 @app.post("/verdity/webhooks/github")
@@ -174,7 +338,8 @@ async def handle_github_webhook(
     if not verified:
         logger.warning(
             "HMAC verification failed for delivery %s (matched=%s)",
-            x_github_delivery, matched,
+            x_github_delivery,
+            matched,
         )
         raise HTTPException(status_code=401, detail="Invalid or missing signature")
 
@@ -184,6 +349,10 @@ async def handle_github_webhook(
         raise HTTPException(status_code=409, detail="Duplicate delivery — already processed")
     request.app.state.delivery_ids.add(x_github_delivery)
     request.app.state._delivery_cache_ts[x_github_delivery] = time.time()
+    # Persist to SQLite so dedup survives restart
+    delivery_cache: DeliveryCache | None = getattr(request.app.state, "_delivery_cache", None)
+    if delivery_cache is not None:
+        await delivery_cache.add(x_github_delivery)
 
     # ── Step 4: Parse & normalize payload (only after verification passes) ─
     try:
@@ -219,7 +388,13 @@ async def handle_github_webhook(
         msg_id = await request.app.state.queue.publish(envelope)
     except Exception as exc:
         logger.error("Queue publish failed: %s", exc)
-        raise HTTPException(status_code=503, detail="Queue unavailable")
+        response = JSONResponse(
+            status_code=503,
+            content={"detail": "Queue unavailable"},
+        )
+        response.headers["Retry-After"] = "30"
+        _add_security_headers(response)
+        return response
 
     # ── Step 7: Audit log (constraint #9 — if it isn't logged, it didn't happen) ─
     await request.app.state.audit.append(
@@ -237,7 +412,10 @@ async def handle_github_webhook(
 
     logger.info(
         "Webhook accepted: delivery=%s event=%s repo=%s/%s pr=%s",
-        x_github_delivery, event.trigger_type, event.repo.owner, event.repo.name,
+        x_github_delivery,
+        event.trigger_type,
+        event.repo.owner,
+        event.repo.name,
         event.pull_request.number if event.pull_request else None,
     )
 
