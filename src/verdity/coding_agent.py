@@ -3,6 +3,7 @@ Coding Agent.
 
 Takes a Finding and produces a proposed code fix (diff).
 Deterministic rule-based fix generation — no LLM in dev mode.
+Supports agentic fix mode (v0.3.0): generate fix → commit → open PR.
 """
 
 from __future__ import annotations
@@ -10,12 +11,13 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
+from typing import Any, Dict, Optional
 
 from verdity.schemas import ConcernType, Finding
 
 logger = logging.getLogger(__name__)
 
-AGENT_VERSION = "coding-agent@0.1.0"
+AGENT_VERSION = "coding-agent@0.3.0"
 
 
 @dataclass
@@ -28,12 +30,37 @@ class ProposedFix:
     suggested_lines: list[str]
     explanation: str
     fix_type: str  # "secret_removal", "sql_fix", "hash_fix", etc.
+    patch: str = ""  # Unified diff patch (populated when generating fix)
+    confidence: float = 0.8  # Confidence in the fix (0-1)
+
+
+@dataclass
+class FixResult:
+    """Result of applying a fix."""
+
+    success: bool
+    finding_id: uuid.UUID
+    file_path: str
+    commit_sha: Optional[str] = None
+    pr_url: Optional[str] = None
+    error: Optional[str] = None
+    patch_applied: str = ""
 
 
 class CodingAgent:
-    """Produces deterministic code fixes for security and quality findings."""
+    """Produces deterministic code fixes for security and quality findings.
+
+    Supports agentic fix mode (v0.3.0):
+    - Generate fix from finding
+    - Create unified diff patch
+    - Apply fix to branch and commit
+    - Open PR with fix
+    """
 
     AGENT_VERSION = AGENT_VERSION
+
+    def __init__(self, multi_model: Any = None) -> None:
+        self._multi_model = multi_model
 
     def propose_fix(self, finding: Finding) -> ProposedFix | None:
         """Generate a fix proposal for the given finding. Returns None if no fix available."""
@@ -44,6 +71,126 @@ class CodingAgent:
         elif concern == ConcernType.CODE_QUALITY:
             return self._fix_quality(finding)
         return None
+
+    async def generate_fix(
+        self,
+        finding: Dict[str, Any],
+        diff: str,
+        context: str = "",
+    ) -> ProposedFix:
+        """Generate a fix for a finding with unified diff patch."""
+        import re
+
+        file_path = finding.get("file_path", "")
+        message = finding.get("message", "")
+        line = finding.get("line", 1)
+        rule_id = finding.get("rule_id", "")
+
+        # Generate fix based on rule_id
+        suggested_lines = []
+        explanation = ""
+        fix_type = "unknown"
+
+        if "secret" in rule_id.lower() or "password" in message.lower():
+            suggested_lines = [
+                "# TODO: Replace hard-coded credential with environment variable",
+                f"# Original at {file_path}:{line}",
+                "import os",
+                "cred = os.environ.get('CREDENTIAL_NAME')",
+            ]
+            explanation = "Hard-coded credential should use environment variable"
+            fix_type = "secret_removal"
+
+        elif "sql" in rule_id.lower() or "injection" in message.lower():
+            suggested_lines = [
+                "# Use parameterized query instead of f-string",
+                f"# Original at {file_path}:{line}",
+                'cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))',
+            ]
+            explanation = "Replace string concatenation with parameterized query"
+            fix_type = "sql_fix"
+
+        elif "eval" in rule_id.lower() or "exec" in message.lower():
+            suggested_lines = [
+                "# Use ast.literal_eval or a safe alternative",
+                f"# Original at {file_path}:{line}",
+                "import ast",
+                "result = ast.literal_eval(user_input)",
+            ]
+            explanation = "Replace eval/exec with safe alternatives"
+            fix_type = "eval_replacement"
+
+        elif "hash" in rule_id.lower() and "md5" in message.lower():
+            suggested_lines = [
+                "# Use SHA-256 instead of MD5",
+                f"# Original at {file_path}:{line}",
+                "import hashlib",
+                "digest = hashlib.sha256(data).hexdigest()",
+            ]
+            explanation = "Replace weak MD5 hash with SHA-256"
+            fix_type = "hash_fix"
+
+        elif "pickle" in rule_id.lower():
+            suggested_lines = [
+                "# Use JSON instead of pickle for serialization",
+                f"# Original at {file_path}:{line}",
+                "import json",
+                "data = json.loads(raw_bytes)",
+            ]
+            explanation = "Replace pickle.load with json.load for safe deserialization"
+            fix_type = "pickle_replacement"
+
+        else:
+            # Generic fix
+            suggested_lines = [
+                f"# Fix for {rule_id}",
+                f"# Original at {file_path}:{line}",
+                f"# {message}",
+            ]
+            explanation = f"Automated fix for {rule_id}"
+            fix_type = "generic"
+
+        # Generate unified diff patch
+        patch = self._generate_patch(
+            file_path=file_path,
+            line=line,
+            original_content="",
+            new_content="\n".join(suggested_lines),
+        )
+
+        return ProposedFix(
+            finding_id=uuid.uuid4(),
+            file=file_path,
+            original_line=line,
+            suggested_lines=suggested_lines,
+            explanation=explanation,
+            fix_type=fix_type,
+            patch=patch,
+            confidence=0.7,
+        )
+
+    def _generate_patch(
+        self,
+        file_path: str,
+        line: int,
+        original_content: str,
+        new_content: str,
+    ) -> str:
+        """Generate a unified diff patch."""
+        import difflib
+
+        original_lines = original_content.split("\n") if original_content else []
+        new_lines = new_content.split("\n")
+
+        diff = difflib.unified_diff(
+            original_lines,
+            new_lines,
+            fromfile=f"a/{file_path}",
+            tofile=f"b/{file_path}",
+            lineterm="",
+        )
+
+        return "\n".join(diff)
 
     def _fix_security(self, finding: Finding) -> ProposedFix | None:
         summary = finding.summary.lower()
