@@ -1,13 +1,13 @@
-# Review Task: Verdity Package v0.2.1
+# Review Task: Verdity Package v0.3.0
 
 ## Project Overview
 - **Name**: Verdity — AI-Powered Pull Request Review System
-- **Version**: 0.2.1
+- **Version**: 0.3.0
 - **Language**: Python 3.11+
 - **Framework**: FastAPI
-- **Lines of Code**: ~16,000 (source + tests)
-- **Test Files**: 19
-- **Source Files**: 30
+- **Lines of Code**: ~19,000 (source + tests)
+- **Test Files**: 22
+- **Source Files**: 32
 
 ## Package Structure
 ```
@@ -21,16 +21,18 @@ src/verdity/
 ├── async_sqlite.py
 ├── audit_store.py
 ├── budget_enforcer.py
-├── coding_agent.py
+├── coding_agent.py         # Agentic fix mode
 ├── config.py
 ├── event_queue.py
 ├── github_client.py
 ├── hmac_verify.py
+├── mcp_server.py          # Model Context Protocol server
 ├── model_fallback.py
 ├── orchestrator.py
 ├── rate_limiter.py
+├── review_rules.py         # Custom review rules
 ├── router.py
-├── semantic_index.py
+├── semantic_index.py       # Full-codebase context
 ├── token_economics.py
 ├── verification_gate.py
 ├── webhook_normalizer.py

@@ -102,7 +102,7 @@ Violating any of these is a **build failure**, not a style choice.
 ```
 verdity/
 ├── src/verdity/
-│   ├── __init__.py                 # Package root, version 0.1.0
+│   ├── __init__.py                 # Package root, version 0.3.0
 │   ├── config.py                   # pydantic-settings; all secrets from env/KMS
 │   ├── async_sqlite.py             # stdlib sqlite3 wrapped with asyncio
 │   ├── schemas/
@@ -118,7 +118,9 @@ verdity/
 │   ├── aggregator.py               # Dedup, conflict resolution, ranking
 │   ├── router.py                   # Confidence scoring + routing decisions
 │   ├── approval_queue.py           # Persistent approval queue store
-│   ├── coding_agent.py             # Deterministic fix generation
+│   ├── coding_agent.py             # Deterministic fix generation + agentic fix mode
+│   ├── review_rules.py             # Custom review rules (.verdity/rules.yml)
+│   ├── mcp_server.py               # Model Context Protocol server (8 tools)
 │   ├── verification_gate.py        # Gate checks + independent verifier + regression
 │   ├── budget_enforcer.py          # Spend monitoring + degradation signals
 │   ├── agents/
@@ -143,7 +145,10 @@ verdity/
 │   ├── test_phase5.py              # 11 tests
 │   ├── test_phase6.py              # 14 tests
 │   ├── test_phase7.py              # 5 tests
-│   └── test_phase8.py              # 13 tests (STRIDE checklist + e2e)
+│   ├── test_phase8.py              # 13 tests (STRIDE checklist + e2e)
+│   ├── test_mcp_server.py          # 11 tests
+│   ├── test_review_rules.py        # 17 tests
+│   └── test_semantic_index_full_context.py  # 11 tests
 ├── dev-notes/
 │   ├── GOAL.md                     # Build charter (single source of truth)
 │   ├── 01-Product-Requirements-Document.md

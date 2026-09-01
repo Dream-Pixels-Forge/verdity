@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — 2026-09-01
+
+### Added
+- **MCP Server** — Model Context Protocol server exposing 8 tools for Claude Desktop, Cursor, and VS Code integration
+  - `review_security`, `review_quality`, `review_testing`, `review_documentation`, `review_full`
+  - `generate_fix`, `apply_fix`, `get_review_rules`
+- **Full-Codebase Context** — Complete repository indexing with symbol extraction for Python, JavaScript, Go, and Rust
+  - Dependency graph tracking and cross-file symbol resolution
+  - `get_full_context()` for semantic search across entire codebase
+- **Agentic Fix Mode** — Automated fix generation pipeline with unified diff patch generation
+  - `CodingAgent.generate_fix()` returns suggested lines, explanation, and patch
+  - Fix types: `secret_removal`, `sql_fix`, `eval_replacement`, `hash_fix`, `pickle_replacement`, `generic`
+- **Custom Review Rules** — YAML-based project-specific review configuration via `.verdity/rules.yml`
+  - Per-language, per-path, and per-agent rule overrides
+  - Default thresholds: `max_line_length=120`, `require_docstrings=true`, `require_type_hints=true`
+- **Diff Stats Tracking** — `additions` and `deletions` fields on `PullRequestRef`
+- **Enhanced Secrets Detection** — Regex patterns for `api_key`, `token`, `credential` detection with env-source filtering
+- **Improved Event Handling** — Name-only fallback trigger mapping for unknown GitHub events
+- 39 new tests for MCP server, review rules, and full-codebase context
+
+### Changed
+- Version bumped to 0.3.0
+- Test suite: 409 tests at 100% coverage
+
 ## [0.2.1] — 2026-08-29
 
 ### Added
