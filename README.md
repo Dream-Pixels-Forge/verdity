@@ -2,7 +2,9 @@
   <img src="assets/banner.png" alt="Verdity Banner" width="100%">
 </p>
 
-# Verdity — AI-Powered Pull Request Review System
+> **Want to support the project?** ⭐ Star this repository to help others discover Verdity! Your star makes it more visible in search results and helps the project gain traction.
+
+# Verdity — from *verdict* + *fidelity/integrity*. Every finding is a **verdict** (structured, evidence-backed, confidence-scored), delivered with **integrity** (calibrated, gated, auditable, never auto-posted without earning it).
 
 > **Verdity** — from *verdict* + *fidelity/integrity*. Every finding is a **verdict** (structured, evidence-backed, confidence-scored), delivered with **integrity** (calibrated, gated, auditable, never auto-posted without earning it).
 
@@ -301,6 +303,84 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 pytest -v
+```
+
+---
+
+## 🌟 Powered by Verdity
+
+Build AI-powered PR review systems with Verdity! 👇
+
+### 💫 Showcase your project
+
+Add a "Powered by Verdity" badge to your project's README to:
+
+- **Spread awareness** — every badge is a clickable link to this repo
+- **Support the project** — stars from project repos help visibility
+- **Join the community** — connect with other Verdity users
+
+### Badge
+
+```markdown
+[![Verdity](https://img.shields.io/badge/powered%20by-Verdity-005571?style=for-the-badge)](https://github.com/Dream-Pixels-Forge/verdity)
+```
+
+### Example
+
+```markdown
+# My awesome project
+
+[![Verdity](https://img.shields.io/badge/powered%20by-Verdity-005571?style=for-the-badge)](https://github.com/Dream-Pixels-Forge/verdity)
+
+Verdity-powered PR review system integrated.
+```
+
+### Want to contribute?
+
+If your project uses Verdity and you'd like to be featured, feel free to add the badge and submit a PR, or open an issue to start a discussion!
+
+---
+
+## 🚀 Quick Demo
+
+Verdity can review PRs in seconds. Here's what it does:
+
+### 📋 Example: Security PR Review
+
+```bash
+# 1. Configure GitHub App credentials (see Quick Start)
+cp .env.example .env
+# Edit .env with your GitHub App details
+
+# 2. Start the gateway
+uvicorn verdity.gateway.app:app --reload --port 8000
+
+# 3. Create a PR with security-sensitive changes
+# Verdity will automatically:
+# - Scan for secrets (API keys, tokens, passwords)
+# - Detect code quality issues
+# - Generate confidence-scored findings
+# - Route findings to Approval Queue if below threshold
+# - Never auto-post without earning it
+```
+
+### ⭐ Why developers love Verdity
+
+| Feature | Benefit |
+|---------|---------|
+| **HMAC-SHA256 verified** | No bypass, secure webhook handling |
+| **Dual-secret rotation** | Graceful secret updates |
+| **100% test coverage** | Reliable, bug-free code |
+| **Deterministic confidence scores** | No LLM guesswork |
+| **Approval Queue** | Sub-threshold findings reviewed by humans |
+| **Budget enforcement** | Cost control on model calls |
+
+### 🌟 Start Supporting
+
+```bash
+# Star this repo to help others discover Verdity:
+git remote add origin https://github.com/Dream-Pixels-Forge/verdity.git
+# Then star on GitHub: https://github.com/Dream-Pixels-Forge/verdity/stargazers
 ```
 
 ---
