@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 
@@ -1152,7 +1152,7 @@ class TestOrchestratorExtra:
         assert run.status in (RunStatus.COMPLETED, RunStatus.FAILED)
 
     def test_list_runs_returns_sorted_descending(self, services, queue):
-        from datetime import timedelta, timezone
+        from datetime import timedelta
 
         from verdity.orchestrator import ReviewRun
 
@@ -1162,7 +1162,7 @@ class TestOrchestratorExtra:
             token_economics=services["token_economics"],
             audit_store=services["audit"],
         )
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         run1 = ReviewRun(
             review_run_id=uuid.uuid4(),
             event=VerdityEvent(

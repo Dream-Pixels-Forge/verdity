@@ -11,7 +11,7 @@ import asyncio
 import json
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
 import httpx
@@ -526,7 +526,7 @@ async def test_full_pipeline_webhook_to_audit(full_pipeline):
     envelope = QueueEnvelope(
         delivery_id=event.delivery_id,
         event=event,
-        delivered_at=datetime.now(timezone.utc),
+        delivered_at=datetime.now(UTC),
     )
     run_id = await orch.process_event(envelope)
     assert run_id is not None
@@ -634,14 +634,14 @@ async def test_gate_phase13_gitlab_webhook_end_to_end():
     assert event["pull_request"]["author"] == "gate-tester"
 
     # Step 3: Enqueue the normalized event
+    from verdity.event_queue import EventQueue
     from verdity.schemas import (
-        TriggerType,
-        VerdityEvent,
+        PullRequestRef,
         QueueEnvelope,
         RepoRef,
-        PullRequestRef,
+        TriggerType,
+        VerdityEvent,
     )
-    from verdity.event_queue import EventQueue
 
     trigger = TriggerType(event["trigger_type"])
     assert trigger == TriggerType.PR_OPENED
@@ -676,7 +676,7 @@ async def test_gate_phase13_gitlab_webhook_end_to_end():
     assert stats.get("pending", 0) >= 1
 
     # Step 5: Verify platform is registered in the import
-    from verdity.platforms import GitHubPlatform, GitLabPlatform, BitbucketPlatform
+    from verdity.platforms import BitbucketPlatform, GitHubPlatform, GitLabPlatform
     assert GitLabPlatform.PLATFORM_NAME == "gitlab"
     assert GitHubPlatform.PLATFORM_NAME == "github"
     assert BitbucketPlatform.PLATFORM_NAME == "bitbucket"

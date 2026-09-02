@@ -1,6 +1,8 @@
 """Tests for MCP Server module."""
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
 from verdity.mcp_server import MCPServer, create_mcp_server
 
 

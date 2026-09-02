@@ -11,6 +11,7 @@ import json
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from verdity.llm_client import (
@@ -507,3 +508,173 @@ class TestLLMResponse:
         )
         field_names = {f.name for f in fields(resp)}
         assert field_names == {"content", "input_tokens", "output_tokens", "model", "cost_usd"}
+
+
+# ── Schema Validation Branches ───────────────────────────────────────
+
+
+class TestSchemaValidationBranches:
+    """Cover all type branches in _validate_json_against_schema."""
+
+    def test_string_field_with_non_string(self):
+        schema = {"type": "object", "properties": {"name": {"type": "string"}}}
+        errors = _validate_json_against_schema({"name": 123}, schema)
+        assert any("string" in e for e in errors)
+
+    def test_number_field_with_non_number(self):
+        schema = {"type": "object", "properties": {"count": {"type": "number"}}}
+        errors = _validate_json_against_schema({"count": "not-a-number"}, schema)
+        assert any("number" in e for e in errors)
+
+    def test_boolean_field_with_non_boolean(self):
+        schema = {"type": "object", "properties": {"flag": {"type": "boolean"}}}
+        errors = _validate_json_against_schema({"flag": "yes"}, schema)
+        assert any("boolean" in e for e in errors)
+
+    def test_integer_field_with_non_integer(self):
+        schema = {"type": "object", "properties": {"n": {"type": "integer"}}}
+        errors = _validate_json_against_schema({"n": 1.5}, schema)
+        assert any("integer" in e for e in errors)
+
+    def test_array_field_with_non_array(self):
+        schema = {"type": "object", "properties": {"items": {"type": "array"}}}
+        errors = _validate_json_against_schema({"items": "abc"}, schema)
+        assert any("array" in e for e in errors)
+
+
+# ── Complete() Branches ────────────────────────────────────────────────
+
+
+class TestCompleteBranches:
+    """Cover complete() HTTP error and metering branches."""
+
+    @pytest.mark.asyncio
+    async def test_http_status_error_raises(self):
+        client = LLMClient(api_key="sk-test")
+        with patch("httpx.AsyncClient") as MockClient:
+            mock_http = MagicMock()
+            mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+            mock_http.__aexit__ = AsyncMock(return_value=False)
+
+            # Mock the response to raise HTTPStatusError on raise_for_status
+            mock_response = MagicMock()
+            mock_response.status_code = 401
+            mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+                "unauthorized", request=MagicMock(), response=mock_response
+            )
+            mock_http.post = AsyncMock(return_value=mock_response)
+            MockClient.return_value = mock_http
+
+            with pytest.raises(RuntimeError, match="LLM API error"):
+                await client.complete(
+                    model="gpt-4o",
+                    messages=[{"role": "user", "content": "hi"}],
+                )
+
+    @pytest.mark.asyncio
+    async def test_request_error_raises(self):
+        client = LLMClient(api_key="sk-test")
+        with patch("httpx.AsyncClient") as MockClient:
+            mock_http = MagicMock()
+            mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+            mock_http.__aexit__ = AsyncMock(return_value=False)
+            mock_http.post = AsyncMock(side_effect=httpx.RequestError("network down"))
+            MockClient.return_value = mock_http
+
+            with pytest.raises(RuntimeError, match="LLM API request failed"):
+                await client.complete(
+                    model="gpt-4o",
+                    messages=[{"role": "user", "content": "hi"}],
+                )
+
+    @pytest.mark.asyncio
+    async def test_token_economics_failure_is_logged(self):
+        """When token_economics.record_call raises, complete() still returns response."""
+        class _FailingTE:
+            async def record_call(self, **kwargs):
+                raise RuntimeError("te down")
+
+        te = _FailingTE()
+        # review_run_id must be set to enter the metering branch
+        client = LLMClient(
+            api_key="sk-test",
+            token_economics=te,
+            review_run_id="00000000-0000-0000-0000-000000000001",
+        )
+        with patch("httpx.AsyncClient") as MockClient:
+            mock_http = MagicMock()
+            mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+            mock_http.__aexit__ = AsyncMock(return_value=False)
+
+            mock_response = MagicMock()
+            mock_response.json.return_value = _mock_response("hello")
+            mock_response.raise_for_status = MagicMock()
+            mock_http.post = AsyncMock(return_value=mock_response)
+            MockClient.return_value = mock_http
+
+            resp = await client.complete(
+                model="gpt-4o",
+                messages=[{"role": "user", "content": "hi"}],
+            )
+        assert resp.content == "hello"
+
+
+# ── Structured Response Branches ──────────────────────────────────────
+
+
+class TestStructuredResponseBranches:
+    """Cover branches in complete_structured() — retries, validation."""
+
+    @pytest.mark.asyncio
+    async def test_retry_then_success(self):
+        """First response fails validation, second succeeds."""
+        client = LLMClient(api_key="sk-test")
+        schema = {"type": "object", "properties": {"name": {"type": "string"}}}
+
+        bad_resp = MagicMock()
+        bad_resp.json.return_value = _mock_response('{"name": 123}')  # wrong type
+        bad_resp.raise_for_status = MagicMock()
+
+        good_resp = MagicMock()
+        good_resp.json.return_value = _mock_response('{"name": "ok"}')
+        good_resp.raise_for_status = MagicMock()
+
+        with patch("httpx.AsyncClient") as MockClient:
+            mock_http = MagicMock()
+            mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+            mock_http.__aexit__ = AsyncMock(return_value=False)
+            mock_http.post = AsyncMock(side_effect=[bad_resp, good_resp])
+            MockClient.return_value = mock_http
+
+            result = await client.complete_structured(
+                model="gpt-4o",
+                messages=[{"role": "user", "content": "hi"}],
+                schema=schema,
+                max_retries=2,
+            )
+        assert result == {"name": "ok"}
+
+    @pytest.mark.asyncio
+    async def test_all_retries_fail(self):
+        """All retries fail → RuntimeError raised."""
+        client = LLMClient(api_key="sk-test")
+        schema = {"type": "object", "properties": {"name": {"type": "string"}}}
+
+        bad_resp = MagicMock()
+        bad_resp.json.return_value = _mock_response('{"name": 123}')
+        bad_resp.raise_for_status = MagicMock()
+
+        with patch("httpx.AsyncClient") as MockClient:
+            mock_http = MagicMock()
+            mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+            mock_http.__aexit__ = AsyncMock(return_value=False)
+            mock_http.post = AsyncMock(return_value=bad_resp)
+            MockClient.return_value = mock_http
+
+            with pytest.raises(ValueError, match="valid structured response"):
+                await client.complete_structured(
+                    model="gpt-4o",
+                    messages=[{"role": "user", "content": "hi"}],
+                    schema=schema,
+                    max_retries=1,
+                )

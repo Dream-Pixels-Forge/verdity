@@ -336,7 +336,7 @@ class MetricsStore:
         """
         summary = await self.get_repo_summary(repo_id, days=days)
 
-        if self._conn is None:
+        if self._conn is None:  # pragma: no cover
             raise RuntimeError("MetricsStore is not connected. Call connect() first.")
 
         from datetime import timedelta

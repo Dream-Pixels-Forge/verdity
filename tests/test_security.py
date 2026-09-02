@@ -163,3 +163,238 @@ class TestScanForSecrets:
         ]
         findings = agent._scan_for_secrets(diff_files)
         assert any("private key" in f.summary.lower() for f in findings)
+
+
+# ── LLM-Enhanced Scan ────────────────────────────────────────────────
+
+
+class TestLLMEnhancedScan:
+    """Cover _llm_enhanced_scan() and _parse_llm_security_response() branches."""
+
+    @pytest.mark.asyncio
+    async def test_no_llm_client_returns_empty(self, agent):
+        from verdity.schemas import SpecialistContext
+        import uuid
+
+        ctx = SpecialistContext(
+            review_run_id=uuid.uuid4(),
+            repo_owner="o",
+            repo_name="r",
+            base_sha="b",
+            head_sha="h",
+            diff_files=[],
+            llm_client=None,
+        )
+        result = await agent._llm_enhanced_scan(ctx)
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_llm_disabled_returns_empty(self, agent):
+        from verdity.schemas import SpecialistContext
+        import uuid
+
+        class _DisabledLLM:
+            enabled = False
+
+        ctx = SpecialistContext(
+            review_run_id=uuid.uuid4(),
+            repo_owner="o",
+            repo_name="r",
+            base_sha="b",
+            head_sha="h",
+            diff_files=[{"path": "x.py", "additions": "code"}],
+            llm_client=_DisabledLLM(),
+        )
+        result = await agent._llm_enhanced_scan(ctx)
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_empty_diff_text_returns_empty(self, agent):
+        """When diff_files is empty, diff_text is empty and we return []."""
+        from verdity.schemas import SpecialistContext
+        import uuid
+
+        class _EnabledLLM:
+            enabled = True
+
+        ctx = SpecialistContext(
+            review_run_id=uuid.uuid4(),
+            repo_owner="o",
+            repo_name="r",
+            base_sha="b",
+            head_sha="h",
+            diff_files=[],  # empty list → diff_text = "" → strip() = ""
+            llm_client=_EnabledLLM(),
+        )
+        result = await agent._llm_enhanced_scan(ctx)
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_llm_returns_json_array_findings(self, agent):
+        """LLM response with JSON code block produces Finding objects."""
+        from verdity.schemas import SpecialistContext
+        import uuid
+
+        class _MockLLM:
+            enabled = True
+
+            async def complete(self, **_kwargs):
+                from verdity.llm_client import LLMResponse
+
+                return LLMResponse(
+                    content=(
+                        "```json\n"
+                        '[{"summary":"Race condition","severity":"high",'
+                        '"file":"a.py","line_start":10,'
+                        '"explanation":"threading issue","suggested_fix":"use lock"}]\n'
+                        "```"
+                    ),
+                    input_tokens=10,
+                    output_tokens=20,
+                    model="gpt-4o",
+                    cost_usd=0.001,
+                )
+
+        ctx = SpecialistContext(
+            review_run_id=uuid.uuid4(),
+            repo_owner="o",
+            repo_name="r",
+            base_sha="b",
+            head_sha="h",
+            diff_files=[{"path": "a.py", "additions": "code"}],
+            llm_client=_MockLLM(),
+        )
+        result = await agent._llm_enhanced_scan(ctx)
+        assert len(result) == 1
+        assert "Race condition" in result[0].summary
+        assert result[0].file == "a.py"
+
+    @pytest.mark.asyncio
+    async def test_llm_returns_raw_array(self, agent):
+        """LLM response with raw JSON array (no code block) parses too."""
+        from verdity.schemas import SpecialistContext
+        import uuid
+
+        class _MockLLM:
+            enabled = True
+
+            async def complete(self, **_kwargs):
+                from verdity.llm_client import LLMResponse
+
+                return LLMResponse(
+                    content=(
+                        '[{"summary":"XSS","severity":"critical",'
+                        '"file":"b.py","line_start":5,'
+                        '"explanation":"unescaped input","suggested_fix":"none"}]'
+                    ),
+                    input_tokens=10,
+                    output_tokens=20,
+                    model="gpt-4o",
+                    cost_usd=0.001,
+                )
+
+        ctx = SpecialistContext(
+            review_run_id=uuid.uuid4(),
+            repo_owner="o",
+            repo_name="r",
+            base_sha="b",
+            head_sha="h",
+            diff_files=[{"path": "b.py", "additions": "code"}],
+            llm_client=_MockLLM(),
+        )
+        result = await agent._llm_enhanced_scan(ctx)
+        assert len(result) == 1
+        assert result[0].summary.startswith("[LLM]")
+
+    @pytest.mark.asyncio
+    async def test_llm_invalid_severity_falls_back_to_medium(self, agent):
+        """Unknown severity in JSON falls back to Severity.MEDIUM."""
+        from verdity.schemas import SpecialistContext
+        import uuid
+        from verdity.schemas import Severity
+
+        class _MockLLM:
+            enabled = True
+
+            async def complete(self, **_kwargs):
+                from verdity.llm_client import LLMResponse
+
+                return LLMResponse(
+                    content=(
+                        '[{"summary":"X","severity":"bogus","file":"b.py",'
+                        '"line_start":1,"explanation":"e","suggested_fix":"none"}]'
+                    ),
+                    input_tokens=10,
+                    output_tokens=20,
+                    model="gpt-4o",
+                    cost_usd=0.001,
+                )
+
+        ctx = SpecialistContext(
+            review_run_id=uuid.uuid4(),
+            repo_owner="o",
+            repo_name="r",
+            base_sha="b",
+            head_sha="h",
+            diff_files=[{"path": "b.py", "additions": "code"}],
+            llm_client=_MockLLM(),
+        )
+        result = await agent._llm_enhanced_scan(ctx)
+        assert result[0].severity == Severity.MEDIUM
+
+    @pytest.mark.asyncio
+    async def test_llm_exception_is_logged(self, agent):
+        """When LLM call raises, scan returns whatever was found so far (empty)."""
+        from verdity.schemas import SpecialistContext
+        import uuid
+
+        class _MockLLM:
+            enabled = True
+
+            async def complete(self, **_kwargs):
+                raise RuntimeError("LLM API down")
+
+        ctx = SpecialistContext(
+            review_run_id=uuid.uuid4(),
+            repo_owner="o",
+            repo_name="r",
+            base_sha="b",
+            head_sha="h",
+            diff_files=[{"path": "b.py", "additions": "code"}],
+            llm_client=_MockLLM(),
+        )
+        result = await agent._llm_enhanced_scan(ctx)
+        assert result == []
+
+
+class TestParseLLMSecurityResponse:
+    """Cover _parse_llm_security_response() branches directly."""
+
+    def test_json_code_block(self, agent):
+        content = '```json\n[{"a":1}]\n```'
+        result = SecurityAgent._parse_llm_security_response(content)
+        assert result == [{"a": 1}]
+
+    def test_raw_json_array(self, agent):
+        content = '[{"b":2}]'
+        result = SecurityAgent._parse_llm_security_response(content)
+        assert result == [{"b": 2}]
+
+    def test_invalid_json_returns_empty(self, agent):
+        content = "not json at all"
+        result = SecurityAgent._parse_llm_security_response(content)
+        assert result == []
+
+    def test_invalid_json_in_code_block_falls_through(self, agent):
+        """Code block with bad JSON falls through to raw array search."""
+        content = "```json\n{not json}\n``` [{\"c\":3}]"
+        result = SecurityAgent._parse_llm_security_response(content)
+        # Code block parse fails; raw array search succeeds
+        assert result == [{"c": 3}]
+
+    def test_raw_array_invalid_json_returns_empty(self, agent):
+        """Content with valid [] brackets but bad JSON returns [].
+        Covers the 'pass' on line 248-249."""
+        content = "[not valid json]"
+        result = SecurityAgent._parse_llm_security_response(content)
+        assert result == []

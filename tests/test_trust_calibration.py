@@ -16,7 +16,11 @@ from verdity.router import compute_confidence
 from verdity.schemas import ConcernType, Finding, Severity
 from verdity.trust_calibration import (
     DEFAULT_CONCERN_BOOST as TC_DEFAULT_CONCERN_BOOST,
+)
+from verdity.trust_calibration import (
     DEFAULT_SEVERITY_WEIGHTS as TC_DEFAULT_SEVERITY_WEIGHTS,
+)
+from verdity.trust_calibration import (
     TrustCalibrator,
 )
 
@@ -391,3 +395,53 @@ async def test_gate_phase10_trust(tmp_path):
         assert 0.0 <= score <= 1.0
     finally:
         await store.close()
+
+
+# ── Calibration stats branch coverage ──────────────────────────────────
+
+
+class TestCalibrationStatsBranches:
+    """Cover precision_high_conf=0.0 and recall_med_conf=0.0 fallback branches."""
+
+    async def test_stats_with_only_low_confidence_outcomes(self, tmp_path):
+        """Outcomes with confidence < 0.9 and final_outcome=confirmed:
+        - precision_high_conf falls to 0.0 (line 213)
+        - recall_med_conf computes (some have conf >= 0.6)
+        """
+        store = MetricsStore(str(tmp_path / "metrics.db"))
+        await store.connect()
+        try:
+            cal = TrustCalibrator(store)
+            # Add confirmed with confidence < 0.9 (triggers line 213)
+            await cal.record_outcome(
+                finding_id=str(uuid.uuid4()),
+                repo_id="o/r",
+                outcome="confirmed",
+                confidence=0.5,  # Below 0.9 threshold
+                severity="medium",
+                concern="security",
+            )
+            stats = await cal.get_calibration_stats()
+            assert stats["precision_at_0.9"] == 0.0
+        finally:
+            await store.close()
+
+    async def test_stats_with_no_confirmed_outcomes(self, tmp_path):
+        """When there are no 'confirmed' outcomes at all, recall_med_conf=0.0 (line 225)."""
+        store = MetricsStore(str(tmp_path / "metrics.db"))
+        await store.connect()
+        try:
+            cal = TrustCalibrator(store)
+            # Only false_positive outcomes (not confirmed)
+            await cal.record_outcome(
+                finding_id=str(uuid.uuid4()),
+                repo_id="o/r",
+                outcome="false_positive",
+                confidence=0.95,
+                severity="high",
+                concern="security",
+            )
+            stats = await cal.get_calibration_stats()
+            assert stats["recall_at_0.6"] == 0.0
+        finally:
+            await store.close()

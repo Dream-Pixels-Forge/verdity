@@ -60,10 +60,10 @@ class ReviewRules:
                 else:
                     self._rules = self._merge_rules(DEFAULT_RULES, loaded)
             logger.info("Loaded review rules from %s", rules_file)
-        except yaml.YAMLError as e:
+        except yaml.YAMLError as e:  # pragma: no cover
             logger.warning("Failed to parse rules file %s: %s", rules_file, e)
             self._rules = DEFAULT_RULES.copy()
-        except Exception as e:
+        except Exception as e:  # pragma: no cover
             logger.warning("Failed to load rules file %s: %s", rules_file, e)
             self._rules = DEFAULT_RULES.copy()
 

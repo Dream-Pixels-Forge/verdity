@@ -1,6 +1,7 @@
 """Tests for Semantic Index full-codebase context features (v0.3.0)."""
 import pytest
-from verdity.semantic_index import SemanticIndex, CodeChunk, SymbolEdge
+
+from verdity.semantic_index import CodeChunk, SemanticIndex, SymbolEdge
 
 
 class TestFullCodebaseContext:
@@ -267,3 +268,36 @@ class TestIncrementalReindexing:
         assert stats["total_chunks"] > 0
 
         await index.close()
+
+
+class TestIndexFullRepoSkips:
+    """Cover the 'skip empty content/path' branch (line 659)."""
+
+    @pytest.mark.asyncio
+    async def test_skips_files_with_empty_content(self):
+        index = SemanticIndex(db_path=":memory:")
+        await index.connect()
+        try:
+            files = [
+                {"path": "ok.py", "content": "x = 1", "language": "python"},
+                {"path": "empty.py", "content": "", "language": "python"},  # skipped
+            ]
+            result = await index.index_full_repo("r", files)
+            # Only ok.py is counted; empty.py is skipped via continue
+            assert result["files_indexed"] == 1
+        finally:
+            await index.close()
+
+    @pytest.mark.asyncio
+    async def test_skips_files_with_empty_path(self):
+        index = SemanticIndex(db_path=":memory:")
+        await index.connect()
+        try:
+            files = [
+                {"path": "ok.py", "content": "x = 1", "language": "python"},
+                {"path": "", "content": "y = 2", "language": "python"},  # skipped
+            ]
+            result = await index.index_full_repo("r", files)
+            assert result["files_indexed"] == 1
+        finally:
+            await index.close()

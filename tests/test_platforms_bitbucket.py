@@ -9,6 +9,8 @@ from __future__ import annotations
 import hashlib
 import hmac
 
+import pytest
+
 from verdity.platforms.bitbucket import BitbucketPlatform
 
 
@@ -216,3 +218,62 @@ class TestBitbucketPlatformName:
         """BitbucketPlatform inherits from Platform."""
         from verdity.platforms.base import Platform
         assert issubclass(BitbucketPlatform, Platform)
+
+
+class TestBitbucketPostComment:
+    """Post comments to Bitbucket PRs."""
+
+    @pytest.mark.asyncio
+    async def test_post_comment_success(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        platform = BitbucketPlatform()
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"id": 1, "content": {"raw": "hello"}}
+
+        mock_http = MagicMock()
+        mock_http.post = AsyncMock(return_value=mock_response)
+        mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+        mock_http.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("verdity.platforms.bitbucket.httpx.AsyncClient", return_value=mock_http):
+            result = await platform.post_comment(
+                owner="ws", repo="r", number=5, body="hello"
+            )
+        assert result == {"id": 1, "content": {"raw": "hello"}}
+        call_args = mock_http.post.call_args
+        assert "ws/r" in call_args.args[0]
+        assert call_args.kwargs["json"]["content"]["raw"] == "hello"
+
+
+class TestBitbucketPostInlineComment:
+    """Post inline comments on Bitbucket PRs."""
+
+    @pytest.mark.asyncio
+    async def test_post_inline_comment_success(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        platform = BitbucketPlatform()
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"id": 2}
+
+        mock_http = MagicMock()
+        mock_http.post = AsyncMock(return_value=mock_response)
+        mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+        mock_http.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("verdity.platforms.bitbucket.httpx.AsyncClient", return_value=mock_http):
+            result = await platform.post_inline_comment(
+                owner="ws",
+                repo="r",
+                number=5,
+                commit_sha="abc",
+                file_path="src/x.py",
+                line=10,
+                body="inline",
+            )
+        assert result == {"id": 2}
+        call_args = mock_http.post.call_args
+        payload = call_args.kwargs["json"]
+        assert payload["inline"]["path"] == "src/x.py"
+        assert payload["inline"]["to"] == 10

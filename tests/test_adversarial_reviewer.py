@@ -539,3 +539,30 @@ class TestVerdictEnum:
     def test_verdict_is_str_enum(self):
         """Verdict can be used as a string."""
         assert Verdict.CONFIRMED == "confirmed"
+
+
+# ── Branch coverage ──────────────────────────────────────────────────
+
+
+class TestConfigFileMisidentifiedBranch:
+    """Cover the 'non-security concern' early-out in _is_config_file_misidentified."""
+
+    def test_non_security_concern_returns_false(self):
+        """When concern is not security, _is_config_file_misidentified returns False."""
+        reviewer = AdversarialReviewer()
+        # config file path but non-security concern
+        finding = _make_finding(
+            concern=ConcernType.CODE_QUALITY,
+            file="config.json",
+        )
+        assert reviewer._is_config_file_misidentified(finding) is False
+
+    def test_security_concern_returns_bool(self):
+        """When concern is security, _is_config_file_misidentified runs regex."""
+        reviewer = AdversarialReviewer()
+        finding = _make_finding(
+            concern=ConcernType.SECURITY,
+            file="config.yaml",
+        )
+        result = reviewer._is_config_file_misidentified(finding)
+        assert isinstance(result, bool)

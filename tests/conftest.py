@@ -5,7 +5,7 @@ Test configuration and shared fixtures for Verdity.
 from __future__ import annotations
 
 import os
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 import pytest
 import pytest_asyncio

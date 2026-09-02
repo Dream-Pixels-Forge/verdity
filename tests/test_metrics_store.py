@@ -230,7 +230,7 @@ class TestRouterOutcomes:
     async def test_record_auto_approve_outcome(self, store):
         """Auto-approved findings should be recorded as auto_fixed."""
         from verdity.router import RouteAction, RoutingDecision, record_routing_outcomes
-        from verdity.schemas import Finding, ConcernType, Severity
+        from verdity.schemas import ConcernType, Finding, Severity
 
         finding = Finding(
             concern=ConcernType.SECURITY,
@@ -259,7 +259,7 @@ class TestRouterOutcomes:
     async def test_record_auto_dismiss_outcome(self, store):
         """Auto-dismissed findings should be recorded as false_positive."""
         from verdity.router import RouteAction, RoutingDecision, record_routing_outcomes
-        from verdity.schemas import Finding, ConcernType, Severity
+        from verdity.schemas import ConcernType, Finding, Severity
 
         finding = Finding(
             concern=ConcernType.CODE_QUALITY,
@@ -287,7 +287,7 @@ class TestRouterOutcomes:
     async def test_manual_review_not_recorded(self, store):
         """Manual review findings should NOT have an automatic outcome."""
         from verdity.router import RouteAction, RoutingDecision, record_routing_outcomes
-        from verdity.schemas import Finding, ConcernType, Severity
+        from verdity.schemas import ConcernType, Finding, Severity
 
         finding = Finding(
             concern=ConcernType.TESTING,
@@ -391,3 +391,159 @@ async def test_gate_phase9_metrics(store):
     assert summary["outcome_counts"]["confirmed"] == 3
     assert summary["outcome_counts"]["false_positive"] == 1
     assert summary["outcome_counts"]["auto_fixed"] == 1
+
+
+# ── Branch Coverage Tests ────────────────────────────────────────────
+
+
+class TestBranchCoverage:
+    """Cover remaining branches for 100% coverage."""
+
+    @pytest.mark.asyncio
+    async def test_record_outcome_invalid_outcome_raises(self, store):
+        """record_finding_outcome raises ValueError for invalid outcome."""
+        with pytest.raises(ValueError, match="Invalid outcome"):
+            await store.record_finding_outcome(
+                finding_id="00000000-0000-0000-0000-000000000001",
+                repo_id="r",
+                pr_number=1,
+                final_outcome="bogus",
+                confidence=0.5,
+                severity="medium",
+                concern="security",
+            )
+
+    @pytest.mark.asyncio
+    async def test_record_outcome_before_connect_raises(self):
+        s = MetricsStore(db_path=":memory:")
+        with pytest.raises(RuntimeError, match="not connected"):
+            await s.record_finding_outcome(
+                finding_id="00000000-0000-0000-0000-000000000001",
+                repo_id="r",
+                pr_number=1,
+                final_outcome="confirmed",
+                confidence=0.5,
+                severity="medium",
+                concern="security",
+            )
+
+    @pytest.mark.asyncio
+    async def test_record_timing_before_connect_raises(self):
+        s = MetricsStore(db_path=":memory:")
+        with pytest.raises(RuntimeError, match="not connected"):
+            await s.record_review_timing(
+                repo_id="r",
+                pr_number=1,
+                phase="ingestion",
+                duration_ms=100,
+            )
+
+    @pytest.mark.asyncio
+    async def test_get_repo_summary_before_connect_raises(self):
+        s = MetricsStore(db_path=":memory:")
+        with pytest.raises(RuntimeError, match="not connected"):
+            await s.get_repo_summary("r")
+
+    @pytest.mark.asyncio
+    async def test_get_repo_summary_with_even_median(self, store):
+        """With even count of timings, median is the average of two middles."""
+        # Record 4 timings (even count, > 1)
+        for ms in [100, 200, 300, 400]:
+            await store.record_review_timing(
+                repo_id="r", pr_number=1, phase="total", duration_ms=ms
+            )
+        summary = await store.get_repo_summary("r")
+        # median of [100, 200, 300, 400] sorted = (200 + 300) / 2 = 250
+        assert summary["median_time_to_review"] == 250.0
+
+    @pytest.mark.asyncio
+    async def test_get_repo_summary_with_odd_median(self, store):
+        """With odd count, median is the middle element."""
+        for ms in [100, 200, 300]:
+            await store.record_review_timing(
+                repo_id="r", pr_number=1, phase="total", duration_ms=ms
+            )
+        summary = await store.get_repo_summary("r")
+        assert summary["median_time_to_review"] == 200.0
+
+    @pytest.mark.asyncio
+    async def test_get_repo_summary_with_single_median(self, store):
+        """With 1 timing, median is that timing."""
+        await store.record_review_timing(
+            repo_id="r", pr_number=1, phase="total", duration_ms=42
+        )
+        summary = await store.get_repo_summary("r")
+        assert summary["median_time_to_review"] == 42.0
+
+    @pytest.mark.asyncio
+    async def test_get_all_outcomes_before_connect_raises(self):
+        s = MetricsStore(db_path=":memory:")
+        with pytest.raises(RuntimeError, match="not connected"):
+            await s.get_all_outcomes()
+
+    @pytest.mark.asyncio
+    async def test_get_all_outcomes_repo_filter(self, store):
+        """get_all_outcomes filters by repo_id when provided."""
+        await store.record_finding_outcome(
+            finding_id="00000000-0000-0000-0000-000000000001",
+            repo_id="r1",
+            pr_number=1,
+            final_outcome="confirmed",
+            confidence=0.5,
+            severity="high",
+            concern="security",
+        )
+        await store.record_finding_outcome(
+            finding_id="00000000-0000-0000-0000-000000000002",
+            repo_id="r2",
+            pr_number=2,
+            final_outcome="false_positive",
+            confidence=0.5,
+            severity="low",
+            concern="code_quality",
+        )
+        rows = await store.get_all_outcomes(repo_id="r1")
+        assert len(rows) == 1
+        assert rows[0]["repo_id"] == "r1"
+
+    @pytest.mark.asyncio
+    async def test_get_all_outcomes_with_days_filter(self, store):
+        """get_all_outcomes applies days filter when provided."""
+        await store.record_finding_outcome(
+            finding_id="00000000-0000-0000-0000-000000000003",
+            repo_id="r",
+            pr_number=1,
+            final_outcome="confirmed",
+            confidence=0.5,
+            severity="high",
+            concern="security",
+        )
+        rows = await store.get_all_outcomes(repo_id="r", days=30)
+        assert len(rows) == 1
+
+    @pytest.mark.asyncio
+    async def test_get_repo_dashboard_before_connect_raises(self):
+        s = MetricsStore(db_path=":memory:")
+        with pytest.raises(RuntimeError, match="not connected"):
+            await s.get_repo_dashboard("r")
+
+    @pytest.mark.asyncio
+    async def test_get_repo_dashboard_success(self, store):
+        """get_repo_dashboard returns a dict with summary and daily breakdown."""
+        await store.record_review_metrics(
+            repo_id="r",
+            pr_number=1,
+            metrics={
+                "total_findings": 3.0,
+                "cost_usd": 0.05,
+                "tokens_input": 100.0,
+                "tokens_output": 50.0,
+            },
+        )
+        await store.record_review_timing(
+            repo_id="r", pr_number=1, phase="total", duration_ms=200
+        )
+        dash = await store.get_repo_dashboard("r", days=30)
+        assert "summary" in dash
+        assert "daily_reviews" in dash
+        assert dash["summary"]["review_count"] == 1

@@ -110,3 +110,60 @@ class TestDeliveryIdValidation:
                 trigger_type=TriggerType.PR_OPENED,
                 repo={"owner": "o", "name": "r", "id": 1},
             )
+
+
+class TestUnknownActionFallback:
+    """Cover the 'unknown action for known event' branch (line 66-70)."""
+
+    def test_known_event_with_unknown_action_uses_name_only(self, delivery_id):
+        """pull_request event with unknown action falls back to PR_OPENED."""
+        payload = {
+            "pull_request": {
+                "number": 1,
+                "head": {"sha": "a"},
+                "base": {"sha": "b"},
+                "draft": False,
+            },
+            "repository": {"id": 1, "name": "r", "owner": {"login": "o"}},
+        }
+        event = normalize_webhook(
+            event_name="pull_request",
+            action="unknown_action_xyz",
+            delivery_id=delivery_id,
+            payload=payload,
+        )
+        # Falls back to PR_OPENED via name-only trigger
+        assert event.trigger_type == TriggerType.PR_OPENED
+
+    def test_unknown_event_no_action_falls_back(self, delivery_id):
+        """Completely unknown event with action=None falls back to PR_OPENED."""
+        payload = {
+            "repository": {"id": 1, "name": "r", "owner": {"login": "o"}},
+        }
+        event = normalize_webhook(
+            event_name="totally_unknown_event",
+            action="some_action",
+            delivery_id=delivery_id,
+            payload=payload,
+        )
+        # Falls back to PR_OPENED via generic trigger
+        assert event.trigger_type == TriggerType.PR_OPENED
+
+    def test_event_with_name_only_trigger_uses_fallback(self, delivery_id):
+        """When event_name has a None-action entry, use it as fallback for unknown action.
+
+        Triggers lines 64-69 (the 'if name_only_trigger is not None' branch).
+        Uses 'push' event_name which is in the map with action=None.
+        """
+        payload = {
+            "after": "newsha",
+            "repository": {"id": 1, "name": "r", "owner": {"login": "o"}},
+        }
+        event = normalize_webhook(
+            event_name="push",
+            action="some_bogus_action",
+            delivery_id=delivery_id,
+            payload=payload,
+        )
+        # Falls back to PUSH via name-only trigger
+        assert event.trigger_type == TriggerType.PUSH

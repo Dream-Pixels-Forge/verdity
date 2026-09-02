@@ -6,6 +6,8 @@ Phase 13: Multi-Platform Webhook Support — GitLab
 
 from __future__ import annotations
 
+import pytest
+
 from verdity.platforms.gitlab import GitLabPlatform
 
 
@@ -215,3 +217,68 @@ class TestGitLabPlatformName:
         """GitLabPlatform inherits from Platform."""
         from verdity.platforms.base import Platform
         assert issubclass(GitLabPlatform, Platform)
+
+    def test_repr_includes_class_and_platform(self):
+        """Platform.__repr__ returns '<ClassName platform=name>'."""
+        platform = GitLabPlatform()
+        assert repr(platform) == "<GitLabPlatform platform=gitlab>"
+
+
+class TestGitLabPostComment:
+    """Post comments to GitLab MRs."""
+
+    @pytest.mark.asyncio
+    async def test_post_comment_success(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        platform = GitLabPlatform()
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"id": 1, "body": "ok"}
+
+        mock_http = MagicMock()
+        mock_http.post = AsyncMock(return_value=mock_response)
+        mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+        mock_http.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("verdity.platforms.gitlab.httpx.AsyncClient", return_value=mock_http):
+            result = await platform.post_comment(
+                owner="ns", repo="proj", number=10, body="hello"
+            )
+        assert result == {"id": 1, "body": "ok"}
+        call_args = mock_http.post.call_args
+        assert "ns/proj" in call_args.args[0]
+        assert call_args.kwargs["json"] == {"body": "hello"}
+
+
+class TestGitLabPostInlineComment:
+    """Post inline discussions on GitLab MRs."""
+
+    @pytest.mark.asyncio
+    async def test_post_inline_comment_success(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        platform = GitLabPlatform()
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"id": 2}
+
+        mock_http = MagicMock()
+        mock_http.post = AsyncMock(return_value=mock_response)
+        mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+        mock_http.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("verdity.platforms.gitlab.httpx.AsyncClient", return_value=mock_http):
+            result = await platform.post_inline_comment(
+                owner="ns",
+                repo="proj",
+                number=10,
+                commit_sha="abc",
+                file_path="src/x.py",
+                line=5,
+                body="inline",
+            )
+        assert result == {"id": 2}
+        call_args = mock_http.post.call_args
+        payload = call_args.kwargs["json"]
+        assert payload["body"] == "inline"
+        assert payload["position"]["new_path"] == "src/x.py"
+        assert payload["position"]["new_line"] == 5
