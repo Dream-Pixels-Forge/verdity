@@ -50,6 +50,22 @@ class RunStatus(str, Enum):
 
 
 @dataclass
+class ReviewPolicy:
+    """Policy controlling review run behavior.
+
+    Tiers:
+      - "lite": fast, style + obvious bugs only (<10s, minimal tokens)
+      - "balanced": all agents, full context (<60s, moderate tokens)
+      - "deep": all agents + cross-repo context + security reasoning (<5min, high tokens)
+    """
+
+    tier: str = "balanced"  # "lite" | "balanced" | "deep"
+    depth: str = "standard"  # retained for backward compat
+    timeout_seconds: int = 30
+    budget_tokens: int = 5000
+
+
+@dataclass
 class ReviewRun:
     """In-memory durable state for a single PR review run."""
 
@@ -70,22 +86,26 @@ def resolve_policy(event: VerdityEvent) -> ReviewPolicy:
     """
     Map a VerdityEvent to a ReviewPolicy per the trigger taxonomy.
     (Orchestration doc §3 — abbreviated for Phase 3; full table in prod config.)
+    Tiers:
+      - "lite": fast, style + obvious bugs only (<10s, minimal tokens)
+      - "balanced": all agents, full context (<60s, moderate tokens)
+      - "deep": all agents + cross-repo context + security reasoning (<5min, high tokens)
     """
     trigger = event.trigger_type
 
     if trigger == TriggerType.PUSH:
         # Push events trigger semantic-index re-index, not a full review
-        return ReviewPolicy(depth="standard", timeout_seconds=30, budget_tokens=5000)
+        return ReviewPolicy(tier="lite", timeout_seconds=30, budget_tokens=5000)
 
     if trigger in (TriggerType.INSTALLATION_CREATED, TriggerType.INSTALLATION_REPOSITORIES_ADDED):
-        return ReviewPolicy(depth="standard", timeout_seconds=10, budget_tokens=1000)
+        return ReviewPolicy(tier="lite", timeout_seconds=10, budget_tokens=1000)
 
     # PR-related triggers
     pr = event.pull_request
     if pr is None:
-        return ReviewPolicy(depth="standard", timeout_seconds=120, budget_tokens=40000)
+        return ReviewPolicy(tier="balanced", timeout_seconds=120, budget_tokens=40000)
 
-    # Determine depth based on PR size heuristic
+    # Determine tier based on PR size heuristic
     # In production, this comes from the GitHub API diff stats (additions + deletions).
     from verdity.config import get_settings
 
@@ -96,17 +116,22 @@ def resolve_policy(event: VerdityEvent) -> ReviewPolicy:
         diff_lines = getattr(event.pull_request, "additions", 0) + getattr(
             event.pull_request, "deletions", 0
         )
-    is_large = diff_lines >= settings.large_pr_diff_threshold
-    depth = "extended" if is_large else "standard"
-    timeout = 15 * 60 if is_large else 5 * 60  # seconds
-    budget = 200_000 if is_large else 40_000
 
-    # Security forced-on for sensitive paths (checked during specialist selection)
-    return ReviewPolicy(
-        depth=depth,
-        timeout_seconds=timeout,
-        budget_tokens=budget,
-    )
+    # Tier mapping: small PRs → lite, medium → balanced, large → deep
+    if diff_lines < settings.small_pr_diff_threshold:
+        tier = "lite"
+        timeout = 10 * 60  # 10 minutes
+        budget = 10_000
+    elif diff_lines >= settings.large_pr_diff_threshold:
+        tier = "deep"
+        timeout = 15 * 60  # 15 minutes
+        budget = 200_000
+    else:
+        tier = "balanced"
+        timeout = 30 * 60  # 30 minutes
+        budget = 40_000
+
+    return ReviewPolicy(tier=tier, timeout_seconds=timeout, budget_tokens=budget)
 
 
 def resolve_specialists(event: VerdityEvent, policy: ReviewPolicy) -> list[str]:

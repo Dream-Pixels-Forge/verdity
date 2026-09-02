@@ -10,8 +10,6 @@ MCP Protocol: https://modelcontextprotocol.io/
 """
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -21,10 +19,7 @@ from .config import InspectorConfig
 from .model_fallback import MultiModelFallback
 from .orchestrator import Orchestrator
 from .schemas import (
-    ConcernType,
-    Finding,
     ReviewPolicy,
-    Severity,
 )
 
 logger = logging.getLogger(__name__)

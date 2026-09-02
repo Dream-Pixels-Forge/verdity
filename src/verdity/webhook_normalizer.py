@@ -78,7 +78,7 @@ def normalize_webhook(
                 "(raw event name preserved in delivery_id for debugging)",
                 event_name, action,
             )
-            trigger = TriggerType.PR_OPENED  # safe fallback; the raw event name is preserved in delivery_id
+            trigger = TriggerType.PR_OPENED  # safe fallback
 
     repo = _extract_repo(payload)
 

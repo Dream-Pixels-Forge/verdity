@@ -70,6 +70,13 @@ class Settings(BaseSettings):
     )
 
     # ── PR Size Heuristic ────────────────────────────────────────────
+    # PRs with total diff lines (additions + deletions) below this threshold
+    # are treated as "lite" review (fast, style + obvious bugs only).
+    small_pr_diff_threshold: int = Field(
+        default=100,
+        ge=1,
+        description="Total diff lines (additions+deletions) below which the PR is considered small/lite",
+    )
     # PRs with total diff lines (additions + deletions) above this threshold
     # are treated as "large" (extended review).
     large_pr_diff_threshold: int = Field(

@@ -10,9 +10,8 @@ Rule file location: `.verdity/rules.yml` in repository root.
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import yaml
 

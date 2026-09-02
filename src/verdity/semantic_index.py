@@ -566,9 +566,8 @@ class SemanticIndex:
         related_chunks: list[dict[str, Any]] = []
         if related_symbols:
             symbol_list = list(related_symbols)[:50]  # limit to prevent explosion
-            placeholders = ",".join("?" * len(symbol_list))
             rows = await self._conn.execute(
-                f"""
+                """
                 SELECT chunk_id, file_path, start_line, end_line, content,
                        language, symbols
                 FROM code_chunks

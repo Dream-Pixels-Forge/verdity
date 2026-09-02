@@ -94,7 +94,12 @@ class VerificationGate:
                 verdict.passed = False
                 verdict.notes += f"Verifier disagreement: {intent_result.reason}\n"
         else:
-            verdict.checks.append(GateCheck(name="matches_intent", result=CheckResult.SKIP, reason="No verifier subagent configured"))
+            verdict.checks.append(GateCheck(
+        name="matches_intent",
+        result=CheckResult.SKIP,
+        reason="No verifier subagent configured - "
+               "skipping intent match check"
+    ))
 
         if verdict.passed:
             verdict.notes = "All verification checks passed."
@@ -202,9 +207,11 @@ class VerifierSubagent:
         if proposed_fix.fix_type == "secret_removal":
             if "settings" in fix_code or "environ" in fix_code or "credentials" in fix_code:
                 return GateCheck(name="matches_intent", result=CheckResult.PASS,
-                                 reason="Fix correctly replaces hard-coded credential with config reference")
-            return GateCheck(name="matches_intent", result=CheckResult.FAIL,
-                             reason="Fix does not properly remove hard-coded credential")
+                                 reason="Fix correctly replaces hard-coded "
+                                        "credential with config reference")
+return GateCheck(name="matches_intent", result=CheckResult.FAIL,
+                 reason="Fix does not properly remove hard-coded "
+                        "credential")
 
         if proposed_fix.fix_type == "sql_fix":
             if "parameterized" in fix_code or "%s" in fix_code or "? " in fix_code:

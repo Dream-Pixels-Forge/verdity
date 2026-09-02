@@ -47,6 +47,11 @@ class TestingAgent(BaseSpecialistAgent):
     _input_tokens_per_finding = 200
     _output_tokens_per_finding = 30
 
+    __test__ = False
+
+    def __init__(self, fallback: Any = None) -> None:
+        super().__init__(fallback)
+
     async def _scan(
         self,
         ctx: SpecialistContext,

@@ -168,9 +168,9 @@ class AggregatorAgent:
                     "low": "🔵",
                     "info": "⚪",
                 }.get(f.severity.value, "⚪")
-                lines.append(
-                    f"- {emoji} **[{f.severity.value.upper()}]** `{f.file}:{f.line_start}` — {f.summary}"
-                )
+                emoji_str = f"- {emoji} **[{f.severity.value.upper()}]**"
+                file_line = f"`{f.file}:{f.line_start}`"
+                lines.append(f"{emoji_str} — {f.summary}")
                 if f.explanation:
                     lines.append(f"  > {f.explanation}")
             if len(ranked) > 10:

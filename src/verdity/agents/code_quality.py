@@ -35,32 +35,25 @@ QUALITY_PATTERNS: list[tuple[str, str, str, str]] = [
     ),
     (
         "deep_nesting",
-        "    {5,}",
+        "re:    {5,}",
         "low",
         "Deep nesting reduces readability — consider early returns",
     ),
     ("todo_comment", "TODO", "info", "TODO comment found — track for follow-up"),
     ("fixme_comment", "FIXME", "low", "FIXME comment found — should be addressed before merge"),
-    ("magic_number", "= \\d{4,}", "low", "Magic number — consider a named constant"),
-    (
-        "bare_except",
-        "except:",
-        "medium",
-        "Bare except catches all exceptions — specify exception types",
-    ),
-    (
-        "global_import",
-        "from .* import \\*",
-        "high",
-        "Wildcard import pollutes namespace — import names explicitly",
-    ),
+    ("magic_number", "re:= \\d{4,}", "low",
+     "Magic number — consider a named constant"),
+    ("bare_except", "except:", "medium",
+     "Bare except catches all exceptions — specify exception types"),
+    ("global_import", "re:from .* import \\*", "high",
+     "Wildcard import pollutes namespace — import names explicitly"),
     (
         "assert_in_code",
         "assert ",
         "medium",
         "Assert statement in production code — removes on optimize",
     ),
-    ("print_statement", "print\\(", "low", "Debug print statement — remove before merge"),
+    ("print_statement", "re:print\\(", "low", "Debug print statement — remove before merge"),
 ]
 
 
