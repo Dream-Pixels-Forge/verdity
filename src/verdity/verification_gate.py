@@ -61,7 +61,7 @@ class VerificationGate:
         self,
         proposed_fix: ProposedFix,
         original_finding: Finding,
-        verifier: "VerifierSubagent | None" = None,
+        verifier: VerifierSubagent | None = None,
     ) -> GateVerdict:
         verdict = GateVerdict(proposed_fix_id=proposed_fix.finding_id)
 
@@ -159,7 +159,7 @@ class VerificationGate:
         env_sources = ("settings", "os.environ", "os.getenv", "getenv", "environ", "vault")
         for line in fix.suggested_lines:
             stripped = line.strip()
-            if stripped.startswith("#") or stripped.startswith('"""') or stripped.startswith("'''"):
+            if stripped.startswith(("#", '"""', "'''")):
                 continue
             # Check if line reads from env/vault first
             is_env_read = any(
@@ -209,9 +209,9 @@ class VerifierSubagent:
                 return GateCheck(name="matches_intent", result=CheckResult.PASS,
                                  reason="Fix correctly replaces hard-coded "
                                         "credential with config reference")
-return GateCheck(name="matches_intent", result=CheckResult.FAIL,
-                 reason="Fix does not properly remove hard-coded "
-                        "credential")
+            return GateCheck(name="matches_intent", result=CheckResult.FAIL,
+                             reason="Fix does not properly remove hard-coded "
+                                    "credential")
 
         if proposed_fix.fix_type == "sql_fix":
             if "parameterized" in fix_code or "%s" in fix_code or "? " in fix_code:

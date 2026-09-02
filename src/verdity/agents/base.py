@@ -45,12 +45,19 @@ class BaseSpecialistAgent(ABC):
         semantic_index: SemanticIndex,
         token_economics: TokenEconomicsService,
         audit_store: AuditStore,
+        *,
+        use_llm: bool = False,
     ) -> SpecialistResponse:
         """
         Template method: scan → record tokens → audit-log findings → return.
         Subclasses implement `_scan()` for the actual analysis.
+
+        Args:
+            use_llm: When True, agents run LLM-enhanced analysis AFTER deterministic
+                     regex. When False (default), only deterministic analysis runs.
+                     LLM is optional — every agent works without it (constraint #10).
         """
-        findings = await self._scan(ctx, semantic_index)
+        findings = await self._scan(ctx, semantic_index, use_llm=use_llm)
 
         # Estimate input tokens from diff content (chars ÷ 4 ≈ tokens)
         total_chars = sum(
@@ -106,6 +113,8 @@ class BaseSpecialistAgent(ABC):
         self,
         ctx: SpecialistContext,
         semantic_index: SemanticIndex,
+        *,
+        use_llm: bool = False,
     ) -> list[Finding]:
         """Subclass implements the actual scan logic."""
         ...

@@ -7,7 +7,7 @@ Converts raw GitHub webhook payloads into our normalized VerdityEvent.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from verdity.schemas import (
     PullRequestRef,
@@ -109,5 +109,5 @@ def normalize_webhook(
         repo=repo,
         pull_request=pr_ref,
         push_ref=push_ref,
-        received_at=datetime.now(timezone.utc),
+        received_at=datetime.now(UTC),
     )

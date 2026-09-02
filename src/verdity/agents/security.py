@@ -98,6 +98,8 @@ class SecurityAgent(BaseSpecialistAgent):
         self,
         ctx: SpecialistContext,
         semantic_index: SemanticIndex,
+        *,
+        use_llm: bool = False,
     ) -> list[Finding]:
         findings: list[Finding] = []
 
@@ -132,7 +134,121 @@ class SecurityAgent(BaseSpecialistAgent):
         diff_findings = self._scan_diff_for_vulnerabilities(ctx.diff_files)
         findings.extend(diff_findings)
 
+        # ── Pass 4: LLM-enhanced analysis (optional, when use_llm=True) ─
+        if use_llm:
+            llm_findings = await self._llm_enhanced_scan(ctx)
+            findings.extend(llm_findings)
+
         return findings
+
+    # ── LLM-Enhanced Security Scan (Pass 4) ─────────────────────────
+
+    async def _llm_enhanced_scan(self, ctx: SpecialistContext) -> list[Finding]:
+        """
+        Run LLM-enhanced security analysis after deterministic regex.
+        Finds logic issues, context-dependent bugs, and nuance that regex misses.
+
+        LLM is optional — if no client is available, returns empty list.
+        """
+        if not ctx.llm_client or not ctx.llm_client.enabled:
+            return []
+
+        findings: list[Finding] = []
+        diff_text = "\n".join(
+            f"--- {f.get('path', 'unknown')}\n{f.get('additions', f.get('content', ''))}"
+            for f in ctx.diff_files
+        )
+        if not diff_text.strip():
+            return []
+
+        system_prompt = (
+            "You are a senior security engineer reviewing a code diff for security vulnerabilities. "
+            "Focus on LOGIC flaws that static analysis misses: auth bypass, privilege escalation, "
+            "injection chains, race conditions, unsafe deserialization paths, improper input validation, "
+            "and business logic bugs that could lead to security issues.\n\n"
+            "Return a JSON array of findings. Each finding must have:\n"
+            "- summary: short description\n"
+            "- severity: critical|high|medium|low|info\n"
+            "- file: file path from the diff\n"
+            "- line_start: line number (approximate)\n"
+            "- explanation: detailed explanation of the security concern\n"
+            "- suggested_fix: brief code suggestion or 'none'\n\n"
+            "Only report genuine security concerns. Do NOT report style issues or trivial matters.\n"
+            "If no security issues found, return an empty array: []"
+        )
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Review this diff for security vulnerabilities:\n\n{diff_text}"},
+        ]
+
+        try:
+            response = await ctx.llm_client.complete(
+                model="gpt-4o",
+                messages=messages,
+                temperature=0.0,
+                max_tokens=4096,
+            )
+            parsed = self._parse_llm_security_response(response.content)
+            for item in parsed:
+                severity_str = item.get("severity", "medium").lower()
+                try:
+                    severity = Severity(severity_str)
+                except ValueError:
+                    severity = Severity.MEDIUM
+                findings.append(
+                    Finding(
+                        concern=ConcernType.SECURITY,
+                        severity=severity,
+                        file=item.get("file", "unknown"),
+                        line_start=item.get("line_start", 1),
+                        line_end=item.get("line_start", 1),
+                        summary=f"[LLM] {item.get('summary', 'Security concern')}",
+                        explanation=item.get("explanation", ""),
+                        suggested_fix_diff=(
+                            item.get("suggested_fix")
+                            if item.get("suggested_fix", "none").lower() != "none"
+                            else None
+                        ),
+                        confidence=0.70,  # LLM findings get base confidence; trust calibration adjusts
+                        evidence=[
+                            EvidenceItem(
+                                tool="llm_security_analyst",
+                                result=item.get("summary", ""),
+                                query="llm_enhanced_scan",
+                            )
+                        ],
+                        agent_version=self.AGENT_VERSION,
+                        prompt_hash=self._prompt_hash("llm_security", str(ctx.review_run_id)),
+                    )
+                )
+        except Exception as exc:
+            logger.warning("LLM security scan failed: %s", exc)
+
+        return findings
+
+    @staticmethod
+    def _parse_llm_security_response(content: str) -> list[dict]:
+        """Parse LLM security response, extracting JSON array from markdown or raw text."""
+        import json as _json
+        import re as _re
+
+        # Try code block
+        block_match = _re.search(r"```(?:json)?\s*\n(.*?)\n```", content, _re.DOTALL)
+        if block_match:
+            try:
+                return _json.loads(block_match.group(1))
+            except _json.JSONDecodeError:
+                pass
+
+        # Try raw array
+        arr_match = _re.search(r"\[.*\]", content, _re.DOTALL)
+        if arr_match:
+            try:
+                return _json.loads(arr_match.group(0))
+            except _json.JSONDecodeError:
+                pass
+
+        return []
 
     # ── Rule-Based Scans ──────────────────────────────────────────────
 
@@ -286,7 +402,7 @@ class SecurityAgent(BaseSpecialistAgent):
             base_confidence = 0.85
 
         stripped = line.strip()
-        if stripped.startswith("#") or stripped.startswith("//") or stripped.startswith("*"):
+        if stripped.startswith(("#", "//", "*")):
             base_confidence = max(0.1, base_confidence - 0.3)
 
         return round(base_confidence, 2)

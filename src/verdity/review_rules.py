@@ -11,13 +11,13 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import yaml
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_RULES: Dict[str, Any] = {
+DEFAULT_RULES: dict[str, Any] = {
     "version": "1.0",
     "global": {
         "max_line_length": 120,
@@ -41,7 +41,7 @@ class ReviewRules:
 
     def __init__(self, repo_path: str) -> None:
         self.repo_path = Path(repo_path)
-        self._rules: Optional[Dict[str, Any]] = None
+        self._rules: dict[str, Any] | None = None
         self._load_rules()
 
     def _load_rules(self) -> None:
@@ -68,8 +68,8 @@ class ReviewRules:
             self._rules = DEFAULT_RULES.copy()
 
     def _merge_rules(
-        self, base: Dict[str, Any], override: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, base: dict[str, Any], override: dict[str, Any]
+    ) -> dict[str, Any]:
         """Deep merge override into base rules."""
         result = base.copy()
         for key, value in override.items():
@@ -83,7 +83,7 @@ class ReviewRules:
                 result[key] = value
         return result
 
-    def get_rules(self, file_path: str = "") -> Dict[str, Any]:
+    def get_rules(self, file_path: str = "") -> dict[str, Any]:
         """Get applicable rules for a file path."""
         if not self._rules:
             return DEFAULT_RULES.copy()
@@ -113,7 +113,7 @@ class ReviewRules:
 
         return fnmatch(file_path, pattern)
 
-    def _detect_language(self, file_path: str) -> Optional[str]:
+    def _detect_language(self, file_path: str) -> str | None:
         """Detect programming language from file extension."""
         ext_map = {
             ".py": "python",
@@ -158,7 +158,7 @@ class ReviewRules:
 
         return None
 
-    def get_agent_config(self, agent_name: str) -> Dict[str, Any]:
+    def get_agent_config(self, agent_name: str) -> dict[str, Any]:
         """Get configuration for a specific agent."""
         if not self._rules:
             return {"enabled": True, "min_severity": "low"}
@@ -177,18 +177,18 @@ class ReviewRules:
         config = self.get_agent_config(agent_name)
         return config.get("min_severity", "low")
 
-    def get_global_rules(self) -> Dict[str, Any]:
+    def get_global_rules(self) -> dict[str, Any]:
         """Get global review rules."""
         if not self._rules:
             return DEFAULT_RULES.get("global", {})
         return self._rules.get("global", {})
 
-    def get_language_rules(self, language: str) -> Dict[str, Any]:
+    def get_language_rules(self, language: str) -> dict[str, Any]:
         """Get rules for a specific language."""
         if not self._rules:
             return {}
         return self._rules.get("languages", {}).get(language, {})
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Export rules as dictionary."""
         return self._rules or DEFAULT_RULES.copy()

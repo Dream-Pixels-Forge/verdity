@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, ClassVar
 
 from .config import InspectorConfig
 from .model_fallback import MultiModelFallback
@@ -32,10 +32,10 @@ class AgentInput:
     context: str = ""
     file_path: str = ""
     language: str = ""
-    diff_files: List[Dict[str, Any]] = field(default_factory=list)
+    diff_files: list[dict[str, Any]] = field(default_factory=list)
 
 
-def _diff_to_files(diff: str, file_path: str = "") -> List[Dict[str, Any]]:
+def _diff_to_files(diff: str, file_path: str = "") -> list[dict[str, Any]]:
     """Convert a unified diff string to diff_files format."""
     if not diff:
         return []
@@ -49,23 +49,23 @@ logger = logging.getLogger(__name__)
 class MCPServer:
     """MCP server exposing Verdity's specialist agents as tools."""
 
-    PROTOCOL_VERSION = "2024-11-05"
-    SERVER_INFO = {
+    PROTOCOL_VERSION: ClassVar[str] = "2024-11-05"
+    SERVER_INFO: ClassVar[dict[str, str]] = {
         "name": "verdity",
         "version": "0.3.0",
     }
 
     def __init__(
         self,
-        config: Optional[InspectorConfig] = None,
-        multi_model: Optional[MultiModelFallback] = None,
+        config: InspectorConfig | None = None,
+        multi_model: MultiModelFallback | None = None,
     ) -> None:
         self.config = config or InspectorConfig()
         self.multi_model = multi_model or MultiModelFallback()
-        self._orchestrator: Optional[Orchestrator] = None
-        self._tools: List[Dict[str, Any]] = self._build_tool_definitions()
+        self._orchestrator: Orchestrator | None = None
+        self._tools: list[dict[str, Any]] = self._build_tool_definitions()
 
-    def _build_tool_definitions(self) -> List[Dict[str, Any]]:
+    def _build_tool_definitions(self) -> list[dict[str, Any]]:
         """Build MCP tool definitions for each specialist agent."""
         return [
             {
@@ -291,11 +291,11 @@ class MCPServer:
             await self._orchestrator.shutdown()
         logger.info("MCP server shutdown")
 
-    def get_tools(self) -> List[Dict[str, Any]]:
+    def get_tools(self) -> list[dict[str, Any]]:
         """Return list of available MCP tools."""
         return self._tools
 
-    def get_server_info(self) -> Dict[str, Any]:
+    def get_server_info(self) -> dict[str, Any]:
         """Return MCP server info."""
         return {
             **self.SERVER_INFO,
@@ -304,8 +304,8 @@ class MCPServer:
         }
 
     async def call_tool(
-        self, name: str, arguments: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, name: str, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
         """Call an MCP tool by name with arguments."""
         tool_names = [t["name"] for t in self._tools]
         if name not in tool_names:
@@ -336,13 +336,13 @@ class MCPServer:
             logger.exception("Error calling tool %s", name)
             return {"error": str(e), "tool": name}
 
-    async def _review_security(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _review_security(self, args: dict[str, Any]) -> dict[str, Any]:
         """Run security review."""
         from .agents.security import SecurityAgent
-        from .semantic_index import SemanticIndex
-        from .token_economics import TokenEconomicsService
         from .audit_store import AuditStore
         from .schemas import SpecialistContext
+        from .semantic_index import SemanticIndex
+        from .token_economics import TokenEconomicsService
 
         diff = args.get("diff", "")
         file_path = args.get("file_path", "")
@@ -379,13 +379,13 @@ class MCPServer:
         except Exception as e:
             return {"findings": [], "summary": str(e), "agent": "security", "error": str(e)}
 
-    async def _review_quality(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _review_quality(self, args: dict[str, Any]) -> dict[str, Any]:
         """Run code quality review."""
         from .agents.code_quality import CodeQualityAgent
-        from .semantic_index import SemanticIndex
-        from .token_economics import TokenEconomicsService
         from .audit_store import AuditStore
         from .schemas import SpecialistContext
+        from .semantic_index import SemanticIndex
+        from .token_economics import TokenEconomicsService
 
         diff = args.get("diff", "")
         file_path = args.get("file_path", "")
@@ -422,13 +422,13 @@ class MCPServer:
         except Exception as e:
             return {"findings": [], "summary": str(e), "agent": "quality", "error": str(e)}
 
-    async def _review_testing(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _review_testing(self, args: dict[str, Any]) -> dict[str, Any]:
         """Run testing review."""
         from .agents.testing import TestingAgent
-        from .semantic_index import SemanticIndex
-        from .token_economics import TokenEconomicsService
         from .audit_store import AuditStore
         from .schemas import SpecialistContext
+        from .semantic_index import SemanticIndex
+        from .token_economics import TokenEconomicsService
 
         diff = args.get("diff", "")
         file_path = args.get("file_path", "")
@@ -465,13 +465,13 @@ class MCPServer:
         except Exception as e:
             return {"findings": [], "summary": str(e), "agent": "testing", "error": str(e)}
 
-    async def _review_documentation(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _review_documentation(self, args: dict[str, Any]) -> dict[str, Any]:
         """Run documentation review."""
         from .agents.documentation import DocumentationAgent
-        from .semantic_index import SemanticIndex
-        from .token_economics import TokenEconomicsService
         from .audit_store import AuditStore
         from .schemas import SpecialistContext
+        from .semantic_index import SemanticIndex
+        from .token_economics import TokenEconomicsService
 
         diff = args.get("diff", "")
         file_path = args.get("file_path", "")
@@ -508,7 +508,7 @@ class MCPServer:
         except Exception as e:
             return {"findings": [], "summary": str(e), "agent": "documentation", "error": str(e)}
 
-    async def _review_full(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _review_full(self, args: dict[str, Any]) -> dict[str, Any]:
         """Run full review with all agents."""
         if not self._orchestrator:
             await self.initialize()
@@ -544,7 +544,7 @@ class MCPServer:
         except Exception as e:
             return {"findings": [], "summary": str(e), "agent": "full", "error": str(e)}
 
-    async def _generate_fix(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _generate_fix(self, args: dict[str, Any]) -> dict[str, Any]:
         """Generate a fix for a finding."""
         from .coding_agent import CodingAgent
 
@@ -560,7 +560,7 @@ class MCPServer:
             "finding": finding,
         }
 
-    async def _apply_fix(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _apply_fix(self, args: dict[str, Any]) -> dict[str, Any]:
         """Apply a fix to a branch."""
         from .github_client import GitHubClient
 
@@ -581,7 +581,7 @@ class MCPServer:
 
         return result
 
-    async def _get_review_rules(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _get_review_rules(self, args: dict[str, Any]) -> dict[str, Any]:
         """Get custom review rules for a repository."""
         from .review_rules import ReviewRules
 
@@ -593,8 +593,8 @@ class MCPServer:
 
 
 def create_mcp_server(
-    config: Optional[InspectorConfig] = None,
-    multi_model: Optional[MultiModelFallback] = None,
+    config: InspectorConfig | None = None,
+    multi_model: MultiModelFallback | None = None,
 ) -> MCPServer:
     """Factory function to create an MCP server instance."""
     return MCPServer(config=config, multi_model=multi_model)

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "verdity"
-version = "0.3.0"
-description = "Verdity — AI-Powered Pull Request Review System with MCP integration, full-codebase context, and agentic fix mode"
+version = "0.4.0"
+description = "Verdity — AI-Powered Pull Request Review System with MCP integration, full-codebase context, agentic fix mode, multi-platform webhooks, and adversarial review"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.11"
@@ -79,3 +79,14 @@ addopts = "-v --cov=src/verdity --cov-report=term-missing --cov-fail-under=100"
 [tool.ruff]
 target-version = "py311"
 line-length = 100
+
+[tool.ruff.lint.per-file-ignores]
+# Intentional defensive exception handling in agent/orchestrator/MCP/worker code
+"src/verdity/agents/*.py" = ["BLE001"]
+"src/verdity/orchestrator.py" = ["BLE001"]
+"src/verdity/model_fallback.py" = ["BLE001"]
+"src/verdity/rate_limiter.py" = ["BLE001"]
+"src/verdity/review_rules.py" = ["BLE001"]
+"src/verdity/mcp_server.py" = ["BLE001"]
+"src/verdity/worker.py" = ["BLE001"]
+"src/verdity/coding_agent.py" = ["BLE001", "ASYNC230"]

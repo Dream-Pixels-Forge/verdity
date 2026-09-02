@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from verdity.async_sqlite import AsyncConnection
@@ -80,7 +80,7 @@ class ApprovalQueueStore:
         route_action: str,
         route_reason: str | None,
     ) -> None:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         await self._conn.execute(
             """
             INSERT OR REPLACE INTO approval_queue
@@ -134,7 +134,7 @@ class ApprovalQueueStore:
     async def resolve(
         self, queue_id: str, reviewer_id: str, action: str, notes: str | None = None
     ) -> None:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         await self._conn.execute(
             "UPDATE approval_queue SET status=?, reviewer_id=?, resolved_at=? WHERE id=?",
             (action, reviewer_id, now, queue_id),

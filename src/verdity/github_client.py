@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
+from typing import Any, Self
 
 import httpx
 import jwt  # PyJWT
@@ -131,7 +131,7 @@ class GitHubClient:
         if expires_at:
             from datetime import datetime
 
-            dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            dt = datetime.fromisoformat(expires_at)
             self._token_expires_at = dt.timestamp()
         else:
             self._token_expires_at = now + 3600
@@ -274,10 +274,10 @@ class GitHubClient:
             await self._client.aclose()
             self._client = None
 
-    async def __aenter__(self) -> "GitHubClient":
+    async def __aenter__(self) -> Self:
         """Async context manager entry."""
         return self
 
-    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+    async def __aexit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
         """Async context manager exit - ensures client is closed."""
         await self.close()

@@ -51,6 +51,8 @@ class DocumentationAgent(BaseSpecialistAgent):
         self,
         ctx: SpecialistContext,
         semantic_index: SemanticIndex,
+        *,
+        use_llm: bool = False,
     ) -> list[Finding]:
         findings: list[Finding] = []
 

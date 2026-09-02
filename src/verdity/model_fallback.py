@@ -13,8 +13,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -200,7 +201,7 @@ class MultiModelFallback:
                     attempt=attempt + 1,
                 )
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 duration = (time.monotonic() - start) * 1000
                 last_error = f"Timeout after {model.timeout_seconds}s"
                 self.record_failure(model.name)

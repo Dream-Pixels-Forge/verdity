@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any, Self
 
 
 class AsyncConnection:
@@ -41,7 +42,7 @@ class AsyncConnection:
             await self._loop.run_in_executor(None, self._conn.close)
             self._conn = None
 
-    async def __aenter__(self) -> AsyncConnection:
+    async def __aenter__(self) -> Self:
         await self.connect()
         return self
 
@@ -49,7 +50,7 @@ class AsyncConnection:
         self,
         exc_type: type[BaseException] | None,
         exc_val: BaseException | None,
-        exc_tb: Any,
+        exc_tb: object,
     ) -> None:
         await self.close()
 

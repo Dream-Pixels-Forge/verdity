@@ -9,9 +9,9 @@ consumer (orchestrator) sides to catch mismatches early.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Optional
+from typing import Any
 
 from pydantic import BaseModel, Field, StrictStr, field_validator
 
@@ -60,9 +60,9 @@ class VerdityEvent(BaseModel):
     delivery_id: StrictStr
     trigger_type: TriggerType
     repo: RepoRef
-    pull_request: Optional[PullRequestRef] = None
-    push_ref: Optional[StrictStr] = None
-    received_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    pull_request: PullRequestRef | None = None
+    push_ref: StrictStr | None = None
+    received_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     @field_validator("delivery_id")
     @classmethod
@@ -77,7 +77,7 @@ class VerdityEvent(BaseModel):
 
 class QueueEnvelope(BaseModel):
     event: VerdityEvent
-    enqueued_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    enqueued_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     retry_count: int = Field(default=0, ge=0)
     max_retries: int = Field(default=3, ge=1)
 
@@ -86,9 +86,12 @@ class QueueEnvelope(BaseModel):
 
 
 class ReviewPolicy(BaseModel):
+    tier: str = "balanced"
     depth: str = "standard"
     timeout_seconds: int = 120
     budget_tokens: int = 40000
+    adversarial_review_enabled: bool = True
+    adversarial_review_depth: str = "lite"  # "lite" | "full"
 
 
 class SpecialistContext(BaseModel):
@@ -101,6 +104,10 @@ class SpecialistContext(BaseModel):
     head_sha: str
     diff_files: list[dict] = Field(default_factory=list)
     policy: ReviewPolicy = Field(default_factory=ReviewPolicy)
+    llm_client: Any = Field(
+        default=None,
+        description="Optional LLMClient for enhanced analysis (constraint #10: agents work without it)",
+    )
 
 
 class SpecialistInvocation(BaseModel):
@@ -132,8 +139,8 @@ class Severity(str, Enum):
 
 class EvidenceItem(BaseModel):
     tool: StrictStr
-    result: Optional[StrictStr] = None
-    query: Optional[StrictStr] = None
+    result: StrictStr | None = None
+    query: StrictStr | None = None
 
 
 class Finding(BaseModel):
@@ -145,7 +152,7 @@ class Finding(BaseModel):
     line_end: int = Field(ge=1)
     summary: StrictStr
     explanation: StrictStr
-    suggested_fix_diff: Optional[StrictStr] = None
+    suggested_fix_diff: StrictStr | None = None
     confidence: float = Field(ge=0.0, le=1.0)
     evidence: list[EvidenceItem] = Field(default_factory=list)
     agent_version: StrictStr
@@ -159,7 +166,7 @@ class SpecialistResponse(BaseModel):
     findings: list[Finding] = Field(default_factory=list)
     tokens_used: dict[str, int] = Field(default_factory=dict)
     cost_usd: float = Field(default=0.0, ge=0)
-    error: Optional[StrictStr] = None
+    error: StrictStr | None = None
 
 
 # ── Aggregator Output ─────────────────────────────────────────────────
@@ -167,7 +174,7 @@ class SpecialistResponse(BaseModel):
 
 class RankedFinding(BaseModel):
     finding: Finding
-    dedup_group_id: Optional[uuid.UUID] = None
+    dedup_group_id: uuid.UUID | None = None
     rank_score: float
 
 

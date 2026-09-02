@@ -34,6 +34,7 @@ from verdity.audit_store import AuditStore
 from verdity.config import get_settings
 from verdity.event_queue import EventQueue
 from verdity.hmac_verify import verify_with_rotation
+from verdity.metrics_store import MetricsStore
 from verdity.schemas import QueueEnvelope
 from verdity.webhook_normalizer import normalize_webhook
 
@@ -172,7 +173,7 @@ def _sanitize_path(path: str) -> str:
         raise ValueError("Null byte in path")
     if not _SAFE_PATH_RE.match(path):
         raise ValueError(f"Invalid characters in path: {path!r}")
-    if path.startswith("/") or path.startswith("\\"):
+    if path.startswith(("/", "\\")):
         raise ValueError("Absolute paths not allowed")
     if ".." in path.split("/"):
         raise ValueError("Path traversal not allowed")
@@ -227,6 +228,16 @@ async def lifespan(app: FastAPI):
     app.state._delivery_cache = DeliveryCache(db_path=delivery_cache_path)
     await app.state._delivery_cache.connect()
 
+    # Phase 9: Engineering analytics metrics store
+    metrics_path = getattr(settings, "metrics_sqlite_path", None)
+    if metrics_path is None:
+        import pathlib
+
+        _base = pathlib.Path(settings.audit_sqlite_path).parent
+        metrics_path = str(_base / "metrics_store.db")
+    app.state.metrics = MetricsStore(db_path=metrics_path)
+    await app.state.metrics.connect()
+
     # Load persisted delivery IDs into memory
     app.state.delivery_ids: set[str] = await app.state._delivery_cache.load_recent()
     app.state._delivery_cache_ts: dict[str, float] = {}
@@ -239,11 +250,14 @@ async def lifespan(app: FastAPI):
     # Evict expired entries from persistent cache before closing
     try:
         await app.state._delivery_cache.evict_expired()
-    except Exception:  # pragma: no cover
+    except OSError:  # pragma: no cover
         pass  # best-effort during shutdown
     await app.state._delivery_cache.close()
     await app.state.queue.close()
     await app.state.audit.close()
+    metrics: MetricsStore | None = getattr(app.state, "metrics", None)
+    if metrics is not None:
+        await metrics.close()
     logger.info("Ingestion Gateway shut down")
 
 
@@ -386,7 +400,7 @@ async def handle_github_webhook(
     envelope = QueueEnvelope(event=event)
     try:
         msg_id = await request.app.state.queue.publish(envelope)
-    except Exception as exc:
+    except (OSError, RuntimeError) as exc:
         logger.error("Queue publish failed: %s", exc)
         response = JSONResponse(
             status_code=503,
@@ -425,7 +439,232 @@ async def handle_github_webhook(
     )
 
 
+# ── Unified Multi-Platform Webhook Endpoint (Phase 13) ────────────────
+
+
+@app.post("/verdity/webhooks/{platform}")
+async def handle_platform_webhook(
+    platform: str,
+    request: Request,
+):
+    """
+    Unified webhook endpoint for all supported platforms.
+
+    Path params:
+      platform: "github", "gitlab", or "bitbucket"
+
+    Each platform uses its own verification mechanism:
+      - GitHub: X-Hub-Signature-256 (HMAC-SHA256)
+      - GitLab: X-Gitlab-Token (shared secret comparison)
+      - Bitbucket: X-Hub-Signature (HMAC-SHA256)
+
+    Response contract:
+      202 — valid, queued
+      400 — unknown platform
+      401 — signature invalid/missing
+      409 — duplicate delivery (replay)
+      413 — payload too large
+      503 — queue unreachable
+    """
+    from verdity.platforms import BitbucketPlatform, GitHubPlatform, GitLabPlatform
+
+    # ── Step 0: Validate platform ────────────────────────────────────
+    platform_map = {
+        "github": GitHubPlatform,
+        "gitlab": GitLabPlatform,
+        "bitbucket": BitbucketPlatform,
+    }
+    platform_cls = platform_map.get(platform)
+    if platform_cls is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported platform: {platform}. Supported: {', '.join(platform_map)}",
+        )
+
+    platform_instance = platform_cls()
+
+    # ── Step 1: Read raw body BEFORE any parsing ──────────────────────
+    raw_body = await request.body()
+
+    if len(raw_body) > MAX_WEBHOOK_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="Payload too large")
+
+    # ── Step 2: Platform-native verification ──────────────────────────
+    settings = get_settings()
+    if platform == "github":
+        secret = settings.webhook_hmac_secret.get_secret_value()
+    elif platform == "gitlab":
+        secret = settings.gitlab_webhook_secret.get_secret_value()
+    elif platform == "bitbucket":
+        secret = settings.bitbucket_webhook_secret.get_secret_value()
+    else:
+        secret = ""
+
+    if not secret:
+        logger.warning("No webhook secret configured for platform: %s", platform)
+        raise HTTPException(status_code=401, detail=f"No secret configured for {platform}")
+
+    headers_dict = {k.lower(): v for k, v in request.headers.items()}
+    if not platform_instance.verify_webhook(headers_dict, raw_body, secret):
+        delivery_id = headers_dict.get("x-github-delivery", headers_dict.get("x-hook-uuid", "unknown"))
+        logger.warning(
+            "Webhook verification failed for platform=%s delivery=%s",
+            platform,
+            delivery_id,
+        )
+        raise HTTPException(status_code=401, detail="Invalid or missing signature")
+
+    # ── Step 3: Parse payload ─────────────────────────────────────────
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        logger.error("Failed to parse webhook JSON for %s: %s", platform, exc)
+        raise HTTPException(status_code=400, detail="Invalid JSON payload") from exc
+
+    # ── Step 4: Normalize event ───────────────────────────────────────
+    try:
+        event_dict = platform_instance.normalize_event(headers_dict, payload)
+    except Exception as exc:
+        logger.error("Failed to normalize %s webhook: %s", platform, exc)
+        raise HTTPException(status_code=400, detail="Webhook normalization failed") from exc
+
+    # ── Step 5: Replay detection ──────────────────────────────────────
+    delivery_id = event_dict.get("delivery_id", "")
+    if not delivery_id:
+        delivery_id = f"{platform}-{hash(raw_body.hex()[:64])}"
+
+    if delivery_id in request.app.state.delivery_ids:
+        logger.warning("Duplicate delivery ID detected: %s", delivery_id)
+        raise HTTPException(status_code=409, detail="Duplicate delivery — already processed")
+    request.app.state.delivery_ids.add(delivery_id)
+    request.app.state._delivery_cache_ts[delivery_id] = time.time()
+    delivery_cache: DeliveryCache | None = getattr(request.app.state, "_delivery_cache", None)
+    if delivery_cache is not None:
+        await delivery_cache.add(delivery_id)
+
+    # ── Step 6: Convert to Verdity internal format and enqueue ────────
+    from verdity.schemas import PullRequestRef, RepoRef, TriggerType, VerdityEvent
+
+    trigger_type_str = event_dict.get("trigger_type", "unknown")
+    try:
+        trigger_type = TriggerType(trigger_type_str)
+    except ValueError:
+        trigger_type = TriggerType.PR_OPENED  # default for unknown
+
+    repo_dict = event_dict.get("repo", {})
+    pr_dict = event_dict.get("pull_request", {})
+
+    try:
+        event = VerdityEvent(
+            delivery_id=delivery_id,
+            trigger_type=trigger_type,
+            repo=RepoRef(
+                owner=repo_dict.get("owner", ""),
+                name=repo_dict.get("name", ""),
+            ),
+            pull_request=PullRequestRef(
+                number=pr_dict.get("number", 0),
+                head_sha=pr_dict.get("head_sha", ""),
+                base_sha=pr_dict.get("base_sha", ""),
+                title=pr_dict.get("title", ""),
+                body=pr_dict.get("body", ""),
+                author=pr_dict.get("author", ""),
+                diff_url=pr_dict.get("diff_url", ""),
+            ),
+        )
+    except Exception as exc:
+        logger.error("Failed to create VerdityEvent from %s payload: %s", platform, exc)
+        raise HTTPException(status_code=400, detail="Invalid event format") from exc
+
+    # Sanitize paths
+    pr = event.pull_request
+    if pr:
+        try:
+            pr.head_sha = _sanitize_path(pr.head_sha)
+            pr.base_sha = _sanitize_path(pr.base_sha)
+        except ValueError as exc:
+            logger.warning("Rejected suspicious PR ref: %s", exc)
+            raise HTTPException(status_code=400, detail="Invalid PR reference")
+
+    envelope = QueueEnvelope(event=event)
+    try:
+        msg_id = await request.app.state.queue.publish(envelope)
+    except (OSError, RuntimeError) as exc:
+        logger.error("Queue publish failed: %s", exc)
+        response = JSONResponse(
+            status_code=503,
+            content={"detail": "Queue unavailable"},
+        )
+        response.headers["Retry-After"] = "30"
+        _add_security_headers(response)
+        return response
+
+    # ── Step 7: Audit log ─────────────────────────────────────────────
+    await request.app.state.audit.append(
+        event_type="webhook.ingested",
+        entity_type="delivery",
+        entity_id=delivery_id,
+        payload={
+            "platform": platform,
+            "trigger_type": event.trigger_type.value,
+            "repo": f"{event.repo.owner}/{event.repo.name}",
+            "pr_number": event.pull_request.number if event.pull_request else None,
+            "message_id": msg_id,
+        },
+    )
+
+    logger.info(
+        "Webhook accepted: platform=%s delivery=%s event=%s repo=%s/%s pr=%s",
+        platform,
+        delivery_id,
+        event.trigger_type,
+        event.repo.owner,
+        event.repo.name,
+        event.pull_request.number if event.pull_request else None,
+    )
+
+    return JSONResponse(
+        status_code=202,
+        content={"delivery_id": delivery_id, "status": "queued", "message_id": msg_id, "platform": platform},
+    )
+
+
 @app.get("/verdity/health")
 async def health():
     """Liveness/readiness probe."""
     return {"status": "ok", "service": "verdity-gateway"}
+
+
+@app.get("/verdity/metrics/{repo_id:path}")
+async def get_metrics(repo_id: str, days: int = 30):
+    """Return aggregated engineering metrics for a repo.
+
+    Query params:
+      days: number of days to look back (default 30)
+    """
+    metrics: MetricsStore | None = getattr(app.state, "metrics", None)
+    if metrics is None:
+        return JSONResponse(status_code=503, content={"detail": "Metrics store unavailable"})
+    try:
+        summary = await metrics.get_repo_summary(repo_id, days=days)
+        return summary
+    except (KeyError, ValueError, TypeError) as exc:
+        logger.error("Failed to get metrics for %s: %s", repo_id, exc)
+        return JSONResponse(status_code=500, content={"detail": "Metrics query failed"})
+
+
+@app.get("/verdity/metrics/{repo_id:path}/dashboard")
+async def get_metrics_dashboard(repo_id: str, days: int = 30):
+    """Return chart-ready engineering metrics dashboard for a repo.
+
+    Includes summary + daily breakdown for time-series visualization.
+    """
+    metrics: MetricsStore | None = getattr(app.state, "metrics", None)
+    if metrics is None:
+        return JSONResponse(status_code=503, content={"detail": "Metrics store unavailable"})
+    try:
+        dashboard = await metrics.get_repo_dashboard(repo_id, days=days)
+        return dashboard
+    except (KeyError, ValueError, TypeError) as exc:
+        logger.error("Failed to get dashboard for %s: %s", repo_id, exc)
+        return JSONResponse(status_code=500, content={"detail": "Dashboard query failed"})

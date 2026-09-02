@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-09-02
+
+### Added
+- **Engineering Analytics** (`MetricsStore`) — Append-only analytics with 4 SQLite tables (reviews, findings, reviews_by_repo, findings_by_agent), deterministic aggregation, per-repo partitioning, and budget health metrics
+- **Trust Calibration** (`TrustCalibrator`) — Adaptive weight tuning from review outcomes, surface precision scoring, signal-bucket analysis (confidence/resolution/first_party/user_feedback), and graceful degradation when outcome history is insufficient
+- **Adversarial Reviewer** (`AdversarialReviewer`) — Independent safety reviewer with 7 heuristic challenge rules (high FP patterns, code modification scope, conflicting signals, code smell overreach, severity inflation, secret false positives, boilerplate overreach), challenge-response protocol, and configurable depth (lite/balanced/deep)
+- **LLM Integration** (`LLMClient`) — Optional Pass 4 enhancement with JSON extraction from markdown fences, schema validation, `use_llm=False` fallback, temperature=0.0 default, model fallback via `MultiModelFallback`, and token cost tracking
+- **Multi-Platform Webhook Support** — Abstract `Platform` base class with per-platform implementations:
+  - `GitHubPlatform` — HMAC-SHA256 (`X-Hub-Signature-256`), PR normalization
+  - `GitLabPlatform` — Shared secret token (`X-Gitlab-Token`), MR/push/note normalization
+  - `BitbucketPlatform` — HMAC-SHA256 (`X-Hub-Signature`), PR normalization
+- Unified `POST /verdity/webhooks/{platform}` endpoint with platform validation, verification, normalization, replay detection, and audit logging
+- **Adversarial review fields** — `challenges`, `challenge_response`, `overturned`, `challenge_reason` on `Finding`
+- **LLM client field** — `llm_client: Any` on `Finding` for optional Pass 4 enhancement
+- **Review effort tiers** — `ReviewPolicy.tier` = `"lite"` / `"balanced"` / `"deep"` based on PR diff size
+- 119 new tests for analytics, trust calibration, adversarial review, LLM integration, and multi-platform webhooks
+
+### Changed
+- Version bumped to 0.4.0
+- Test suite: 528 tests at 100% coverage
+- 119 auto-fixes applied via `ruff check --fix --unsafe-fixes`
+
 ## [0.3.0] — 2026-09-01
 
 ### Added

@@ -19,7 +19,7 @@ import asyncio
 import logging
 import signal
 import time
-from typing import Any
+from typing import Any, Self
 
 from verdity.event_queue import EventQueue
 from verdity.orchestrator import Orchestrator
@@ -125,7 +125,7 @@ class Worker:
             self._backoff_expiry_times.pop(repo_id, None)
             await self._queue.acknowledge(msg_id)
         except Exception as exc:
-            logger.error("Failed to process delivery %s: %s", msg_id, exc, exc_info=True)
+            logger.exception("Failed to process delivery %s", msg_id)
             # Exponential backoff for this repo
             current = self._backoffs.get(repo_id, self._backoff_initial)
             new_backoff = min(current * self._backoff_factor, self._backoff_max)
@@ -142,7 +142,7 @@ class Worker:
             await asyncio.gather(*self._tasks, return_exceptions=True)
         logger.info("Worker shut down cleanly.")
 
-    async def __aenter__(self) -> "Worker":
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:  # type: ignore[override]

@@ -7,6 +7,7 @@ Reviews PR diffs for test coverage gaps and testing best practices.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from verdity.agents.base import BaseSpecialistAgent
 from verdity.schemas import (
@@ -56,6 +57,8 @@ class TestingAgent(BaseSpecialistAgent):
         self,
         ctx: SpecialistContext,
         semantic_index: SemanticIndex,
+        *,
+        use_llm: bool = False,
     ) -> list[Finding]:
         findings: list[Finding] = []
 

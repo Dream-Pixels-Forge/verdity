@@ -17,13 +17,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Callable
 
 from verdity.audit_store import AuditStore
 from verdity.event_queue import EventQueue
+from verdity.metrics_store import MetricsStore
 from verdity.schemas import (
     QueueEnvelope,
     ReviewPolicy,
@@ -50,22 +51,6 @@ class RunStatus(str, Enum):
 
 
 @dataclass
-class ReviewPolicy:
-    """Policy controlling review run behavior.
-
-    Tiers:
-      - "lite": fast, style + obvious bugs only (<10s, minimal tokens)
-      - "balanced": all agents, full context (<60s, moderate tokens)
-      - "deep": all agents + cross-repo context + security reasoning (<5min, high tokens)
-    """
-
-    tier: str = "balanced"  # "lite" | "balanced" | "deep"
-    depth: str = "standard"  # retained for backward compat
-    timeout_seconds: int = 30
-    budget_tokens: int = 5000
-
-
-@dataclass
 class ReviewRun:
     """In-memory durable state for a single PR review run."""
 
@@ -74,7 +59,7 @@ class ReviewRun:
     status: RunStatus = RunStatus.PENDING
     policy: ReviewPolicy | None = None
     specialist_results: dict[str, SpecialistResponse] = field(default_factory=dict)
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None
     error: str | None = None
 
@@ -195,11 +180,13 @@ class Orchestrator:
         semantic_index: SemanticIndex,
         token_economics: TokenEconomicsService,
         audit_store: AuditStore,
+        metrics_store: MetricsStore | None = None,
     ) -> None:
         self._queue = queue
         self._index = semantic_index
         self._te = token_economics
         self._audit = audit_store
+        self._metrics = metrics_store
         self._runs: dict[uuid.UUID, ReviewRun] = {}
         self._specialists: dict[str, SpecialistFn] = {}
 
@@ -276,7 +263,7 @@ class Orchestrator:
         # Determine overall status
         any_partial = any(r.status == "partial" for r in run.specialist_results.values())
         run.status = RunStatus.PARTIAL if any_partial else RunStatus.COMPLETED
-        run.completed_at = datetime.now(timezone.utc)
+        run.completed_at = datetime.now(UTC)
 
         # Audit: run completed
         await self._audit.append(
@@ -300,6 +287,49 @@ class Orchestrator:
             len(run.specialist_results),
         )
 
+        # ── Phase 11: Adversarial self-review ────────────────────────
+        if policy.adversarial_review_enabled:
+            await self._run_adversarial_review(run, event)
+
+        # ── Phase 9: Record engineering metrics ──────────────────────
+        if self._metrics is not None:
+            try:
+                repo_id = f"{event.repo.owner}/{event.repo.name}"
+                pr_number = event.pull_request.number if event.pull_request else 0
+                findings_total = sum(len(r.findings) for r in run.specialist_results.values())
+                total_cost = sum(r.cost_usd for r in run.specialist_results.values())
+
+                # Severity distribution
+                severity_counts: dict[str, float] = {}
+                for r in run.specialist_results.values():
+                    for f in r.findings:
+                        severity_counts[f.severity.value] = severity_counts.get(f.severity.value, 0) + 1
+
+                metrics: dict[str, float] = {
+                    "finding_count": float(findings_total),
+                    "cost_usd": total_cost,
+                }
+                for sev, cnt in severity_counts.items():
+                    metrics[f"severity_{sev}"] = cnt
+
+                await self._metrics.record_review_metrics(
+                    repo_id=repo_id,
+                    pr_number=pr_number,
+                    metrics=metrics,
+                )
+
+                # Record timing
+                if run.completed_at and run.created_at:
+                    duration_ms = (run.completed_at - run.created_at).total_seconds() * 1000
+                    await self._metrics.record_review_timing(
+                        repo_id=repo_id,
+                        pr_number=pr_number,
+                        phase="total",
+                        duration_ms=duration_ms,
+                    )
+            except Exception:
+                logger.debug("Failed to record metrics (non-blocking)", exc_info=True)
+
         return review_run_id
 
     async def _gather_results(
@@ -315,7 +345,7 @@ class Orchestrator:
         """
         # Gather with per-agent timeout
         if tasks:
-            done, pending = await asyncio.wait(
+            _done, pending = await asyncio.wait(
                 tasks.values(),
                 timeout=float(policy.timeout_seconds),
                 return_when=asyncio.ALL_COMPLETED,
@@ -377,7 +407,7 @@ class Orchestrator:
                     f"Specialist '{name}' returned non-SpecialistResponse: {type(result)}"
                 )
             return result
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(
                 "Run %s: specialist '%s' timed out after %ds",
                 run.review_run_id,
@@ -399,6 +429,64 @@ class Orchestrator:
                 status="failed",
                 findings=[],
                 error=str(exc),
+            )
+
+    async def _run_adversarial_review(
+        self,
+        run: ReviewRun,
+        event: VerdityEvent,
+    ) -> None:
+        """
+        Phase 11: Run adversarial self-review on all findings.
+
+        Challenges every finding to reduce false positives before routing.
+        Uses a separate prompt context from the initial agents (safety property).
+        """
+        from verdity.adversarial_reviewer import AdversarialReviewer, apply_verdicts
+
+        # Collect all findings from specialist results
+        all_findings = []
+        for resp in run.specialist_results.values():
+            all_findings.extend(resp.findings)
+
+        if not all_findings:
+            logger.debug("Run %s: no findings to challenge", run.review_run_id)
+            return
+
+        depth = run.policy.adversarial_review_depth if run.policy else "lite"
+        reviewer = AdversarialReviewer(depth=depth)
+
+        try:
+            review = await reviewer.challenge_findings(findings=all_findings)
+
+            # Apply verdicts: remove overturned, adjust confidence
+            surviving_findings = apply_verdicts(all_findings, review)
+
+            # Update specialist results with filtered findings
+            # Rebuild findings per specialist (findings carry specialist tag via concern)
+            for resp in run.specialist_results.values():
+                resp.findings = [
+                    f for f in surviving_findings
+                    if f.concern.value == resp.specialist
+                    or resp.specialist == "aggregator"
+                ]
+
+            logger.info(
+                "Run %s: adversarial review — %d/%d findings survived "
+                "(%d confirmed, %d disputed, %d overturned)",
+                run.review_run_id,
+                len(surviving_findings),
+                review.total_findings,
+                review.confirmed_count,
+                review.disputed_count,
+                review.overturned_count,
+            )
+        except Exception:
+            # Adversarial review failure must never block the review flow
+            logger.warning(
+                "Run %s: adversarial review failed (non-blocking)",
+                run.review_run_id,
+                exc_info=True,
             )
 
     def get_run(self, review_run_id: uuid.UUID) -> ReviewRun | None:

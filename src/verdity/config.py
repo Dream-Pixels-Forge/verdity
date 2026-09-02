@@ -85,10 +85,51 @@ class Settings(BaseSettings):
         description="Total diff lines (additions+deletions) above which the PR is considered large",
     )
 
+    # ── LLM Integration (Phase 12) ───────────────────────────────────
+    # LLM calls are optional — every agent works WITHOUT an LLM (constraint #10).
+    # LLM is an enhancement for deeper analysis, not a requirement.
+    llm_enabled: bool = Field(
+        default=False,
+        description="Enable LLM-enhanced analysis in specialist agents (default: off)",
+    )
+    llm_model: str = Field(
+        default="gpt-4o-mini",
+        description="Default LLM model for general analysis",
+    )
+    llm_security_model: str = Field(
+        default="gpt-4o",
+        description="LLM model for security analysis (requires higher capability)",
+    )
+    llm_temperature: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=2.0,
+        description="LLM temperature — 0.0 for determinism (constraint #5)",
+    )
+    llm_max_tokens: int = Field(
+        default=4096,
+        ge=256,
+        description="Maximum tokens in LLM response",
+    )
+
+    # ── Multi-Platform Webhook Support (Phase 13) ─────────────────────
+    default_platform: str = Field(
+        default="github",
+        description="Default code hosting platform (github, gitlab, bitbucket)",
+    )
+    gitlab_webhook_secret: SecretStr = Field(
+        default="",
+        description="GitLab webhook verification token (X-Gitlab-Token)",
+    )
+    bitbucket_webhook_secret: SecretStr = Field(
+        default="",
+        description="Bitbucket webhook HMAC-SHA256 secret",
+    )
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
-@lru_cache()
+@lru_cache
 def get_settings() -> Settings:
     """Return a cached Settings instance. Cached so environment is read once."""
     return Settings()

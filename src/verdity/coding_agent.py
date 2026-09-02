@@ -7,21 +7,10 @@ Supports agentic fix mode (v0.3.0): generate fix → commit → open PR.
 """
 from __future__ import annotations
 
-import base64
-import logging
-import subprocess
-import uuid
-from dataclasses import dataclass
-from typing import Any, Dict, Optional
-
-from verdity.schemas import ConcernType, Finding
-
-from __future__ import annotations
-
 import logging
 import uuid
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any
 
 from verdity.schemas import ConcernType, Finding
 
@@ -51,9 +40,9 @@ class FixResult:
     success: bool
     finding_id: uuid.UUID
     file_path: str
-    commit_sha: Optional[str] = None
-    pr_url: Optional[str] = None
-    error: Optional[str] = None
+    commit_sha: str | None = None
+    pr_url: str | None = None
+    error: str | None = None
     patch_applied: str = ""
 
 
@@ -128,7 +117,6 @@ class CodingAgent:
         )
 
         # Step 3: Create a temporary branch and apply the fix
-        branch_name = f"verdity/fix-{finding.finding_id}"
 
         try:
             # Write the patched file
@@ -138,12 +126,12 @@ class CodingAgent:
             # Read original file
             if os.path.exists(file_path):
                 with open(file_path, "r") as f:
-                    original_content = f.read()
+                    f.read()
             else:
-                original_content = ""
+                pass
 
             # Apply the patch by replacing the suggested lines
-            suggested_content = "\n".join(proposed.suggested_lines)
+            "\n".join(proposed.suggested_lines)
 
             # For now, we'll create the fix as a comment-enabled PR
             # The actual file modification would happen via git operations
@@ -192,7 +180,7 @@ class CodingAgent:
 
     async def generate_fix(
         self,
-        finding: Dict[str, Any],
+        finding: dict[str, Any],
         diff: str,
         context: str = "",
     ) -> ProposedFix:

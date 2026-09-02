@@ -8,6 +8,7 @@ STRIDE threat model from Security doc §3 against the actual implementation.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import uuid
 from datetime import datetime, timezone
@@ -576,3 +577,111 @@ async def test_all_tests_pass_at_least_90_coverage():
 
     # All imports succeed – structure is intact for full coverage
     assert verdity.__version__ in ("0.2.1", "0.3.0")
+
+
+# ── Phase 13 Gate Test ──────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_gate_phase13_gitlab_webhook_end_to_end():
+    """
+    Phase 13 gate: GitLab MR opened webhook → verified → normalized
+    to TriggerType.PR_OPENED → queued → visible on queue.
+    """
+    from verdity.platforms.gitlab import GitLabPlatform
+
+    delivery_id = f"gate-phase13-{uuid.uuid4().hex[:12]}"
+    secret = os.environ.get("VERDITY_GITLAB_SECRET", "gitlab-test-secret")
+
+    # Build a realistic GitLab MR webhook payload
+    payload = {
+        "object_kind": "merge_request",
+        "object_attributes": {
+            "action": "open",
+            "iid": 42,
+            "title": "Gate Phase 13: GitLab MR",
+            "description": "Test MR for gate verification",
+            "head_commit_sha": "abc123def456",
+            "target_commit_sha": "789012345678",
+            "author": {"username": "gate-tester"},
+        },
+        "project": {
+            "namespace": "myorg",
+            "name": "myrepo",
+        },
+    }
+    body = json.dumps(payload).encode()
+
+    # Step 1: Verify the platform directly
+    platform = GitLabPlatform()
+    headers = {"x-gitlab-token": secret}
+    assert platform.verify_webhook(
+        {k.lower(): v for k, v in headers.items()}, body, secret
+    ) is True, "GitLab verification must pass"
+
+    # Step 2: Normalize the event
+    headers_with_uuid = {"x-gitlab-token": secret, "x-gitlab-event-uuid": delivery_id}
+    event = platform.normalize_event(
+        {k.lower(): v for k, v in headers_with_uuid.items()}, payload
+    )
+    assert event["trigger_type"] == "pr.opened", (
+        f"Expected pr.opened, got {event['trigger_type']}"
+    )
+    assert event["delivery_id"] == delivery_id
+    assert event["repo"]["owner"] == "myorg"
+    assert event["repo"]["name"] == "myrepo"
+    assert event["pull_request"]["number"] == 42
+    assert event["pull_request"]["author"] == "gate-tester"
+
+    # Step 3: Enqueue the normalized event
+    from verdity.schemas import (
+        TriggerType,
+        VerdityEvent,
+        QueueEnvelope,
+        RepoRef,
+        PullRequestRef,
+    )
+    from verdity.event_queue import EventQueue
+
+    trigger = TriggerType(event["trigger_type"])
+    assert trigger == TriggerType.PR_OPENED
+
+    # Build VerdityEvent from normalized dict
+    verdity_event = VerdityEvent(
+        delivery_id=delivery_id,
+        trigger_type=trigger,
+        repo=RepoRef(
+            owner=event["repo"]["owner"],
+            name=event["repo"]["name"],
+            id=0,
+        ),
+        pull_request=PullRequestRef(
+            number=event["pull_request"]["number"],
+            head_sha=event["pull_request"]["head_sha"],
+            base_sha=event["pull_request"]["base_sha"],
+            title=event["pull_request"]["title"],
+            body=event["pull_request"]["body"],
+            author=event["pull_request"]["author"],
+            diff_url=event["pull_request"]["diff_url"],
+        ),
+    )
+
+    envelope = QueueEnvelope(event=verdity_event)
+    queue = EventQueue(":memory:")
+    await queue.connect()
+    msg_id = await queue.publish(envelope)
+
+    # Step 4: Verify the event is visible on the queue
+    stats = await queue.count_by_state()
+    assert stats.get("pending", 0) >= 1
+
+    # Step 5: Verify platform is registered in the import
+    from verdity.platforms import GitHubPlatform, GitLabPlatform, BitbucketPlatform
+    assert GitLabPlatform.PLATFORM_NAME == "gitlab"
+    assert GitHubPlatform.PLATFORM_NAME == "github"
+    assert BitbucketPlatform.PLATFORM_NAME == "bitbucket"
+
+    print(
+        f"Phase 13 gate PASSED: GitLab MR webhook verified → "
+        f"normalized to {event['trigger_type']} → queued as msg_id={msg_id}"
+    )
