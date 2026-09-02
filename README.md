@@ -10,7 +10,7 @@
 
 ## ⚠️ Security Notice
 
-This system handles **source code, secrets, and security findings**. See [SECURITY.md](SECURITY.md) for the full threat model and hardening guide. Key controls:
+This system handles **source code, secrets, and security findings**. See [SECURITY.md](dev-notes/SECURITY.md) for the full threat model and hardening guide. Key controls:
 
 - **HMAC-SHA256** verified over raw body with constant-time comparison — no bypass, ever.
 - **Dual-secret rotation** support with grace period.
@@ -203,7 +203,7 @@ uvicorn verdity.gateway.app:app --reload --port 8000
 
 ## Security
 
-See **[SECURITY.md](SECURITY.md)** for the full threat model, hardening guide, and STRIDE analysis.
+See **[SECURITY.md](dev-notes/SECURITY.md)** for the full threat model, hardening guide, and STRIDE analysis.
 
 ### Security Controls Implemented
 

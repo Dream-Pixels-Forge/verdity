@@ -23,7 +23,7 @@ inside `verdity/dev-notes` folder:
 | `04-Security-Threat-Model.md`           | What must never be violated (HMAC, least privilege, tenant isolation, secrets)?       |
 | `05-Agent-Orchestration-Design.md`      | How do agents coordinate, how is confidence computed, how do verification gates work? |
 | `RESEARCH-2026-AI-CODE-REVIEW.md`       | 2026 market landscape, competitor analysis, feature recommendations                   |
-| `competitive_analysis_state.json`       | Verdity's market position, gaps, and strengths                                        |
+| `competitive_analysis_state.json`       | Verdity's market position, gaps, and strengths (lives in `dev-notes/`)               |
 
 **Rule: before writing any component, locate it in these docs or in this file. If it isn't there, stop and flag it rather than inventing it.** If a genuinely new requirement emerges mid-build, update the relevant doc first, then build.
 
@@ -308,4 +308,4 @@ Phases 9, 11, 12, 13 are fully independent. Phase 10 depends on Phase 9 (it read
 | 11 | `adversarial_reviewer.py`, `test_adversarial_reviewer.py` | `orchestrator.py`, `schemas/_models.py` |
 | 12 | `llm_client.py`, `test_llm_client.py`, `test_agents_llm.py` | `agents/security.py`, `agents/code_quality.py`, `agents/testing.py`, `agents/documentation.py`, `config.py` |
 | 13 | `platforms/__init__.py`, `platforms/base.py`, `platforms/github.py`, `platforms/gitlab.py`, `platforms/bitbucket.py`, `test_platforms_gitlab.py`, `test_platforms_bitbucket.py` | `gateway/app.py`, `config.py` |
-| 14 | — | `CHANGELOG.md`, `pyproject.toml`, `competitive_analysis_state.json` |
+| 14 | — | `CHANGELOG.md`, `pyproject.toml`, `dev-notes/competitive_analysis_state.json` |

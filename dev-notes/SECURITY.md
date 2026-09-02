@@ -53,4 +53,4 @@ This system handles **source code, secrets, and security findings**. Key control
 
 Please report security vulnerabilities via GitHub Security Advisory, not via public issues.
 
-See [dev-notes/SECURITY-AUDIT.md](dev-notes/SECURITY-AUDIT.md) for the full audit report.
+See [SECURITY-AUDIT.md](SECURITY-AUDIT.md) for the full audit report.
