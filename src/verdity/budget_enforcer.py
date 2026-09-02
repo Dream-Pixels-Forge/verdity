@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from verdity.token_economics import TokenEconomicsService
@@ -24,7 +24,7 @@ from verdity.token_economics import TokenEconomicsService
 logger = logging.getLogger(__name__)
 
 
-class DegradationSignal(str, Enum):
+class DegradationSignal(StrEnum):
     """Signals returned by the budget enforcer."""
 
     NORMAL = "normal"  # within budget, no action needed
@@ -104,7 +104,7 @@ class BudgetEnforcer:
                 dropped_specialists=[s for s in current_specialists if s in _OPTIONAL_SPECIALISTS],
                 notes=f"Budget exhausted — queue-only mode; keeping: {remaining or ['security']}",
             )
-        elif ratio >= self._warn:
+        if ratio >= self._warn:
             # Drop optional specialists
             to_drop = [s for s in current_specialists if s in _OPTIONAL_SPECIALISTS]
             if to_drop:
@@ -124,7 +124,7 @@ class BudgetEnforcer:
                 signal=DegradationSignal.WARN,
                 notes="Approaching budget but no optional specialists to drop",
             )
-        elif ratio >= self._degrade:
+        if ratio >= self._degrade:
             # Early warning — drop optional if any remain
             to_drop = [s for s in current_specialists if s in _OPTIONAL_SPECIALISTS]
             if to_drop:

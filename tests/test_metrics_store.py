@@ -194,8 +194,12 @@ class TestGetRepoSummary:
     @pytest.mark.asyncio
     async def test_repo_id_filtering(self, store):
         """Metrics should be filtered by repo_id."""
-        await store.record_review_metrics(repo_id="repo-a", pr_number=1, metrics={"finding_count": 5.0})
-        await store.record_review_metrics(repo_id="repo-b", pr_number=1, metrics={"finding_count": 10.0})
+        await store.record_review_metrics(
+            repo_id="repo-a", pr_number=1, metrics={"finding_count": 5.0}
+        )
+        await store.record_review_metrics(
+            repo_id="repo-b", pr_number=1, metrics={"finding_count": 10.0}
+        )
         summary_a = await store.get_repo_summary("repo-a")
         summary_b = await store.get_repo_summary("repo-b")
         assert summary_a["total_findings"] == 5.0
@@ -301,7 +305,9 @@ class TestRouterOutcomes:
             agent_version="test@0.1.0",
             prompt_hash="sha256:ghi789",
         )
-        decision = RoutingDecision(action=RouteAction.MANUAL_REVIEW, confidence=0.7, reason="medium")
+        decision = RoutingDecision(
+            action=RouteAction.MANUAL_REVIEW, confidence=0.7, reason="medium"
+        )
 
         await record_routing_outcomes(
             store,
@@ -469,9 +475,7 @@ class TestBranchCoverage:
     @pytest.mark.asyncio
     async def test_get_repo_summary_with_single_median(self, store):
         """With 1 timing, median is that timing."""
-        await store.record_review_timing(
-            repo_id="r", pr_number=1, phase="total", duration_ms=42
-        )
+        await store.record_review_timing(repo_id="r", pr_number=1, phase="total", duration_ms=42)
         summary = await store.get_repo_summary("r")
         assert summary["median_time_to_review"] == 42.0
 
@@ -540,9 +544,7 @@ class TestBranchCoverage:
                 "tokens_output": 50.0,
             },
         )
-        await store.record_review_timing(
-            repo_id="r", pr_number=1, phase="total", duration_ms=200
-        )
+        await store.record_review_timing(repo_id="r", pr_number=1, phase="total", duration_ms=200)
         dash = await store.get_repo_dashboard("r", days=30)
         assert "summary" in dash
         assert "daily_reviews" in dash

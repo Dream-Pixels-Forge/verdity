@@ -105,7 +105,7 @@ class TestTrustCalibratorRecalibrate:
         try:
             cal = TrustCalibrator(store)
             # Record only 5 outcomes (below default min_samples=50)
-            for i in range(5):
+            for _i in range(5):
                 await cal.record_outcome(
                     finding_id=str(uuid.uuid4()),
                     repo_id="owner/repo",
@@ -191,7 +191,7 @@ class TestTrustCalibratorRecalibrate:
         try:
             cal = TrustCalibrator(store)
             # All confirmed → precision = 1.0
-            for i in range(60):
+            for _i in range(60):
                 await cal.record_outcome(
                     finding_id=str(uuid.uuid4()),
                     repo_id="owner/repo",
@@ -202,7 +202,9 @@ class TestTrustCalibratorRecalibrate:
                 )
             await cal.recalibrate(min_samples=50)
             weights = cal.get_adjusted_weights()
-            assert weights["severity_weights"]["critical"] == TC_DEFAULT_SEVERITY_WEIGHTS["critical"]
+            assert (
+                weights["severity_weights"]["critical"] == TC_DEFAULT_SEVERITY_WEIGHTS["critical"]
+            )
             assert weights["concern_boost"]["security"] == TC_DEFAULT_CONCERN_BOOST["security"]
         finally:
             await store.close()
@@ -232,7 +234,7 @@ class TestTrustCalibratorStats:
         try:
             cal = TrustCalibrator(store)
             # High confidence confirmed findings
-            for i in range(20):
+            for _i in range(20):
                 await cal.record_outcome(
                     finding_id=str(uuid.uuid4()),
                     repo_id="owner/repo",
@@ -242,7 +244,7 @@ class TestTrustCalibratorStats:
                     concern="security",
                 )
             # High confidence false positives
-            for i in range(5):
+            for _i in range(5):
                 await cal.record_outcome(
                     finding_id=str(uuid.uuid4()),
                     repo_id="owner/repo",
@@ -274,7 +276,12 @@ class TestRouterWithCalibratedWeights:
         explicit_score = compute_confidence(
             finding,
             severity_weights={"high": 0.8, "critical": 1.0, "medium": 0.5, "low": 0.3, "info": 0.1},
-            concern_boost={"security": 0.15, "code_quality": 0.0, "testing": 0.05, "documentation": 0.0},
+            concern_boost={
+                "security": 0.15,
+                "code_quality": 0.0,
+                "testing": 0.05,
+                "documentation": 0.0,
+            },
         )
         assert default_score == explicit_score
 
@@ -285,7 +292,12 @@ class TestRouterWithCalibratedWeights:
         reduced_score = compute_confidence(
             finding,
             severity_weights={"info": 0.02},
-            concern_boost={"security": 0.15, "code_quality": 0.0, "testing": 0.05, "documentation": 0.0},
+            concern_boost={
+                "security": 0.15,
+                "code_quality": 0.0,
+                "testing": 0.05,
+                "documentation": 0.0,
+            },
         )
         assert reduced_score < default_score
 
@@ -302,7 +314,12 @@ class TestRouterWithCalibratedWeights:
         boosted_score = compute_confidence(
             finding,
             severity_weights={"critical": 1.0, "high": 0.8, "medium": 0.5, "low": 0.3, "info": 0.1},
-            concern_boost={"security": 0.3, "code_quality": 0.0, "testing": 0.05, "documentation": 0.0},
+            concern_boost={
+                "security": 0.3,
+                "code_quality": 0.0,
+                "testing": 0.05,
+                "documentation": 0.0,
+            },
         )
         # LOW weight 0.3, SECURITY boost 0.3: 0.5*(1-0.3)+0.3+0.3 = 0.35+0.3+0.3 = 0.95
         assert boosted_score == pytest.approx(0.95, abs=0.01)

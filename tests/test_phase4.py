@@ -222,7 +222,7 @@ class TestAggregatorAgent:
         assert isinstance(output, AggregatorOutput)
         # Same file+line+different concern → NOT deduped (different concern keys)
         assert len(output.ranked_findings) == 2
-        # Both should be present, ranked by severity × confidence
+        # Both should be present, ranked by severity * confidence
         scores = [r.rank_score for r in output.ranked_findings]
         assert scores[0] >= scores[1]  # highest first
 
@@ -278,7 +278,7 @@ class TestAggregatorAgent:
         output = agent.aggregate(run_id, repo, responses)
         # Same (file, line, concern) → deduped to one
         assert len(output.ranked_findings) == 1
-        # Best (highest severity × confidence) wins
+        # Best (highest severity * confidence) wins
         assert output.ranked_findings[0].finding.confidence == 0.9
 
     @pytest.mark.asyncio

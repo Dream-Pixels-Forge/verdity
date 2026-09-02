@@ -135,9 +135,7 @@ class TrustCalibrator:
             if avg_precision < 0.8:
                 # Reduce weight proportionally: low precision → lower weight
                 scale = max(0.2, avg_precision / 0.8)
-                calibrated_severity[sev] = round(
-                    DEFAULT_SEVERITY_WEIGHTS.get(sev, 0.3) * scale, 3
-                )
+                calibrated_severity[sev] = round(DEFAULT_SEVERITY_WEIGHTS.get(sev, 0.3) * scale, 3)
 
         # ── Adjust concern boosts ─────────────────────────────────────
         calibrated_concern = dict(DEFAULT_CONCERN_BOOST)
@@ -145,9 +143,7 @@ class TrustCalibrator:
             avg_precision = sum(precisions) / len(precisions)
             if avg_precision < 0.8:
                 scale = max(0.2, avg_precision / 0.8)
-                calibrated_concern[con] = round(
-                    DEFAULT_CONCERN_BOOST.get(con, 0.0) * scale, 3
-                )
+                calibrated_concern[con] = round(DEFAULT_CONCERN_BOOST.get(con, 0.0) * scale, 3)
 
         self._calibrated_severity = calibrated_severity
         self._calibrated_concern = calibrated_concern
@@ -202,7 +198,8 @@ class TrustCalibrator:
 
         # Precision at 0.9: of findings with confidence >= 0.9, how many are confirmed?
         high_conf = [
-            o for o in outcomes
+            o
+            for o in outcomes
             if (o.get("confidence") or 0.0) >= 0.9
             and o.get("final_outcome") in ("confirmed", "false_positive")
         ]
@@ -213,9 +210,7 @@ class TrustCalibrator:
             precision_high_conf = 0.0
 
         # Recall at 0.6: of all confirmed findings, how many had confidence >= 0.6?
-        all_confirmed = [
-            o for o in outcomes if o.get("final_outcome") == "confirmed"
-        ]
+        all_confirmed = [o for o in outcomes if o.get("final_outcome") == "confirmed"]
         if all_confirmed:
             confirmed_high_conf = sum(
                 1 for o in all_confirmed if (o.get("confidence") or 0.0) >= 0.6
@@ -226,8 +221,7 @@ class TrustCalibrator:
 
         # False positive rate
         total_relevant = [
-            o for o in outcomes
-            if o.get("final_outcome") in ("confirmed", "false_positive")
+            o for o in outcomes if o.get("final_outcome") in ("confirmed", "false_positive")
         ]
         fp_count = sum(1 for o in total_relevant if o["final_outcome"] == "false_positive")
         false_positive_rate = round(fp_count / len(total_relevant), 3) if total_relevant else 0.0

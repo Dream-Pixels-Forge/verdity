@@ -313,7 +313,8 @@ class TestProductionReadyChecklist:
         """No secrets hardcoded in source files."""
         import verdity.config as cfg_module
 
-        src = open(cfg_module.__file__).read()
+        with open(cfg_module.__file__) as _f:
+            src = _f.read()
         # Config class should never have hardcoded secrets
         assert "secret" not in src.lower().split("default")[0][-200:] or "env" in src.lower()
         # Check key env vars are referenced
@@ -409,7 +410,8 @@ class TestSTRIDEChecklist:
         """Info Disclosure: secrets in code → all secrets from env vars."""
         import verdity.config as cfg
 
-        src = open(cfg.__file__).read()
+        with open(cfg.__file__) as _f:
+            src = _f.read()
         # Config should read from environ, not hardcode values
         assert "os.environ" in src or "python-dotenv" in src or "Settings" in src, (
             "Config must source secrets from environment"
@@ -575,7 +577,7 @@ async def test_all_tests_pass_at_least_90_coverage():
     import verdity.verification_gate
     import verdity.webhook_normalizer
 
-    # All imports succeed – structure is intact for full coverage
+    # All imports succeed - structure is intact for full coverage
     assert verdity.__version__ in ("0.2.1", "0.3.0")
 
 
@@ -615,18 +617,14 @@ async def test_gate_phase13_gitlab_webhook_end_to_end():
     # Step 1: Verify the platform directly
     platform = GitLabPlatform()
     headers = {"x-gitlab-token": secret}
-    assert platform.verify_webhook(
-        {k.lower(): v for k, v in headers.items()}, body, secret
-    ) is True, "GitLab verification must pass"
+    assert (
+        platform.verify_webhook({k.lower(): v for k, v in headers.items()}, body, secret) is True
+    ), "GitLab verification must pass"
 
     # Step 2: Normalize the event
     headers_with_uuid = {"x-gitlab-token": secret, "x-gitlab-event-uuid": delivery_id}
-    event = platform.normalize_event(
-        {k.lower(): v for k, v in headers_with_uuid.items()}, payload
-    )
-    assert event["trigger_type"] == "pr.opened", (
-        f"Expected pr.opened, got {event['trigger_type']}"
-    )
+    event = platform.normalize_event({k.lower(): v for k, v in headers_with_uuid.items()}, payload)
+    assert event["trigger_type"] == "pr.opened", f"Expected pr.opened, got {event['trigger_type']}"
     assert event["delivery_id"] == delivery_id
     assert event["repo"]["owner"] == "myorg"
     assert event["repo"]["name"] == "myrepo"
@@ -677,6 +675,7 @@ async def test_gate_phase13_gitlab_webhook_end_to_end():
 
     # Step 5: Verify platform is registered in the import
     from verdity.platforms import BitbucketPlatform, GitHubPlatform, GitLabPlatform
+
     assert GitLabPlatform.PLATFORM_NAME == "gitlab"
     assert GitHubPlatform.PLATFORM_NAME == "github"
     assert BitbucketPlatform.PLATFORM_NAME == "bitbucket"

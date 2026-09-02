@@ -24,7 +24,7 @@ import logging
 import re
 import time
 from collections import defaultdict
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
@@ -248,10 +248,8 @@ async def lifespan(app: FastAPI):
     )
     yield
     # Evict expired entries from persistent cache before closing
-    try:
+    with suppress(OSError):  # pragma: no cover
         await app.state._delivery_cache.evict_expired()
-    except OSError:  # pragma: no cover
-        pass  # best-effort during shutdown
     await app.state._delivery_cache.close()
     await app.state.queue.close()
     await app.state.audit.close()
@@ -394,7 +392,7 @@ async def handle_github_webhook(
             pr.base_sha = _sanitize_path(pr.base_sha)
         except ValueError as exc:
             logger.warning("Rejected suspicious PR ref: %s", exc)
-            raise HTTPException(status_code=400, detail="Invalid PR reference")
+            raise HTTPException(status_code=400, detail="Invalid PR reference") from exc
 
     # ── Step 6: Enqueue (decoupling boundary — nothing else happens here) ─
     envelope = QueueEnvelope(event=event)
@@ -506,7 +504,9 @@ async def handle_platform_webhook(
 
     headers_dict = {k.lower(): v for k, v in request.headers.items()}
     if not platform_instance.verify_webhook(headers_dict, raw_body, secret):
-        delivery_id = headers_dict.get("x-github-delivery", headers_dict.get("x-hook-uuid", "unknown"))
+        delivery_id = headers_dict.get(
+            "x-github-delivery", headers_dict.get("x-hook-uuid", "unknown")
+        )
         logger.warning(
             "Webhook verification failed for platform=%s delivery=%s",
             platform,
@@ -584,7 +584,7 @@ async def handle_platform_webhook(
             pr.base_sha = _sanitize_path(pr.base_sha)
         except ValueError as exc:
             logger.warning("Rejected suspicious PR ref: %s", exc)
-            raise HTTPException(status_code=400, detail="Invalid PR reference")
+            raise HTTPException(status_code=400, detail="Invalid PR reference") from exc
 
     envelope = QueueEnvelope(event=event)
     try:
@@ -625,7 +625,12 @@ async def handle_platform_webhook(
 
     return JSONResponse(
         status_code=202,
-        content={"delivery_id": delivery_id, "status": "queued", "message_id": msg_id, "platform": platform},
+        content={
+            "delivery_id": delivery_id,
+            "status": "queued",
+            "message_id": msg_id,
+            "platform": platform,
+        },
     )
 
 
@@ -667,4 +672,6 @@ async def get_metrics_dashboard(repo_id: str, days: int = 30):
         return dashboard
     except (KeyError, ValueError, TypeError) as exc:  # pragma: no cover
         logger.error("Failed to get dashboard for %s: %s", repo_id, exc)  # pragma: no cover
-        return JSONResponse(status_code=500, content={"detail": "Dashboard query failed"})  # pragma: no cover
+        return JSONResponse(
+            status_code=500, content={"detail": "Dashboard query failed"}
+        )  # pragma: no cover

@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 from verdity.schemas._models import Finding, Severity
 
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 # ── Adversarial Verdicts ──────────────────────────────────────────────
 
 
-class Verdict(str, Enum):
+class Verdict(StrEnum):
     """Possible outcomes of an adversarial challenge."""
 
     CONFIRMED = "confirmed"  # finding survived challenge → keep + boost
@@ -44,7 +44,9 @@ class AdversarialResult:
     finding_id: str
     verdict: Verdict
     reasoning: str
-    suggested_confidence_adjustment: float  # +0.1 for confirmed, -0.2 for disputed, -0.5 for overturned
+    suggested_confidence_adjustment: (
+        float  # +0.1 for confirmed, -0.2 for disputed, -0.5 for overturned
+    )
     evidence: list[str] = field(default_factory=list)
 
 
@@ -139,9 +141,7 @@ class AdversarialReviewer:
     def __init__(self, depth: str = "lite") -> None:
         self._depth = depth
         self._system_prompt = (
-            ADVERSARIAL_SYSTEM_PROMPT_FULL
-            if depth == "full"
-            else ADVERSARIAL_SYSTEM_PROMPT_LITE
+            ADVERSARIAL_SYSTEM_PROMPT_FULL if depth == "full" else ADVERSARIAL_SYSTEM_PROMPT_LITE
         )
 
     async def challenge_findings(
@@ -267,12 +267,15 @@ class AdversarialReviewer:
             )
 
         # Challenge 7: Suggested fix is empty or trivial
-        if (not finding.suggested_fix_diff or finding.suggested_fix_diff.strip() in ("", "# fix", "# TODO")) and finding.severity in (Severity.CRITICAL, Severity.HIGH):
-                challenges_applied.append("missing_fix_for_high_severity")
-                dispute_reasons.append(
-                    "High/critical severity finding without a concrete fix — "
-                    "suggests the agent is uncertain about the actual issue."
-                )
+        if (
+            not finding.suggested_fix_diff
+            or finding.suggested_fix_diff.strip() in ("", "# fix", "# TODO")
+        ) and finding.severity in (Severity.CRITICAL, Severity.HIGH):
+            challenges_applied.append("missing_fix_for_high_severity")
+            dispute_reasons.append(
+                "High/critical severity finding without a concrete fix — "
+                "suggests the agent is uncertain about the actual issue."
+            )
 
         # Determine verdict
         if overturn_reasons:
@@ -319,8 +322,10 @@ class AdversarialReviewer:
             # Diff format: "+10: code" or "-10: code" or "+ 10: code"
             pattern = re.compile(rf"^[+-]\s*{line_num}\s*[:\s]")
             for diff_line in diff_content.splitlines():
-                    if pattern.match(diff_line) and any(p.search(diff_line) for p in _INTENTIONAL_PATTERNS):
-                              return True
+                if pattern.match(diff_line) and any(
+                    p.search(diff_line) for p in _INTENTIONAL_PATTERNS
+                ):
+                    return True
         return False
 
     def _is_severity_inflated(self, finding: Finding) -> bool:

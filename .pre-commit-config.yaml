@@ -1,0 +1,29 @@
+---
+# Pre-commit hooks — runs on `git commit` and in CI.
+# Install with: pip install pre-commit && pre-commit install
+# Run on demand: pre-commit run --all-files
+#
+# Keeping lint+format enforced at commit time prevents the CI from
+# turning red on style-only changes.
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      # Run the formatter first — fix what's auto-fixable, then complain
+      # about what isn't.
+      - id: ruff-format
+        args: [src/, tests/]
+      - id: ruff
+        args: [--fix, src/, tests/]
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: mixed-line-ending
+        args: [--fix=lf]

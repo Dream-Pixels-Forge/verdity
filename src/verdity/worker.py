@@ -92,9 +92,8 @@ class Worker:
                 await self._queue.nack(msg_id, error_msg="backoff")
                 await asyncio.sleep(min(remaining, 1.0))
                 return
-            else:
-                # Backoff expired, clear it
-                self._backoff_expiry_times.pop(repo_id, None)
+            # Backoff expired, clear it
+            self._backoff_expiry_times.pop(repo_id, None)
 
         # Limit concurrency
         while len(self._tasks) >= self._max_concurrent:

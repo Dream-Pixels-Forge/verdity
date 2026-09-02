@@ -1,4 +1,5 @@
 """Tests for Semantic Index full-codebase context features (v0.3.0)."""
+
 import pytest
 
 from verdity.semantic_index import CodeChunk, SemanticIndex, SymbolEdge
@@ -203,6 +204,7 @@ class TestIncrementalReindexing:
     @pytest.mark.asyncio
     async def test_get_files_needing_reindex(self):
         import hashlib
+
         index = SemanticIndex(db_path=":memory:")
         await index.connect()
 
@@ -215,7 +217,7 @@ class TestIncrementalReindexing:
 
         # Compute actual hashes
         hash1 = hashlib.sha256(b"content1").hexdigest()
-        hash2 = hashlib.sha256(b"content2").hexdigest()
+        hashlib.sha256(b"content2").hexdigest()
 
         # Check which files need reindexing
         file_hashes = {
@@ -236,9 +238,7 @@ class TestIncrementalReindexing:
         index = SemanticIndex(db_path=":memory:")
         await index.connect()
 
-        await index.mark_file_indexed(
-            "test/repo", "file.py", "hash123", "sha456"
-        )
+        await index.mark_file_indexed("test/repo", "file.py", "hash123", "sha456")
 
         # Verify metadata was stored
         rows = await index._conn.execute(

@@ -88,14 +88,14 @@ class TestRouteFinding:
         f = _make_finding(concern=ConcernType.CODE_QUALITY, severity=Severity.HIGH, confidence=0.3)
         score = compute_confidence(f)
         decision = route_finding(f, score)
-        # HIGH severity (0.8 weight) × 0.3 + 0.8 = 0.86 → manual_review
+        # HIGH severity (0.8 weight) * 0.3 + 0.8 = 0.86 -> manual_review
         assert decision.action == RouteAction.MANUAL_REVIEW
 
     def test_auto_approve_critical_with_high_confidence(self):
         f = _make_finding(severity=Severity.CRITICAL, confidence=0.95)
         score = compute_confidence(f)
         decision = route_finding(f, score)
-        # CRITICAL (1.0 weight) × 0.95 + 0.15 = 1.10, clamped to 1.0 → auto_approve
+        # CRITICAL (1.0 weight) * 0.95 + 0.15 = 1.10, clamped to 1.0 -> auto_approve
         assert decision.action == RouteAction.AUTO_APPROVE
 
 

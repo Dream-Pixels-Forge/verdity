@@ -173,8 +173,9 @@ class TestLLMEnhancedScan:
 
     @pytest.mark.asyncio
     async def test_no_llm_client_returns_empty(self, agent):
-        from verdity.schemas import SpecialistContext
         import uuid
+
+        from verdity.schemas import SpecialistContext
 
         ctx = SpecialistContext(
             review_run_id=uuid.uuid4(),
@@ -190,8 +191,9 @@ class TestLLMEnhancedScan:
 
     @pytest.mark.asyncio
     async def test_llm_disabled_returns_empty(self, agent):
-        from verdity.schemas import SpecialistContext
         import uuid
+
+        from verdity.schemas import SpecialistContext
 
         class _DisabledLLM:
             enabled = False
@@ -211,8 +213,9 @@ class TestLLMEnhancedScan:
     @pytest.mark.asyncio
     async def test_empty_diff_text_returns_empty(self, agent):
         """When diff_files is empty, diff_text is empty and we return []."""
-        from verdity.schemas import SpecialistContext
         import uuid
+
+        from verdity.schemas import SpecialistContext
 
         class _EnabledLLM:
             enabled = True
@@ -232,8 +235,9 @@ class TestLLMEnhancedScan:
     @pytest.mark.asyncio
     async def test_llm_returns_json_array_findings(self, agent):
         """LLM response with JSON code block produces Finding objects."""
-        from verdity.schemas import SpecialistContext
         import uuid
+
+        from verdity.schemas import SpecialistContext
 
         class _MockLLM:
             enabled = True
@@ -272,8 +276,9 @@ class TestLLMEnhancedScan:
     @pytest.mark.asyncio
     async def test_llm_returns_raw_array(self, agent):
         """LLM response with raw JSON array (no code block) parses too."""
-        from verdity.schemas import SpecialistContext
         import uuid
+
+        from verdity.schemas import SpecialistContext
 
         class _MockLLM:
             enabled = True
@@ -309,9 +314,9 @@ class TestLLMEnhancedScan:
     @pytest.mark.asyncio
     async def test_llm_invalid_severity_falls_back_to_medium(self, agent):
         """Unknown severity in JSON falls back to Severity.MEDIUM."""
-        from verdity.schemas import SpecialistContext
         import uuid
-        from verdity.schemas import Severity
+
+        from verdity.schemas import Severity, SpecialistContext
 
         class _MockLLM:
             enabled = True
@@ -345,8 +350,9 @@ class TestLLMEnhancedScan:
     @pytest.mark.asyncio
     async def test_llm_exception_is_logged(self, agent):
         """When LLM call raises, scan returns whatever was found so far (empty)."""
-        from verdity.schemas import SpecialistContext
         import uuid
+
+        from verdity.schemas import SpecialistContext
 
         class _MockLLM:
             enabled = True
@@ -387,7 +393,7 @@ class TestParseLLMSecurityResponse:
 
     def test_invalid_json_in_code_block_falls_through(self, agent):
         """Code block with bad JSON falls through to raw array search."""
-        content = "```json\n{not json}\n``` [{\"c\":3}]"
+        content = '```json\n{not json}\n``` [{"c":3}]'
         result = SecurityAgent._parse_llm_security_response(content)
         # Code block parse fails; raw array search succeeds
         assert result == [{"c": 3}]

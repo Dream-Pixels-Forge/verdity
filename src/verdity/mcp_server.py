@@ -8,6 +8,7 @@ security, quality, testing, and documentation review.
 
 MCP Protocol: https://modelcontextprotocol.io/
 """
+
 from __future__ import annotations
 
 import logging
@@ -28,6 +29,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class AgentInput:
     """Input for a specialist agent (MCP interface)."""
+
     diff: str
     context: str = ""
     file_path: str = ""
@@ -42,6 +44,7 @@ def _diff_to_files(diff: str, file_path: str = "") -> list[dict[str, Any]]:
     if file_path:
         return [{"path": file_path, "content": diff, "additions": diff, "deletions": ""}]
     return [{"path": "unknown", "content": diff, "additions": diff, "deletions": ""}]
+
 
 logger = logging.getLogger(__name__)
 
@@ -303,9 +306,7 @@ class MCPServer:
             "tools": self._tools,
         }
 
-    async def call_tool(
-        self, name: str, arguments: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Call an MCP tool by name with arguments."""
         tool_names = [t["name"] for t in self._tools]
         if name not in tool_names:
@@ -316,22 +317,21 @@ class MCPServer:
         try:
             if name == "review_security":
                 return await self._review_security(arguments)
-            elif name == "review_quality":
+            if name == "review_quality":
                 return await self._review_quality(arguments)
-            elif name == "review_testing":
+            if name == "review_testing":
                 return await self._review_testing(arguments)
-            elif name == "review_documentation":
+            if name == "review_documentation":
                 return await self._review_documentation(arguments)
-            elif name == "review_full":
+            if name == "review_full":
                 return await self._review_full(arguments)
-            elif name == "generate_fix":
+            if name == "generate_fix":
                 return await self._generate_fix(arguments)
-            elif name == "apply_fix":
+            if name == "apply_fix":
                 return await self._apply_fix(arguments)
-            elif name == "get_review_rules":
+            if name == "get_review_rules":
                 return await self._get_review_rules(arguments)
-            else:
-                return {"error": f"Tool not implemented: {name}"}
+            return {"error": f"Tool not implemented: {name}"}
         except Exception as e:
             logger.exception("Error calling tool %s", name)
             return {"error": str(e), "tool": name}
@@ -370,7 +370,9 @@ class MCPServer:
                     "message": f.summary,
                     "file_path": f.file,
                     "line": f.line_start,
-                    "severity": f.severity.value if hasattr(f.severity, 'value') else str(f.severity),
+                    "severity": f.severity.value
+                    if hasattr(f.severity, "value")
+                    else str(f.severity),
                     "confidence": f.confidence,
                 }
                 for i, f in enumerate(result.findings)
@@ -413,7 +415,9 @@ class MCPServer:
                     "message": f.summary,
                     "file_path": f.file,
                     "line": f.line_start,
-                    "severity": f.severity.value if hasattr(f.severity, 'value') else str(f.severity),
+                    "severity": f.severity.value
+                    if hasattr(f.severity, "value")
+                    else str(f.severity),
                     "confidence": f.confidence,
                 }
                 for i, f in enumerate(result.findings)
@@ -456,7 +460,9 @@ class MCPServer:
                     "message": f.summary,
                     "file_path": f.file,
                     "line": f.line_start,
-                    "severity": f.severity.value if hasattr(f.severity, 'value') else str(f.severity),
+                    "severity": f.severity.value
+                    if hasattr(f.severity, "value")
+                    else str(f.severity),
                     "confidence": f.confidence,
                 }
                 for i, f in enumerate(result.findings)
@@ -499,7 +505,9 @@ class MCPServer:
                     "message": f.summary,
                     "file_path": f.file,
                     "line": f.line_start,
-                    "severity": f.severity.value if hasattr(f.severity, 'value') else str(f.severity),
+                    "severity": f.severity.value
+                    if hasattr(f.severity, "value")
+                    else str(f.severity),
                     "confidence": f.confidence,
                 }
                 for i, f in enumerate(result.findings)
@@ -517,6 +525,7 @@ class MCPServer:
         file_path = args.get("file_path", "")
 
         from .schemas import SpecialistContext
+
         ctx = SpecialistContext(
             review_run_id=uuid.uuid4(),
             repo_owner="mcp",
@@ -535,7 +544,9 @@ class MCPServer:
                     "message": f.summary,
                     "file_path": f.file,
                     "line": f.line_start,
-                    "severity": f.severity.value if hasattr(f.severity, 'value') else str(f.severity),
+                    "severity": f.severity.value
+                    if hasattr(f.severity, "value")
+                    else str(f.severity),
                     "confidence": f.confidence,
                 }
                 for i, f in enumerate(result.findings)
@@ -567,9 +578,7 @@ class MCPServer:
         fix_patch = args["fix_patch"]
         file_path = args["file_path"]
         branch = args.get("branch", "main")
-        commit_message = args.get(
-            "commit_message", "fix: apply automated fix from Verdity"
-        )
+        commit_message = args.get("commit_message", "fix: apply automated fix from Verdity")
 
         client = GitHubClient()
         result = await client.apply_fix(

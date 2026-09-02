@@ -177,7 +177,7 @@ class SemanticIndex:
 
         # Generate embeddings
         embeddings = self._embedder.embed_batch(chunks)
-        for chunk, emb in zip(chunks, embeddings):
+        for chunk, emb in zip(chunks, embeddings, strict=False):
             chunk.embedding = emb
 
         inserted = 0
@@ -288,7 +288,9 @@ class SemanticIndex:
                 if len(emb) != dim:
                     continue
                 chunk_mag = math.sqrt(sum(v * v for v in emb)) or 1.0
-                similarity = sum(q * e for q, e in zip(query_vector, emb)) / (query_mag * chunk_mag)
+                similarity = sum(q * e for q, e in zip(query_vector, emb, strict=False)) / (
+                    query_mag * chunk_mag
+                )
                 if similarity >= min_similarity:
                     r = dict(row)
                     r["similarity"] = round(similarity, 4)
@@ -673,9 +675,7 @@ class SemanticIndex:
 
                 # Mark as indexed
                 content_hash = hashlib.sha256(content.encode()).hexdigest()
-                await self.mark_file_indexed(
-                    repo_id, file_path, content_hash, commit_sha
-                )
+                await self.mark_file_indexed(repo_id, file_path, content_hash, commit_sha)
 
         return {
             "repo_id": repo_id,

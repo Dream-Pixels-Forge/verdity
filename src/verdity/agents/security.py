@@ -178,7 +178,10 @@ class SecurityAgent(BaseSpecialistAgent):
         )
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Review this diff for security vulnerabilities:\n\n{diff_text}"},
+            {
+                "role": "user",
+                "content": f"Review this diff for security vulnerabilities:\n\n{diff_text}",
+            },
         ]
 
         try:

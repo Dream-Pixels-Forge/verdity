@@ -10,6 +10,7 @@ Additional orchestrator tests covering:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -89,6 +90,7 @@ class TestResolvePolicyTiers:
     def test_resolve_policy_lite_tier(self):
         """PR with diff < small_pr_diff_threshold maps to lite tier."""
         from verdity import config as config_mod
+
         get_settings = config_mod.get_settings
         get_settings.cache_clear()
         settings = get_settings()
@@ -101,6 +103,7 @@ class TestResolvePolicyTiers:
     def test_resolve_policy_deep_tier(self):
         """PR with diff > large_pr_diff_threshold maps to deep tier."""
         from verdity import config as config_mod
+
         get_settings = config_mod.get_settings
         get_settings.cache_clear()
         settings = get_settings()
@@ -113,6 +116,7 @@ class TestResolvePolicyTiers:
     def test_resolve_policy_balanced_tier(self):
         """PR with diff in between thresholds maps to balanced."""
         from verdity import config as config_mod
+
         get_settings = config_mod.get_settings
         get_settings.cache_clear()
         settings = get_settings()
@@ -151,6 +155,7 @@ class TestOrchestratorWithMetrics:
     @pytest.mark.asyncio
     async def test_metrics_recorded_when_metrics_store_present(self, services):
         """If metrics_store is set, record_review_metrics and record_review_timing are called."""
+
         async def stub_specialist(ctx, index, te, audit):
             finding = Finding(
                 concern=ConcernType.SECURITY,
@@ -201,6 +206,7 @@ class TestOrchestratorWithMetrics:
     @pytest.mark.asyncio
     async def test_metrics_recording_failure_is_swallowed(self, services):
         """If metrics_store.record_review_metrics raises, log and continue."""
+
         async def stub_specialist(ctx, index, te, audit):
             finding = Finding(
                 concern=ConcernType.SECURITY,
@@ -272,7 +278,7 @@ class TestRunAdversarialReview:
     @pytest.mark.asyncio
     async def test_adversarial_review_success_branch(self, services):
         """If findings exist and the reviewer succeeds, verdicts are applied."""
-        from verdity.adversarial_reviewer import AdversarialReview, AdversarialResult, Verdict
+        from verdity.adversarial_reviewer import AdversarialResult, AdversarialReview, Verdict
 
         async def finding_specialist(ctx, index, te, audit):
             finding = Finding(
@@ -390,7 +396,7 @@ class TestGatherResults:
             event=_make_event(),
             policy=ReviewPolicy(),
         )
-        await orch._gather_results(  # noqa: SLF001
+        await orch._gather_results(
             review_run_id=run.review_run_id,
             run=run,
             policy=run.policy,
@@ -418,7 +424,7 @@ class TestGatherResults:
         task = asyncio.create_task(bad_specialist(None, None, None, None))
         tasks = {"security": task}
 
-        await orch._gather_results(  # noqa: SLF001
+        await orch._gather_results(
             review_run_id=run.review_run_id,
             run=run,
             policy=run.policy,
@@ -454,7 +460,7 @@ class TestGatherResults:
         task = asyncio.create_task(slow_specialist(None, None, None, None))
         tasks = {"security": task}
 
-        await orch._gather_results(  # noqa: SLF001
+        await orch._gather_results(
             review_run_id=run.review_run_id,
             run=run,
             policy=run.policy,
@@ -499,12 +505,10 @@ class TestGatherResults:
 
         task = asyncio.create_task(slow(None, None, None, None))
         task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await task
-        except asyncio.CancelledError:
-            pass
 
-        await orch._gather_results(  # noqa: SLF001
+        await orch._gather_results(
             review_run_id=run.review_run_id,
             run=run,
             policy=run.policy,
@@ -534,7 +538,7 @@ class TestRunSpecialistTypeCheck:
             event=_make_event(),
             policy=ReviewPolicy(),
         )
-        result = await orch._run_specialist(  # noqa: SLF001
+        result = await orch._run_specialist(
             name="security",
             fn=bad_return_specialist,
             run=run,
@@ -557,8 +561,8 @@ class TestListRuns:
         # Insert some runs
         r1 = ReviewRun(review_run_id=uuid.uuid4(), event=_make_event())
         r2 = ReviewRun(review_run_id=uuid.uuid4(), event=_make_event())
-        orch._runs[r1.review_run_id] = r1  # noqa: SLF001
-        orch._runs[r2.review_run_id] = r2  # noqa: SLF001
+        orch._runs[r1.review_run_id] = r1
+        orch._runs[r2.review_run_id] = r2
 
         runs = orch.list_runs()
         assert len(runs) == 2
@@ -572,7 +576,7 @@ class TestListRuns:
         )
         for _ in range(5):
             r = ReviewRun(review_run_id=uuid.uuid4(), event=_make_event())
-            orch._runs[r.review_run_id] = r  # noqa: SLF001
+            orch._runs[r.review_run_id] = r
 
         runs = orch.list_runs(limit=2)
         assert len(runs) == 2

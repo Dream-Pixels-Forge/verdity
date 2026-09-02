@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from verdity.metrics_store import MetricsStore
@@ -23,7 +23,7 @@ from verdity.schemas import (
 logger = logging.getLogger(__name__)
 
 
-class RouteAction(str, Enum):
+class RouteAction(StrEnum):
     AUTO_APPROVE = "auto_approve"
     MANUAL_REVIEW = "manual_review"
     AUTO_DISMISS = "auto_dismiss"
@@ -71,7 +71,7 @@ def compute_confidence(
     Compute deterministic multi-signal confidence score.
 
     Per constraint #5: confidence is never LLM self-reported.
-    Score = base_confidence × (1 - sev_weight) + sev_weight + concern_boost, clamped to [0, 1].
+    Score = base_confidence * (1 - sev_weight) + sev_weight + concern_boost, clamped to [0, 1].
 
     This treats severity as a floor/baseline rather than a multiplier:
     - CRITICAL findings get a floor of 1.0 (always matter)
@@ -88,8 +88,12 @@ def compute_confidence(
     sev_w = severity_weights or DEFAULT_SEVERITY_WEIGHTS
     con_b = concern_boost or DEFAULT_CONCERN_BOOST
 
-    sev_weight = sev_w.get(finding.severity.value if hasattr(finding.severity, 'value') else str(finding.severity), 0.3)
-    boost = con_b.get(finding.concern.value if hasattr(finding.concern, 'value') else str(finding.concern), 0.0)
+    sev_weight = sev_w.get(
+        finding.severity.value if hasattr(finding.severity, "value") else str(finding.severity), 0.3
+    )
+    boost = con_b.get(
+        finding.concern.value if hasattr(finding.concern, "value") else str(finding.concern), 0.0
+    )
 
     # Blend: severity sets the floor, base fills remaining range
     score = base * (1.0 - sev_weight) + sev_weight + boost
@@ -111,18 +115,17 @@ def route_finding(finding: Finding, confidence: float) -> RoutingDecision:
             confidence=confidence,
             reason=f"High confidence ({confidence:.2f}) — requires immediate action",
         )
-    elif confidence >= MANUAL_REVIEW_THRESHOLD:
+    if confidence >= MANUAL_REVIEW_THRESHOLD:
         return RoutingDecision(
             action=RouteAction.MANUAL_REVIEW,
             confidence=confidence,
             reason=f"Medium confidence ({confidence:.2f}) — needs human review",
         )
-    else:
-        return RoutingDecision(
-            action=RouteAction.AUTO_DISMISS,
-            confidence=confidence,
-            reason=f"Low confidence ({confidence:.2f}) — dismissed automatically",
-        )
+    return RoutingDecision(
+        action=RouteAction.AUTO_DISMISS,
+        confidence=confidence,
+        reason=f"Low confidence ({confidence:.2f}) — dismissed automatically",
+    )
 
 
 def compute_batch_routing(

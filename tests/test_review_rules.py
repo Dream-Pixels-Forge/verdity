@@ -1,4 +1,5 @@
 """Tests for Review Rules module."""
+
 import tempfile
 from pathlib import Path
 

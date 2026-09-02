@@ -15,12 +15,13 @@ Non-negotiable constraint #3: specialists run in parallel, not sequentially.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 
 from verdity.audit_store import AuditStore
 from verdity.event_queue import EventQueue
@@ -42,7 +43,7 @@ logger = logging.getLogger(__name__)
 # ── Review Run States ─────────────────────────────────────────────────
 
 
-class RunStatus(str, Enum):
+class RunStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -303,7 +304,9 @@ class Orchestrator:
                 severity_counts: dict[str, float] = {}
                 for r in run.specialist_results.values():
                     for f in r.findings:
-                        severity_counts[f.severity.value] = severity_counts.get(f.severity.value, 0) + 1
+                        severity_counts[f.severity.value] = (
+                            severity_counts.get(f.severity.value, 0) + 1
+                        )
 
                 metrics: dict[str, float] = {
                     "finding_count": float(findings_total),
@@ -353,10 +356,8 @@ class Orchestrator:
             # Cancel any still-running specialists (timed out)
             for task in pending:
                 task.cancel()
-                try:
+                with contextlib.suppress(asyncio.CancelledError):
                     await task
-                except asyncio.CancelledError:
-                    pass
 
         # Collect results
         for name, task in tasks.items():
@@ -466,9 +467,9 @@ class Orchestrator:
             # Rebuild findings per specialist (findings carry specialist tag via concern)
             for resp in run.specialist_results.values():
                 resp.findings = [
-                    f for f in surviving_findings
-                    if f.concern.value == resp.specialist
-                    or resp.specialist == "aggregator"
+                    f
+                    for f in surviving_findings
+                    if f.concern.value == resp.specialist or resp.specialist == "aggregator"
                 ]
 
             logger.info(

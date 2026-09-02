@@ -35,7 +35,7 @@ def _sign(secret: str, body: bytes) -> str:
 async def gw_client() -> AsyncGenerator[AsyncClient, None]:
     """Set up gateway with metrics and platform webhook secrets configured."""
     import os
-    from unittest.mock import patch as mock_patch
+
     from verdity.config import get_settings
 
     get_settings.cache_clear()
@@ -45,7 +45,9 @@ async def gw_client() -> AsyncGenerator[AsyncClient, None]:
     os.environ["BITBUCKET_WEBHOOK_SECRET"] = "bitbucket-secret"
     os.environ["GITHUB_APP_ID"] = "12345"
     os.environ["GITHUB_APP_INSTALLATION_ID"] = "98765"
-    os.environ["GITHUB_APP_PRIVATE_KEY"] = "-----BEGIN RSA PRIVATE KEY-----\ntest\n-----END RSA PRIVATE KEY-----"
+    os.environ["GITHUB_APP_PRIVATE_KEY"] = (
+        "-----BEGIN RSA PRIVATE KEY-----\ntest\n-----END RSA PRIVATE KEY-----"
+    )
     get_settings.cache_clear()
 
     # Patch RepoRef constructor so the gateway's missing-id construction succeeds.
@@ -115,6 +117,7 @@ async def test_unified_webhook_gitlab_missing_secret_config(gw_client):
 
     os.environ["GITLAB_WEBHOOK_SECRET"] = ""
     from verdity.config import get_settings
+
     get_settings.cache_clear()
 
     resp = await gw_client.post(
@@ -225,8 +228,10 @@ async def test_unified_webhook_bitbucket_invalid_signature_returns_401(gw_client
 @pytest.mark.asyncio
 async def test_unified_webhook_bitbucket_missing_secret_config(gw_client):
     import os
+
     os.environ["BITBUCKET_WEBHOOK_SECRET"] = ""
     from verdity.config import get_settings
+
     get_settings.cache_clear()
 
     body = b'{"pullrequest":{}}'
@@ -381,8 +386,10 @@ async def test_unified_webhook_503_when_queue_unavailable(gw_client):
 
 def _make_async_raise(exc):
     """Create an async function that raises."""
+
     async def _raise(*args, **kwargs):
         raise exc
+
     return _raise
 
 
@@ -594,6 +601,7 @@ async def test_unified_webhook_null_byte_in_head_sha(gw_client):
 def test_sanitize_path_null_byte():
     """Cover the null-byte rejection branch in _sanitize_path."""
     from verdity.gateway.app import _sanitize_path
+
     with pytest.raises(ValueError, match="Null byte"):
         _sanitize_path("abc\x00def")
 
@@ -834,7 +842,7 @@ async def test_unified_webhook_413_via_raw_body_check(gw_client):
     A request with short Content-Length but big body passes middleware but
     hits the endpoint's own size check (line 490).
     """
-    big_body = b"x" * (10 * 1024 * 1024 + 1024)  # 10MB + 1KB
+    b"x" * (10 * 1024 * 1024 + 1024)  # 10MB + 1KB
     # httpx lets us send raw content with custom headers including a short
     # Content-Length that lies about the size — middleware allows it through.
     resp = await gw_client.post(
@@ -864,8 +872,12 @@ async def test_unified_webhook_github_secret_path_covered(gw_client):
         {
             "action": "opened",
             "pull_request": {
-                "number": 1, "head": {"sha": "h"}, "base": {"sha": "b"},
-                "title": "T", "body": "", "user": {"login": "u"},
+                "number": 1,
+                "head": {"sha": "h"},
+                "base": {"sha": "b"},
+                "title": "T",
+                "body": "",
+                "user": {"login": "u"},
             },
             "repository": {"name": "r", "owner": {"login": "o"}, "id": 1},
         },

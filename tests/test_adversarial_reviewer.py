@@ -345,14 +345,18 @@ class TestAdversarialReviewer:
         assert review.results[0].verdict == Verdict.OVERTURNED
 
     @pytest.mark.asyncio
-    async     def test_review_counts(self):
+    async def test_review_counts(self):
         """Review counts match actual results."""
         reviewer = AdversarialReviewer()
         findings = [
             _make_finding(file="tests/test_a.py"),  # overturned (test file)
             _make_finding(file="tests/test_b.py"),  # overturned (test file)
-            _make_finding(file="src/app.py", severity=Severity.LOW, confidence=0.2),  # overturned (severity inflated + low confidence)
-            _make_finding(file="src/auth.py", severity=Severity.CRITICAL, confidence=0.95),  # confirmed
+            _make_finding(
+                file="src/app.py", severity=Severity.LOW, confidence=0.2
+            ),  # overturned (severity inflated + low confidence)
+            _make_finding(
+                file="src/auth.py", severity=Severity.CRITICAL, confidence=0.95
+            ),  # confirmed
         ]
         review = await reviewer.challenge_findings(findings=findings)
         assert review.total_findings == 4
@@ -515,7 +519,10 @@ class TestPromptSeparation:
         """Adversarial lite prompt must differ from agent prompts (safety property)."""
         # Agent prompts contain "analyze" or "review" — adversarial contains "challenge"
         assert "challenge" in ADVERSARIAL_SYSTEM_PROMPT_LITE.lower()
-        assert "DISPROVE" in ADVERSARIAL_SYSTEM_PROMPT_LITE or "challenge" in ADVERSARIAL_SYSTEM_PROMPT_LITE.lower()
+        assert (
+            "DISPROVE" in ADVERSARIAL_SYSTEM_PROMPT_LITE
+            or "challenge" in ADVERSARIAL_SYSTEM_PROMPT_LITE.lower()
+        )
 
     def test_full_prompt_is_different_from_agent_prompts(self):
         """Adversarial full prompt must differ from agent prompts (safety property)."""

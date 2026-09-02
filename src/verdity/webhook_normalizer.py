@@ -65,7 +65,9 @@ def normalize_webhook(
         if name_only_trigger is not None:
             logger.warning(
                 "Unknown action '%s' for event %s — using trigger %s from event name only",
-                action, event_name, name_only_trigger,
+                action,
+                event_name,
+                name_only_trigger,
             )
             trigger = name_only_trigger
         else:
@@ -76,7 +78,8 @@ def normalize_webhook(
             logger.warning(
                 "Unknown event+action: %s/%s — using generic trigger PR_OPENED "
                 "(raw event name preserved in delivery_id for debugging)",
-                event_name, action,
+                event_name,
+                action,
             )
             trigger = TriggerType.PR_OPENED  # safe fallback
 

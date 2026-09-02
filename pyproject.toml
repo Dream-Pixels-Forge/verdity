@@ -54,6 +54,8 @@ dev = [
     "pytest>=8.1.0",
     "pytest-asyncio>=0.23.0",
     "pytest-cov>=4.1.0",
+    "ruff>=0.6,<0.17",
+    "pre-commit>=4.0.0",
 ]
 
 [project.scripts]
@@ -80,6 +82,35 @@ addopts = "-v --cov=src/verdity --cov-report=term-missing --cov-fail-under=100"
 target-version = "py311"
 line-length = 100
 
+[tool.ruff.lint]
+# Rule sets we enforce.
+# E/W: pycodestyle (PEP 8)
+# F: pyflakes (unused, undefined names)
+# I: isort (import order)
+# B: bugbear (likely bugs)
+# UP: pyupgrade (modernize syntax for our target py311)
+# SIM: simplify (idomatic replacements)
+# C4: flake8-comprehensions
+# DTZ: flake8-datetimez (always use tz-aware datetimes)
+# RET: flake8-return (return-statement hygiene)
+# PERF: perflint (perf hints)
+# RUF: ruff-specific rules
+select = [
+    "E", "W", "F", "I", "B", "UP", "SIM", "C4", "DTZ", "RET", "PERF", "RUF",
+]
+ignore = [
+    # E501: line too long — handled by formatter (line-length setting).
+    "E501",
+    # SIM102: collapsible if — readability suffers in async tests.
+    "SIM102",
+    # SIM108: ternary to if — readability preference.
+    "SIM108",
+    # PERF401: manual list comprehension — often hurts readability in tests.
+    "PERF401",
+    # RET504: unnecessary assignment before return — preference.
+    "RET504",
+]
+
 [tool.ruff.lint.per-file-ignores]
 # Intentional defensive exception handling in agent/orchestrator/MCP/worker code
 "src/verdity/agents/*.py" = ["BLE001"]
@@ -90,3 +121,16 @@ line-length = 100
 "src/verdity/mcp_server.py" = ["BLE001"]
 "src/verdity/worker.py" = ["BLE001"]
 "src/verdity/coding_agent.py" = ["BLE001", "ASYNC230"]
+# Tests: scaffolding often uses class-level mutable defaults to mimic
+# the real object under test, and asserts on broad Exception.
+"tests/**/*.py" = [
+    "RUF012",  # mutable class attr default — common in mock scaffolding
+    "B017",    # pytest.raises(Exception) — pydantic ValidationError is broad
+    "DTZ005",  # datetime.now() without tz — tests, not production
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"

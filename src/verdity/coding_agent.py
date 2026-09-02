@@ -5,6 +5,7 @@ Takes a Finding and produces a proposed code fix (diff).
 Deterministic rule-based fix generation — no LLM in dev mode.
 Supports agentic fix mode (v0.3.0): generate fix → commit → open PR.
 """
+
 from __future__ import annotations
 
 import logging
@@ -67,7 +68,7 @@ class CodingAgent:
 
         if concern == ConcernType.SECURITY:
             return self._fix_security(finding)
-        elif concern == ConcernType.CODE_QUALITY:
+        if concern == ConcernType.CODE_QUALITY:
             return self._fix_quality(finding)
         return None
 
@@ -121,11 +122,12 @@ class CodingAgent:
         try:
             # Write the patched file
             import os
+
             file_path = proposed.file
 
             # Read original file
             if os.path.exists(file_path):
-                with open(file_path, "r") as f:
+                with open(file_path) as f:
                     f.read()
             else:
                 pass
@@ -314,7 +316,7 @@ class CodingAgent:
                 explanation="Use env var or secrets manager instead",
                 fix_type="secret_removal",
             )
-        elif "sql" in summary and ("injection" in summary or 'f"' in finding.explanation):
+        if "sql" in summary and ("injection" in summary or 'f"' in finding.explanation):
             return ProposedFix(
                 finding_id=finding.finding_id,
                 file=finding.file,
@@ -327,7 +329,7 @@ class CodingAgent:
                 explanation="Replace string concatenation with parameterized query",
                 fix_type="sql_fix",
             )
-        elif "eval" in summary or "exec" in summary:
+        if "eval" in summary or "exec" in summary:
             return ProposedFix(
                 finding_id=finding.finding_id,
                 file=finding.file,
@@ -341,7 +343,7 @@ class CodingAgent:
                 explanation="Replace eval/exec with safe alternatives",
                 fix_type="eval_replacement",
             )
-        elif "pickle" in summary:
+        if "pickle" in summary:
             return ProposedFix(
                 finding_id=finding.finding_id,
                 file=finding.file,
@@ -355,7 +357,7 @@ class CodingAgent:
                 explanation="Replace pickle.load with json.load for safe deserialization",
                 fix_type="pickle_replacement",
             )
-        elif "hash" in summary and "md5" in summary:
+        if "hash" in summary and "md5" in summary:
             return ProposedFix(
                 finding_id=finding.finding_id,
                 file=finding.file,

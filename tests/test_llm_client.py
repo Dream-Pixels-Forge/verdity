@@ -58,7 +58,7 @@ class TestGatePhase12:
         )
 
         # Diff with: (1) MD5 hash — regex catches, (2) auth bypass — logic flaw
-        logic_flaw_diff = '''--- a/auth/login.py
+        logic_flaw_diff = """--- a/auth/login.py
 +++ b/auth/login.py
 @@ -10,6 +10,12 @@
  import hashlib
@@ -73,7 +73,7 @@ class TestGatePhase12:
 +        token = str(uuid.uuid4())
 +        return {"token": token, "user": user}
      return None
-'''
+"""
 
         ctx = SpecialistContext(
             review_run_id=uuid.uuid4(),
@@ -81,39 +81,47 @@ class TestGatePhase12:
             repo_name="test-repo",
             base_sha="abc123",
             head_sha="def456",
-            diff_files=[{
-                "path": "auth/login.py",
-                "content": logic_flaw_diff,
-                "additions": logic_flaw_diff,
-            }],
+            diff_files=[
+                {
+                    "path": "auth/login.py",
+                    "content": logic_flaw_diff,
+                    "additions": logic_flaw_diff,
+                }
+            ],
         )
 
         # Mock LLM response that catches the auth bypass logic flaw
-        llm_finding = json.dumps([{
-            "summary": "Auth bypass: missing token validation",
-            "severity": "critical",
-            "file": "auth/login.py",
-            "line_start": 14,
-            "explanation": (
-                "The login function queries by username only, without validating the password. "
-                "This allows any request with a valid username to authenticate and receive a token. "
-                "The original code checked both username AND password, but the new code only checks username."
-            ),
-            "suggested_fix": "Query with both username and password_hash, not just username",
-        }])
+        llm_finding = json.dumps(
+            [
+                {
+                    "summary": "Auth bypass: missing token validation",
+                    "severity": "critical",
+                    "file": "auth/login.py",
+                    "line_start": 14,
+                    "explanation": (
+                        "The login function queries by username only, without validating the password. "
+                        "This allows any request with a valid username to authenticate and receive a token. "
+                        "The original code checked both username AND password, but the new code only checks username."
+                    ),
+                    "suggested_fix": "Query with both username and password_hash, not just username",
+                }
+            ]
+        )
 
         agent = SecurityAgent()
 
         # Mock the LLM client
         mock_llm_client = MagicMock()
         mock_llm_client.enabled = True
-        mock_llm_client.complete = AsyncMock(return_value=LLMResponse(
-            content=llm_finding,
-            input_tokens=200,
-            output_tokens=100,
-            model="gpt-4o",
-            cost_usd=0.003,
-        ))
+        mock_llm_client.complete = AsyncMock(
+            return_value=LLMResponse(
+                content=llm_finding,
+                input_tokens=200,
+                output_tokens=100,
+                model="gpt-4o",
+                cost_usd=0.003,
+            )
+        )
         ctx.llm_client = mock_llm_client
 
         # Run with use_llm=False (regex only)
@@ -124,7 +132,6 @@ class TestGatePhase12:
         mock_audit = MagicMock()
         mock_audit.append = AsyncMock()
 
-
         findings_no_llm = await agent._scan(ctx, mock_index, use_llm=False)
 
         # Run with use_llm=True (regex + LLM)
@@ -134,17 +141,17 @@ class TestGatePhase12:
         assert len(findings_no_llm) >= 1, "Regex should catch MD5 weak hash"
 
         # LLM finds the auth bypass that regex cannot catch
-        llm_only_findings = [
-            f for f in findings_with_llm
-            if f.summary.startswith("[LLM]")
-        ]
+        llm_only_findings = [f for f in findings_with_llm if f.summary.startswith("[LLM]")]
         assert len(llm_only_findings) >= 1, (
             "LLM should find the auth bypass logic flaw that regex misses"
         )
 
         # Verify the LLM finding is about the auth bypass
         auth_bypass = llm_only_findings[0]
-        assert "auth bypass" in auth_bypass.summary.lower() or "token" in auth_bypass.explanation.lower()
+        assert (
+            "auth bypass" in auth_bypass.summary.lower()
+            or "token" in auth_bypass.explanation.lower()
+        )
         assert auth_bypass.severity in (Severity.CRITICAL, Severity.HIGH)
 
 
@@ -318,14 +325,18 @@ class TestLLMClient:
 
     async def test_complete_structured_success(self):
         client = LLMClient(api_key="test-key")
-        finding_json = json.dumps([{
-            "summary": "Test finding",
-            "severity": "high",
-            "file": "test.py",
-            "line_start": 1,
-            "explanation": "Test explanation",
-            "suggested_fix": "Fix it",
-        }])
+        finding_json = json.dumps(
+            [
+                {
+                    "summary": "Test finding",
+                    "severity": "high",
+                    "file": "test.py",
+                    "line_start": 1,
+                    "explanation": "Test explanation",
+                    "suggested_fix": "Fix it",
+                }
+            ]
+        )
         mock_response = _mock_response(finding_json)
 
         with patch("verdity.llm_client.httpx.AsyncClient") as MockClient:
@@ -354,7 +365,7 @@ class TestLLMClient:
                 schema=schema,
             )
 
-            assert isinstance(result, (dict, list))
+            assert isinstance(result, dict | list)
 
     async def test_complete_structured_retries_on_bad_json(self):
         client = LLMClient(api_key="test-key")
@@ -454,6 +465,7 @@ class TestConfigIntegration:
         import os
 
         from verdity.config import Settings
+
         os.environ["VERDITY_WEBHOOK_HMAC_SECRET"] = "test-secret"
         os.environ["VERDITY_GITHUB_APP_ID"] = "12345"
         os.environ["VERDITY_GITHUB_APP_INSTALLATION_ID"] = "67890"
@@ -590,6 +602,7 @@ class TestCompleteBranches:
     @pytest.mark.asyncio
     async def test_token_economics_failure_is_logged(self):
         """When token_economics.record_call raises, complete() still returns response."""
+
         class _FailingTE:
             async def record_call(self, **kwargs):
                 raise RuntimeError("te down")

@@ -22,16 +22,16 @@ class TestBitbucketVerifyWebhook:
         platform = BitbucketPlatform()
         secret = "my-secret"
         body = b'{"pullrequest": {}}'
-        expected_sig = "sha256=" + hmac.new(
-            secret.encode(), body, hashlib.sha256
-        ).hexdigest()
+        expected_sig = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
         headers = {"x-hub-signature": expected_sig}
         assert platform.verify_webhook(headers, body, secret) is True
 
     def test_invalid_signature(self):
         """Mismatched signature is rejected."""
         platform = BitbucketPlatform()
-        headers = {"x-hub-signature": "sha256000000000000000000000000000000000000000000000000000000000000000"}
+        headers = {
+            "x-hub-signature": "sha256000000000000000000000000000000000000000000000000000000000000000"
+        }
         body = b'{"pullrequest": {}}'
         assert platform.verify_webhook(headers, body, "my-secret") is False
 
@@ -52,9 +52,7 @@ class TestBitbucketVerifyWebhook:
         secret = "my-secret"
         body = b'{"pullrequest": {}}'
         wrong_body = b'{"different": "body"}'
-        sig = "sha256=" + hmac.new(
-            secret.encode(), wrong_body, hashlib.sha256
-        ).hexdigest()
+        sig = "sha256=" + hmac.new(secret.encode(), wrong_body, hashlib.sha256).hexdigest()
         headers = {"x-hub-signature": sig}
         assert platform.verify_webhook(headers, body, secret) is False
 
@@ -63,9 +61,7 @@ class TestBitbucketVerifyWebhook:
         platform = BitbucketPlatform()
         secret = "test-secret-constant-time"
         body = b"test body content"
-        sig = "sha256=" + hmac.new(
-            secret.encode(), body, hashlib.sha256
-        ).hexdigest()
+        sig = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
         headers = {"x-hub-signature": sig}
         assert platform.verify_webhook(headers, body, secret) is True
 
@@ -202,7 +198,18 @@ class TestBitbucketNormalizeEvent:
     def test_missing_event_key(self):
         """Missing X-Event-Key yields unknown."""
         platform = BitbucketPlatform()
-        body = {"pullrequest": {"id": 1, "title": "", "description": "", "source": {"commit": {"hash": ""}}, "destination": {"commit": {"hash": ""}}, "author": {"username": ""}, "links": {}}, "repository": {"name": "", "owner": {"uuid": ""}}}
+        body = {
+            "pullrequest": {
+                "id": 1,
+                "title": "",
+                "description": "",
+                "source": {"commit": {"hash": ""}},
+                "destination": {"commit": {"hash": ""}},
+                "author": {"username": ""},
+                "links": {},
+            },
+            "repository": {"name": "", "owner": {"uuid": ""}},
+        }
         result = platform.normalize_event({}, body)
         assert result["trigger_type"] == "unknown"
 
@@ -217,6 +224,7 @@ class TestBitbucketPlatformName:
     def test_is_subclass_of_platform(self):
         """BitbucketPlatform inherits from Platform."""
         from verdity.platforms.base import Platform
+
         assert issubclass(BitbucketPlatform, Platform)
 
 
@@ -237,9 +245,7 @@ class TestBitbucketPostComment:
         mock_http.__aexit__ = AsyncMock(return_value=False)
 
         with patch("verdity.platforms.bitbucket.httpx.AsyncClient", return_value=mock_http):
-            result = await platform.post_comment(
-                owner="ws", repo="r", number=5, body="hello"
-            )
+            result = await platform.post_comment(owner="ws", repo="r", number=5, body="hello")
         assert result == {"id": 1, "content": {"raw": "hello"}}
         call_args = mock_http.post.call_args
         assert "ws/r" in call_args.args[0]

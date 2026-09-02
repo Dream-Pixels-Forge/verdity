@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field, StrictStr, field_validator
@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field, StrictStr, field_validator
 # ── Trigger Types ────────────────────────────────────────────────────
 
 
-class TriggerType(str, Enum):
+class TriggerType(StrEnum):
     PR_OPENED = "pr.opened"
     PR_SYNCHRONIZE = "pr.synchronize"
     PR_REOPENED = "pr.reopened"
@@ -122,14 +122,14 @@ class SpecialistInvocation(BaseModel):
 # ── Specialist Finding ────────────────────────────────────────────────
 
 
-class ConcernType(str, Enum):
+class ConcernType(StrEnum):
     SECURITY = "security"
     CODE_QUALITY = "code_quality"
     TESTING = "testing"
     DOCUMENTATION = "documentation"
 
 
-class Severity(str, Enum):
+class Severity(StrEnum):
     CRITICAL = "critical"
     HIGH = "high"
     MEDIUM = "medium"

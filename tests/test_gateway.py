@@ -221,9 +221,10 @@ async def test_rate_limit_returns_429_after_exceeding_limit(gateway_client_and_q
                 "Content-Type": "application/json",
             },
         )
-        assert resp.status_code in (202, 409), (
-            f"Request {i + 1} got {resp.status_code}: {resp.text}"
-        )
+        assert resp.status_code in (
+            202,
+            409,
+        ), f"Request {i + 1} got {resp.status_code}: {resp.text}"
 
     # The 101st request should be rate-limited
     delivery_id_101 = str(uuid.uuid4())
@@ -295,9 +296,10 @@ async def test_rate_limit_different_ips_are_independent():
                 "X-Forwarded-For": "10.0.0.2",
             },
         )
-        assert resp_b.status_code in (202, 409), (
-            f"IP B should not be rate-limited by IP A, got {resp_b.status_code}"
-        )
+        assert resp_b.status_code in (
+            202,
+            409,
+        ), f"IP B should not be rate-limited by IP A, got {resp_b.status_code}"
 
         # IP A should now be rate-limited
         delivery_id_a = str(uuid.uuid4())

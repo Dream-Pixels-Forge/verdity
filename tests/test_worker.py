@@ -102,7 +102,7 @@ async def test_worker_exponential_backoff():
     queue.acknowledge = AsyncMock()
     queue.nack = AsyncMock()
 
-    for i in range(5):
+    for _i in range(5):
         envelope = _make_envelope("slow/repo", delivery_id=str(uuid.uuid4()))
         await worker._process_one(envelope)
 
@@ -510,21 +510,23 @@ async def test_main_wrapper():
                 "log_level": "DEBUG",
             },
         )()
-        with patch("verdity.worker._setup_logging"):
-            with patch("verdity.worker.Worker", return_value=mock_worker):
-                with patch("verdity.worker.asyncio.get_running_loop") as mock_loop:
-                    mock_loop.return_value.add_signal_handler = MagicMock()
-                    with patch("verdity.worker.asyncio.run") as mock_run:
+        with (
+            patch("verdity.worker._setup_logging"),
+            patch("verdity.worker.Worker", return_value=mock_worker),
+            patch("verdity.worker.asyncio.get_running_loop") as mock_loop,
+            patch("verdity.worker.asyncio.run") as mock_run,
+        ):
+            mock_loop.return_value.add_signal_handler = MagicMock()
 
-                        def _consume_coro(coro):
-                            # Properly consume the coroutine to avoid
-                            # "coroutine was never awaited" RuntimeWarning
-                            coro.close()
+            def _consume_coro(coro):
+                # Properly consume the coroutine to avoid
+                # "coroutine was never awaited" RuntimeWarning
+                coro.close()
 
-                        mock_run.side_effect = _consume_coro
-                        main()
-                        mock_parse.assert_called_once_with(None)
-                        mock_run.assert_called_once()
+            mock_run.side_effect = _consume_coro
+            main()
+            mock_parse.assert_called_once_with(None)
+            mock_run.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -677,41 +679,45 @@ async def test_run_worker_registers_all_specialists():
         },
     )()
 
-    with patch.object(Orchestrator, "register_specialist", capturing_register):
-        with patch("verdity.audit_store.AuditStore") as MockAudit:
-            mock_audit = MagicMock()
-            mock_audit.connect = AsyncMock()
-            mock_audit.close = AsyncMock()
-            MockAudit.return_value = mock_audit
+    with (
+        patch.object(Orchestrator, "register_specialist", capturing_register),
+        patch("verdity.audit_store.AuditStore") as MockAudit,
+        patch("verdity.semantic_index.SemanticIndex") as MockIndex,
+    ):
+        mock_audit = MagicMock()
+        mock_audit.connect = AsyncMock()
+        mock_audit.close = AsyncMock()
+        MockAudit.return_value = mock_audit
 
-            with patch("verdity.semantic_index.SemanticIndex") as MockIndex:
-                mock_index = MagicMock()
-                mock_index.connect = AsyncMock()
-                mock_index.close = AsyncMock()
-                MockIndex.return_value = mock_index
+        mock_index = MagicMock()
+        mock_index.connect = AsyncMock()
+        mock_index.close = AsyncMock()
+        MockIndex.return_value = mock_index
 
-                with patch("verdity.token_economics.TokenEconomicsService") as MockTE:
-                    mock_te = MagicMock()
-                    mock_te.connect = AsyncMock()
-                    mock_te.close = AsyncMock()
-                    MockTE.return_value = mock_te
+        with (
+            patch("verdity.token_economics.TokenEconomicsService") as MockTE,
+            patch("verdity.worker.EventQueue") as MockQueue,
+            patch("verdity.worker.Worker", return_value=mock_worker),
+            patch("verdity.worker.asyncio.get_running_loop") as mock_loop,
+            patch("verdity.worker.asyncio.run") as mock_run,
+        ):
+            mock_te = MagicMock()
+            mock_te.connect = AsyncMock()
+            mock_te.close = AsyncMock()
+            MockTE.return_value = mock_te
 
-                    with patch("verdity.worker.EventQueue") as MockQueue:
-                        mock_queue = MagicMock()
-                        mock_queue.connect = AsyncMock()
-                        mock_queue.close = AsyncMock()
-                        MockQueue.return_value = mock_queue
+            mock_queue = MagicMock()
+            mock_queue.connect = AsyncMock()
+            mock_queue.close = AsyncMock()
+            MockQueue.return_value = mock_queue
 
-                        with patch("verdity.worker.Worker", return_value=mock_worker):
-                            with patch("verdity.worker.asyncio.get_running_loop") as mock_loop:
-                                mock_loop.return_value.add_signal_handler = MagicMock()
-                                with patch("verdity.worker.asyncio.run") as mock_run:
+            mock_loop.return_value.add_signal_handler = MagicMock()
 
-                                    async def consume_coro(coro):
-                                        await coro
+            async def consume_coro(coro):
+                await coro
 
-                                    mock_run.side_effect = consume_coro
-                                    await _run_worker(args)
+            mock_run.side_effect = consume_coro
+            await _run_worker(args)
 
     # Verify all four specialists were registered
     assert "security" in registered_specialists, "security specialist not registered"

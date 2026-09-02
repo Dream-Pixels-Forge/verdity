@@ -74,7 +74,7 @@ class AggregatorAgent:
         merged_findings: list[Finding] = []
         group_id_map: dict[str, uuid.UUID] = {}  # finding_id → group_id
 
-        for key, group in dedup_groups.items():
+        for group in dedup_groups.values():
             group_id = uuid.uuid4()
             # Pick the highest-confidence finding from the group
             best = max(
@@ -92,7 +92,7 @@ class AggregatorAgent:
         filtered_findings = [f for f in merged_findings if f.confidence >= confidence_threshold]
 
         # ── Ranking ─────────────────────────────────────────────────────
-        # Composite score: severity_weight × confidence
+        # Composite score: severity_weight * confidence
         ranked: list[RankedFinding] = []
         for f in filtered_findings:
             sev_rank = SEVERITY_RANK.get(f.severity, 0)

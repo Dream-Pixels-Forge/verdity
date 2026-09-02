@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import tempfile
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -241,12 +240,8 @@ class TestCallToolExceptions:
         # Use a non-existent tool path that gets past validation but raises elsewhere
         # The cleanest way is to patch one of the helper methods to raise
         server = MCPServer()
-        with patch.object(
-            server, "_review_security", side_effect=RuntimeError("kaboom")
-        ):
-            result = await server.call_tool(
-                "review_security", {"diff": "x"}
-            )
+        with patch.object(server, "_review_security", side_effect=RuntimeError("kaboom")):
+            result = await server.call_tool("review_security", {"diff": "x"})
             assert "error" in result
             assert result["tool"] == "review_security"
 
@@ -277,9 +272,7 @@ class TestReviewFullInitialize:
             mock_orch.review = AsyncMock(return_value=mock_result)
 
             mock_orch_cls.return_value = mock_orch
-            result = await server.call_tool(
-                "review_full", {"diff": "x", "file_path": "x.py"}
-            )
+            result = await server.call_tool("review_full", {"diff": "x", "file_path": "x.py"})
             mock_orch.initialize.assert_awaited_once()
             assert result["agent"] == "full"
             assert result["findings"][0]["rule_id"] == "full-0"

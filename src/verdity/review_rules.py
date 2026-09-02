@@ -7,6 +7,7 @@ Qodo has a rules engine. Verdity uses YAML for structured, machine-readable rule
 
 Rule file location: `.verdity/rules.yml` in repository root.
 """
+
 from __future__ import annotations
 
 import logging
@@ -53,7 +54,7 @@ class ReviewRules:
             return
 
         try:
-            with open(rules_file, "r", encoding="utf-8") as f:
+            with open(rules_file, encoding="utf-8") as f:
                 loaded = yaml.safe_load(f)
                 if loaded is None:
                     self._rules = DEFAULT_RULES.copy()
@@ -67,17 +68,11 @@ class ReviewRules:
             logger.warning("Failed to load rules file %s: %s", rules_file, e)
             self._rules = DEFAULT_RULES.copy()
 
-    def _merge_rules(
-        self, base: dict[str, Any], override: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _merge_rules(self, base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
         """Deep merge override into base rules."""
         result = base.copy()
         for key, value in override.items():
-            if (
-                key in result
-                and isinstance(result[key], dict)
-                and isinstance(value, dict)
-            ):
+            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
                 result[key] = self._merge_rules(result[key], value)
             else:
                 result[key] = value

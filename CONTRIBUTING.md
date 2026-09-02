@@ -50,7 +50,7 @@ The project enforces 100% code coverage (`--cov-fail-under=100` in `pyproject.to
 
 ## Linting
 
-Verdity uses [Ruff](https://docs.astral.sh/ruff/) for linting and formatting.
+Verdity uses [Ruff](https://docs.astral.sh/ruff/) for linting and formatting. Both checks run on every CI build and on every commit via pre-commit hooks.
 
 ```bash
 # Check for lint errors
@@ -61,7 +61,27 @@ ruff check --fix src/ tests/
 
 # Format code
 ruff format src/ tests/
+
+# Verify formatting without modifying files
+ruff format --check src/ tests/
 ```
+
+### Pre-commit hooks (recommended)
+
+Install once and lint/format run automatically on every `git commit`:
+
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+Run all hooks on demand:
+
+```bash
+pre-commit run --all-files
+```
+
+The hooks are configured in `.pre-commit-config.yaml` and run `ruff format`, `ruff check --fix`, plus a few safety checks (merge conflicts, file endings, trailing whitespace).
 
 ## Submitting Changes
 

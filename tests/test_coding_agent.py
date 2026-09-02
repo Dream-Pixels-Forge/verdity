@@ -7,7 +7,6 @@ Target: bring src/verdity/coding_agent.py to 100% line coverage.
 
 from __future__ import annotations
 
-import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -18,19 +17,19 @@ from verdity.schemas import ConcernType, Finding, Severity
 
 def _make_finding(**overrides) -> Finding:
     """Helper to construct a Finding with sensible defaults."""
-    defaults = dict(
-        concern=ConcernType.SECURITY,
-        severity=Severity.HIGH,
-        file="app.py",
-        line_start=10,
-        line_end=10,
-        summary="Hard-coded password detected",
-        explanation="Use of hardcoded password",
-        confidence=0.85,
-        evidence=[],
-        agent_version="test@0.0.0",
-        prompt_hash="sha256:test",
-    )
+    defaults = {
+        "concern": ConcernType.SECURITY,
+        "severity": Severity.HIGH,
+        "file": "app.py",
+        "line_start": 10,
+        "line_end": 10,
+        "summary": "Hard-coded password detected",
+        "explanation": "Use of hardcoded password",
+        "confidence": 0.85,
+        "evidence": [],
+        "agent_version": "test@0.0.0",
+        "prompt_hash": "sha256:test",
+    }
     defaults.update(overrides)
     return Finding(**defaults)
 
@@ -115,14 +114,18 @@ class TestFixSecurity:
 
     def test_exec_branch(self):
         agent = CodingAgent()
-        f = _make_finding(concern=ConcernType.SECURITY, summary="use of exec to run untrusted input")
+        f = _make_finding(
+            concern=ConcernType.SECURITY, summary="use of exec to run untrusted input"
+        )
         fix = agent._fix_security(f)
         assert fix is not None
         assert fix.fix_type == "eval_replacement"
 
     def test_pickle_branch(self):
         agent = CodingAgent()
-        f = _make_finding(concern=ConcernType.SECURITY, summary="unsafe pickle.load deserialization")
+        f = _make_finding(
+            concern=ConcernType.SECURITY, summary="unsafe pickle.load deserialization"
+        )
         fix = agent._fix_security(f)
         assert fix is not None
         assert fix.fix_type == "pickle_replacement"
@@ -137,7 +140,9 @@ class TestFixSecurity:
     def test_unmatched_security_returns_none(self):
         """A security finding that matches no pattern falls through to None."""
         agent = CodingAgent()
-        f = _make_finding(concern=ConcernType.SECURITY, summary="totally unrelated vulnerability type")
+        f = _make_finding(
+            concern=ConcernType.SECURITY, summary="totally unrelated vulnerability type"
+        )
         assert agent._fix_security(f) is None
 
 
@@ -146,21 +151,27 @@ class TestFixQuality:
 
     def test_bare_except_branch(self):
         agent = CodingAgent()
-        f = _make_finding(concern=ConcernType.CODE_QUALITY, summary="bare except clause swallows errors")
+        f = _make_finding(
+            concern=ConcernType.CODE_QUALITY, summary="bare except clause swallows errors"
+        )
         fix = agent._fix_quality(f)
         assert fix is not None
         assert fix.fix_type == "except_specific"
 
     def test_wildcard_import_branch(self):
         agent = CodingAgent()
-        f = _make_finding(concern=ConcernType.CODE_QUALITY, summary="wildcard import pollutes namespace")
+        f = _make_finding(
+            concern=ConcernType.CODE_QUALITY, summary="wildcard import pollutes namespace"
+        )
         fix = agent._fix_quality(f)
         assert fix is not None
         assert fix.fix_type == "import_specific"
 
     def test_global_import_branch(self):
         agent = CodingAgent()
-        f = _make_finding(concern=ConcernType.CODE_QUALITY, summary="global import detected in function")
+        f = _make_finding(
+            concern=ConcernType.CODE_QUALITY, summary="global import detected in function"
+        )
         fix = agent._fix_quality(f)
         assert fix is not None
         assert fix.fix_type == "import_specific"
@@ -232,7 +243,12 @@ class TestGenerateFix:
     @pytest.mark.asyncio
     async def test_sql_message_keyword(self):
         agent = CodingAgent()
-        finding = {"rule_id": "x", "message": "injection vulnerability", "file_path": "x.py", "line": 1}
+        finding = {
+            "rule_id": "x",
+            "message": "injection vulnerability",
+            "file_path": "x.py",
+            "line": 1,
+        }
         fix = await agent.generate_fix(finding, "diff")
         assert fix.fix_type == "sql_fix"
 
@@ -253,7 +269,12 @@ class TestGenerateFix:
     @pytest.mark.asyncio
     async def test_hash_md5_rule(self):
         agent = CodingAgent()
-        finding = {"rule_id": "weak-hash", "message": "uses md5 algorithm", "file_path": "x.py", "line": 1}
+        finding = {
+            "rule_id": "weak-hash",
+            "message": "uses md5 algorithm",
+            "file_path": "x.py",
+            "line": 1,
+        }
         fix = await agent.generate_fix(finding, "diff")
         assert fix.fix_type == "hash_fix"
 
@@ -267,7 +288,12 @@ class TestGenerateFix:
     @pytest.mark.asyncio
     async def test_generic_rule(self):
         agent = CodingAgent()
-        finding = {"rule_id": "misc-rule", "message": "something else", "file_path": "x.py", "line": 1}
+        finding = {
+            "rule_id": "misc-rule",
+            "message": "something else",
+            "file_path": "x.py",
+            "line": 1,
+        }
         fix = await agent.generate_fix(finding, "diff")
         assert fix.fix_type == "generic"
         # Patch should still be populated
@@ -302,7 +328,7 @@ class TestApplyFixAndOpenPR:
             mock_instance.get_pr = AsyncMock(return_value={"number": 7})
             mock_client_cls.return_value = mock_instance
 
-            result = await agent.apply_fix_and_open_pr(
+            await agent.apply_fix_and_open_pr(
                 finding=f,
                 diff="+ # new",
                 owner="acme",
@@ -327,7 +353,7 @@ class TestApplyFixAndOpenPR:
             mock_instance.post_pr_review = AsyncMock(return_value={"id": 99})
             mock_client_cls.return_value = mock_instance
 
-            result = await agent.apply_fix_and_open_pr(
+            await agent.apply_fix_and_open_pr(
                 finding=f,
                 diff="+ # new",
                 owner="acme",

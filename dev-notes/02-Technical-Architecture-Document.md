@@ -19,7 +19,7 @@ GitHub ──webhook──▶ Ingestion Gateway ──▶ Event Queue ──▶ 
                                         Security Agent   Code Quality Agent  Testing Agent  Docs Agent
                                               │                 │                 │            │
                                               └────────┬────────┴────────┬────────┴────────────┘
-                                                        ▼                 
+                                                        ▼  
                                                  Aggregator Agent
                                                         │
                                         ┌───────────────┼───────────────┐

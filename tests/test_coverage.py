@@ -768,7 +768,7 @@ class TestTokenEconomicsFilters:
             repo_owner="o",
             repo_name="r",
         )
-        future = datetime(2099, 1, 1)
+        future = datetime(2099, 1, 1, tzinfo=UTC)
         spend_past = await token_economics.get_spend(since=future)
         assert spend_past["total_calls"] == 0
 
@@ -1133,7 +1133,7 @@ class TestOrchestratorExtra:
             raise RuntimeError("boom")
 
         orch = Orchestrator(
-            queue=services["queue"] if "queue" in services else None,
+            queue=services.get("queue"),
             semantic_index=services["index"],
             token_economics=services["token_economics"],
             audit_store=services["audit"],
@@ -3667,7 +3667,7 @@ class TestOrchestratorTimeout:
         run = orch.get_run(run_id)
         assert run is not None
         # All specialists should be marked as failed (not registered)
-        for name, result in run.specialist_results.items():
+        for result in run.specialist_results.values():
             assert result.status == "failed"
 
 

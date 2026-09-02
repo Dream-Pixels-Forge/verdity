@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 # ── Schema validation helpers ─────────────────────────────────────────
 
+
 def _extract_json_from_text(text: str) -> str:
     """Extract JSON from text that may contain markdown code fences."""
     # Try to find JSON in code blocks
@@ -55,7 +56,7 @@ def _validate_json_against_schema(data: dict[str, Any], schema: dict[str, Any]) 
             expected_type = properties[field].get("type")
             if expected_type == "string" and not isinstance(value, str):
                 errors.append(f"Field '{field}' should be string, got {type(value).__name__}")
-            elif expected_type == "number" and not isinstance(value, (int, float)):
+            elif expected_type == "number" and not isinstance(value, int | float):
                 errors.append(f"Field '{field}' should be number, got {type(value).__name__}")
             elif expected_type == "boolean" and not isinstance(value, bool):
                 errors.append(f"Field '{field}' should be boolean, got {type(value).__name__}")
@@ -69,6 +70,7 @@ def _validate_json_against_schema(data: dict[str, Any], schema: dict[str, Any]) 
 
 # ── Response dataclass ────────────────────────────────────────────────
 
+
 @dataclass
 class LLMResponse:
     """Structured response from an LLM call."""
@@ -81,6 +83,7 @@ class LLMResponse:
 
 
 # ── LLM Client ────────────────────────────────────────────────────────
+
 
 class LLMClient:
     """

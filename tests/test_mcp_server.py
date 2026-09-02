@@ -1,4 +1,5 @@
 """Tests for MCP Server module."""
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -55,8 +56,7 @@ class TestMCPServer:
             mock_agent.return_value = mock_instance
 
             result = await server.call_tool(
-                "review_security",
-                {"diff": "test diff", "file_path": "test.py"}
+                "review_security", {"diff": "test diff", "file_path": "test.py"}
             )
             assert "findings" in result
             assert result["agent"] == "security"
@@ -73,8 +73,7 @@ class TestMCPServer:
             mock_agent.return_value = mock_instance
 
             result = await server.call_tool(
-                "review_quality",
-                {"diff": "test diff", "file_path": "test.py"}
+                "review_quality", {"diff": "test diff", "file_path": "test.py"}
             )
             assert "findings" in result
             assert result["agent"] == "quality"
@@ -91,8 +90,7 @@ class TestMCPServer:
             mock_agent.return_value = mock_instance
 
             result = await server.call_tool(
-                "review_testing",
-                {"diff": "test diff", "file_path": "test.py"}
+                "review_testing", {"diff": "test diff", "file_path": "test.py"}
             )
             assert "findings" in result
             assert result["agent"] == "testing"
@@ -109,8 +107,7 @@ class TestMCPServer:
             mock_agent.return_value = mock_instance
 
             result = await server.call_tool(
-                "review_documentation",
-                {"diff": "test diff", "file_path": "test.py"}
+                "review_documentation", {"diff": "test diff", "file_path": "test.py"}
             )
             assert "findings" in result
             assert result["agent"] == "documentation"
@@ -125,8 +122,7 @@ class TestMCPServer:
             mock_orchestrator.review = AsyncMock(return_value=mock_result)
 
             result = await server.call_tool(
-                "review_full",
-                {"diff": "test diff", "file_path": "test.py"}
+                "review_full", {"diff": "test diff", "file_path": "test.py"}
             )
             assert "findings" in result
             assert result["agent"] == "full"
@@ -148,8 +144,8 @@ class TestMCPServer:
                 "generate_fix",
                 {
                     "finding": {"rule_id": "test", "message": "test", "file_path": "test.py"},
-                    "diff": "test diff"
-                }
+                    "diff": "test diff",
+                },
             )
             assert "fix" in result
             assert "finding" in result

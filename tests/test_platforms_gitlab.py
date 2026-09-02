@@ -216,6 +216,7 @@ class TestGitLabPlatformName:
     def test_is_subclass_of_platform(self):
         """GitLabPlatform inherits from Platform."""
         from verdity.platforms.base import Platform
+
         assert issubclass(GitLabPlatform, Platform)
 
     def test_repr_includes_class_and_platform(self):
@@ -241,9 +242,7 @@ class TestGitLabPostComment:
         mock_http.__aexit__ = AsyncMock(return_value=False)
 
         with patch("verdity.platforms.gitlab.httpx.AsyncClient", return_value=mock_http):
-            result = await platform.post_comment(
-                owner="ns", repo="proj", number=10, body="hello"
-            )
+            result = await platform.post_comment(owner="ns", repo="proj", number=10, body="hello")
         assert result == {"id": 1, "body": "ok"}
         call_args = mock_http.post.call_args
         assert "ns/proj" in call_args.args[0]
