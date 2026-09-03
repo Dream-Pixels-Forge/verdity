@@ -32,11 +32,15 @@ Thumbs.db
 # Test coverage
 .htmlcov/
 .coverage
+.coverage.*
 coverage.xml
 .pytest_cache/
 pytest-cache-files-*
 # Coverage annotate sidecar files (coverage.py uses `<file>,cover` naming)
 *,cover
+# Stray coverage data directory created when COVERAGE_FILE
+# is set to a path with a drive letter
+.coverage.C/
 
 # Test temp DBs
 tests/.verdity-tests/
