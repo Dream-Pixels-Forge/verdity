@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] — 2026-09-03
+
+### Changed
+- **CI hardening** — Split CI into a dedicated `lint` job and a `test` matrix running on **ubuntu + windows × Python 3.11 / 3.12 / 3.13**. Ruff format and lint are now gated on every push and PR.
+- **Pre-commit hooks** — Added `.pre-commit-config.yaml` running `ruff format`, `ruff check --fix`, and safety hooks (merge-conflict, yaml, EOF, trailing-whitespace, mixed line endings) on every commit.
+- **Ruff configuration** — Tightened `[tool.ruff.lint]` with explicit `select = [E, W, F, I, B, UP, SIM, C4, DTZ, RET, PERF, RUF]`; per-file ignores for defensive code (BLE001) and test scaffolding (RUF012, B017, DTZ005).
+- **Modernized source** for the stricter rule set: `enum.StrEnum` migration, `isinstance(x, A | B)`, `contextlib.suppress`, `raise X from err`, `zip(strict=True)`, `for v in dict.values()`. All 703 tests still pass at 100% coverage on Python 3.12 / 3.13.
+- Pinned `coverage>=7.16.0` in dev dependencies.
+
+### Tests
+- 100% coverage on every module (Python 3.12, 3.13, windows + linux).
+
 ## [0.4.0] — 2026-09-02
 
 ### Added

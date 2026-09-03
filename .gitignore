@@ -35,6 +35,8 @@ Thumbs.db
 coverage.xml
 .pytest_cache/
 pytest-cache-files-*
+# Coverage annotate sidecar files (coverage.py uses `<file>,cover` naming)
+*,cover
 
 # Test temp DBs
 tests/.verdity-tests/
