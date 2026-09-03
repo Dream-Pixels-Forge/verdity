@@ -41,6 +41,7 @@ X-GitHub-Delivery: <uuid>
 ```python
 import hmac, hashlib
 
+
 def verify_signature(secret: bytes, raw_body: bytes, signature_header: str) -> bool:
     if not signature_header or not signature_header.startswith("sha256="):
         return False

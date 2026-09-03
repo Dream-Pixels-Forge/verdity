@@ -8,7 +8,9 @@
 
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.9
+    # Keep in sync with the dev-dep pin in pyproject.toml
+    # (ruff>=0.6,<0.17). CI and local must produce identical output.
+    rev: v0.16.5
     hooks:
       # Run the formatter first — fix what's auto-fixable, then complain
       # about what isn't.

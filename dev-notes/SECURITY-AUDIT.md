@@ -38,9 +38,12 @@ Verdity implements strong security controls for an AI-powered PR review system. 
 _DELIVERY_CACHE_TTL_SECONDS = 24 * 3600
 _eviction_interval_seconds = 300
 
+
 def _cleanup_delivery_cache(state):
     now = time.time()
-    expired = [k for k, ts in state._delivery_cache_ts.items() if now - ts > _DELIVERY_CACHE_TTL_SECONDS]
+    expired = [
+        k for k, ts in state._delivery_cache_ts.items() if now - ts > _DELIVERY_CACHE_TTL_SECONDS
+    ]
     for k in expired:
         state.delivery_ids.discard(k)
         state._delivery_cache_ts.pop(k, None)
@@ -61,6 +64,7 @@ def _cleanup_delivery_cache(state):
 
 ```python
 MAX_WEBHOOK_BODY_BYTES = 10 * 1024 * 1024  # 10 MiB
+
 
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
