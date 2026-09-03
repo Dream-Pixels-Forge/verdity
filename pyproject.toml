@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "verdity"
-version = "0.4.2"
+version = "0.4.3"
 description = "Verdity — AI-Powered Pull Request Review System with MCP integration, full-codebase context, agentic fix mode, multi-platform webhooks, and adversarial review"
 readme = "README.md"
 license = {text = "MIT"}

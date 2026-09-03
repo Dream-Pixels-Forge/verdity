@@ -730,6 +730,79 @@ async def test_run_worker_registers_all_specialists():
 
 
 @pytest.mark.asyncio
+async def test_run_worker_handles_windows_not_implemented_error():
+    """On Windows, loop.add_signal_handler raises NotImplementedError.
+
+    _run_worker() must catch the exception, log a warning, and continue
+    running the worker (signals fall through to the default Python
+    handler which interrupts the run loop).
+    """
+    from verdity.worker import _run_worker
+
+    mock_worker = MagicMock()
+    mock_worker.run_forever = AsyncMock()
+    mock_worker.shutdown = AsyncMock()
+
+    args = type(
+        "Args",
+        (),
+        {
+            "queue_dsn": "sqlite:///test.db",
+            "audit_path": "test_audit.db",
+            "max_concurrent": 2,
+            "log_level": "DEBUG",
+        },
+    )()
+
+    with (
+        patch("verdity.audit_store.AuditStore") as MockAudit,
+        patch("verdity.semantic_index.SemanticIndex") as MockIndex,
+    ):
+        mock_audit = MagicMock()
+        mock_audit.connect = AsyncMock()
+        mock_audit.close = AsyncMock()
+        MockAudit.return_value = mock_audit
+
+        mock_index = MagicMock()
+        mock_index.connect = AsyncMock()
+        mock_index.close = AsyncMock()
+        MockIndex.return_value = mock_index
+
+        with (
+            patch("verdity.token_economics.TokenEconomicsService") as MockTE,
+            patch("verdity.worker.EventQueue") as MockQueue,
+            patch("verdity.worker.Worker", return_value=mock_worker),
+            patch("verdity.worker.asyncio.get_running_loop") as mock_loop,
+            patch("verdity.worker.asyncio.run") as mock_run,
+        ):
+            mock_te = MagicMock()
+            mock_te.connect = AsyncMock()
+            mock_te.close = AsyncMock()
+            MockTE.return_value = mock_te
+
+            mock_queue = MagicMock()
+            mock_queue.connect = AsyncMock()
+            mock_queue.close = AsyncMock()
+            MockQueue.return_value = mock_queue
+
+            # Simulate Windows: add_signal_handler raises NotImplementedError
+            mock_loop.return_value.add_signal_handler = MagicMock(
+                side_effect=NotImplementedError("add_signal_handler is not supported on Windows")
+            )
+
+            async def consume_coro(coro):
+                await coro
+
+            mock_run.side_effect = consume_coro
+            # Must not raise — the worker must gracefully skip signal registration
+            await _run_worker(args)
+
+    # Worker.run_forever was still called — we proceed past the failed
+    # signal handler registration.
+    mock_worker.run_forever.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_run_forever_full_loop():
     """run_forever processes messages until shutdown is called."""
     from verdity.worker import Worker

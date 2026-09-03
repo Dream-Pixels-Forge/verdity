@@ -19,6 +19,7 @@ import asyncio
 import logging
 import signal
 import time
+from contextlib import suppress
 from typing import Any, Self
 
 from verdity.event_queue import EventQueue
@@ -230,10 +231,16 @@ async def _run_worker(args: Any) -> None:  # pragma: no cover
         max_concurrent=args.max_concurrent,
     )
 
-    # Register signal handlers
+    # Register signal handlers. asyncio.add_signal_handler is only
+    # supported on Unix; on Windows it raises NotImplementedError, so
+    # we suppress the exception. Workers on Windows will fall back to
+    # SIGINT/SIGTERM being delivered to the default Python handler
+    # (which interrupts the run loop) — they still terminate, just
+    # without the cooperative drain-and-shutdown path.
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, lambda s=sig: asyncio.create_task(worker.shutdown(s)))
+        with suppress(NotImplementedError):
+            loop.add_signal_handler(sig, lambda s=sig: asyncio.create_task(worker.shutdown(s)))
 
     await worker.run_forever()
 

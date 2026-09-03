@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] — 2026-09-03
+
+### Fixed
+- **Windows worker crash on startup** — `verdity-worker` previously
+  raised `NotImplementedError` on Windows because
+  `asyncio.AbstractEventLoop.add_signal_handler` is only implemented
+  on Unix. Wrapped the signal handler registration in a
+  `try/except NotImplementedError` so the worker logs a warning and
+  continues on Windows. Default Python signal handling still
+  interrupts the run loop on Ctrl+C, so termination works.
+- Added test `test_run_worker_handles_windows_not_implemented_error`
+  to lock in the regression.
+
 ## [0.4.2] — 2026-09-03
 
 ### Fixed
