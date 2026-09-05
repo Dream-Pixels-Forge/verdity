@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.5] — 2026-09-05
+
+### Added
+- **Verdity skill bundle** (`skills/verdity/`) — agent skill manifest (`SKILL.md`) and installation README. Installable via `npx skills add github.com/Dream-Pixels-Forge/verdity/tree/main/skills/verdity`. Includes the manifest with description, installation, usage examples, finding types, confidence levels, trust boundary, and anti-patterns; the README covers installation, quick start, configuration, and CI/CD integration. `MANIFEST.in` updated with `recursive-include skills *` so the bundle ships with PyPI source distributions.
+
+### Fixed
+- **Skill install command** — `skills/verdity/SKILL.md` and `skills/verdity/README.md` documented the deprecated `npx add verdity` command in 4 places. Replaced all occurrences with the project's standardised GitHub-path pattern: `npx skills add github.com/Dream-Pixels-Forge/verdity/tree/main/skills/verdity`. Aligns the skill bundle's self-documentation with the root `README.md`.
+
 ## [0.4.4] — 2026-09-05
 
 ### Fixed
