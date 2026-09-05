@@ -305,6 +305,34 @@ pip install -e ".[dev]"
 pytest -v
 ```
 
+### Install via npx skills add (GitHub)
+
+```bash
+# Install the Verdity skill using researched format
+npx skills add github.com/Dream-Pixels-Forge/verdity/tree/main/skills/verdity
+```
+
+### Install the Verdity skill
+
+```bash
+# Install the Verdity skill using npx add (recommended)
+npx add verdity
+
+# Verify installation
+verdity --version
+```
+
+### Alternative installation methods
+
+```bash
+# Clone and install manually
+git clone https://github.com/Dream-Pixels-Forge/verdity.git
+cd verdity
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+```
+
 ---
 
 ## 🌟 Powered by Verdity
