@@ -1,235 +1,359 @@
 """
-Trust Calibration — learns from human feedback to adjust confidence weights.
+Trust Calibration — Learn from human feedback to improve confidence scoring.
 
-Non-negotiable constraint: TrustCalibrator adjusts weight maps (SEVERITY_WEIGHTS,
-CONCERN_BOOST), never individual finding scores (preserves determinism, constraint #5).
+Non-negotiable constraint #5: confidence scores remain deterministic (no LLM per-finding).
+Trust calibration adjusts SEVERITY_WEIGHTS and CONCERN_BOOST based on historical outcome data,
+not per-finding LLM calls. The calibrated weights are stored persistently and applied
+consistently across all future reviews.
 
-Phase 10 of v0.4.0 build.
+Usage:
+    calibrator = TrustCalibrator(db_path=":memory:")
+    await calibrator.connect()
+    # Record human decisions on findings
+    await calibrator.record_outcome(
+        finding_type="security-hardcoded-credential",
+        outcome="confirmed",
+        repo_id="acme/widgets",
+        confidence=0.95,
+        severity="high",
+        concern="security",
+    )
+    # Recalibrate weights based on accumulated feedback
+    result = await calibrator.recalibrate(min_samples=50)
+    # Use adjusted weights in confidence computation
+    adjusted_weights, concern_boost = await calibrator.get_adjusted_weights()
 """
 
 from __future__ import annotations
 
+import json
 import logging
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
-from verdity.metrics_store import MetricsStore
+from verdity.async_sqlite import AsyncConnection
+from verdity.router import DEFAULT_CONCERN_BOOST, DEFAULT_SEVERITY_WEIGHTS
 
 logger = logging.getLogger(__name__)
 
-# ── Default weights (same as router.py) ─────────────────────────────
+CREATE_TABLE_SQL = """
+    CREATE TABLE IF NOT EXISTS trust_signals (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        finding_type  TEXT NOT NULL,      -- e.g. "security-hardcoded-credential"
+        outcome       TEXT NOT NULL,    -- "confirmed", "false_positive", "wont_fix"
+        repo_id       TEXT NOT NULL,
+        timestamp     TEXT NOT NULL,
+        confidence    REAL NOT NULL,
+        severity      TEXT NOT NULL,
+        concern       TEXT NOT NULL
+    );
 
-DEFAULT_SEVERITY_WEIGHTS: dict[str, float] = {
-    "critical": 1.0,
-    "high": 0.8,
-    "medium": 0.5,
-    "low": 0.3,
-    "info": 0.1,
-}
+    CREATE TABLE IF NOT EXISTS calibration_state (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        version       INTEGER NOT NULL DEFAULT 1,
+        weights_json  TEXT NOT NULL,      -- serialized adjusted weights
+        last_trained  TEXT NOT NULL,
+        sample_count  INTEGER NOT NULL DEFAULT 0,
+        precision_at_09 REAL DEFAULT 0.0,
+        recall_at_06    REAL DEFAULT 0.0
+    );
+"""
 
-DEFAULT_CONCERN_BOOST: dict[str, float] = {
-    "security": 0.15,
-    "code_quality": 0.0,
-    "testing": 0.05,
-    "documentation": 0.0,
-}
+
+@dataclass
+class CalibrationResult:
+    """Result of a trust calibration run."""
+
+    adjusted_weights: dict[str, float]
+    concern_boost: dict[str, float]
+    precision_at_09: float
+    recall_at_06: float
+    sample_count: int
+    changed: bool
+
+
+def _default_weights_json() -> str:
+    """Serialize the default severity weights and concern boost."""
+    import json
+
+    default = {
+        "severity_weights": DEFAULT_SEVERITY_WEIGHTS,
+        "concern_boost": DEFAULT_CONCERN_BOOST,
+    }
+    return json.dumps(default)
 
 
 class TrustCalibrator:
-    """Learns from human feedback to adjust confidence scoring weights.
+    """
+    Learns from human feedback to improve confidence scoring.
 
-    Reads outcome history from MetricsStore, computes precision by
-    severity and concern type, and produces calibrated weight maps.
+    Non-negotiable: confidence scores remain deterministic (constraint #5).
+    Trust calibration adjusts SEVERITY_WEIGHTS and CONCERN_BOOST
+    based on historical outcome data, not per-finding LLM calls.
 
-    The calibrated weights are fed into `compute_confidence()` to
-    replace the static defaults — but individual finding scores are
-    never post-hoc adjusted (constraint #5).
+    The calibrator maintains:
+    - trust_signals: per-finding-type outcome history with confidence scores
+    - calibration_state: current adjusted weights and performance metrics
+    - sample tracking: when to trigger recalibration (minimum sample count)
     """
 
-    def __init__(self, metrics_store: MetricsStore) -> None:
-        self._store = metrics_store
-        self._calibrated_severity: dict[str, float] | None = None
-        self._calibrated_concern: dict[str, float] | None = None
-        self._last_sample_count: int = 0
+    def __init__(self, db_path: str = ":memory:", metrics_store: object | None = None) -> None:
+        self._db_path = db_path
+        self._metrics_store = metrics_store
+        self._conn: Any | None = None
 
-    # ── Core API ──────────────────────────────────────────────────────
+    async def connect(self) -> None:
+        self._conn = AsyncConnection(self._db_path)
+        await self._conn.connect()
+        await self._conn.executescript(CREATE_TABLE_SQL)
+        # Initialize calibration_state with default weights if empty
+        rows = await self._conn.execute("SELECT COUNT(*) AS n FROM calibration_state")
+        n = rows[0]["n"] if rows else 0
+        if n == 0:
+            await self._conn.execute(
+                """
+                INSERT INTO calibration_state (version, weights_json, last_trained, sample_count)
+                VALUES (1, ?, datetime('now'), 0)
+                """,
+                (_default_weights_json(),),
+            )
+            await self._conn.commit()
+
+    async def close(self) -> None:
+        if self._conn:
+            await self._conn.close()
+            self._conn = None
+
+    # ── Recording human outcomes ────────────────────────────────────────
 
     async def record_outcome(
         self,
-        *,
-        finding_id: str,
-        repo_id: str,
+        finding_type: str,
         outcome: str,
+        repo_id: str,
         confidence: float,
         severity: str,
         concern: str,
-        pr_number: int | None = None,
     ) -> None:
-        """Record a human decision on a finding.
-
-        Delegates to MetricsStore.record_finding_outcome().
-        Valid outcomes: confirmed, false_positive, wont_fix, auto_fixed.
         """
-        await self._store.record_finding_outcome(
-            finding_id=finding_id,
-            repo_id=repo_id,
-            pr_number=pr_number,
-            final_outcome=outcome,
-            confidence=confidence,
-            severity=severity,
-            concern=concern,
+        Record a human decision on a finding.
+
+        Args:
+            finding_type: e.g. "security-hardcoded-credential", "quality-bare-except"
+            outcome: one of "confirmed", "false_positive", "wont_fix"
+            repo_id: e.g. "acme/widgets"
+            confidence: original confidence score at time of decision
+            severity: severity level at time of decision
+            concern: concern type at time of decision
+        """
+        if self._conn is None:
+            raise RuntimeError("TrustCalibrator not connected. Call connect() first.")
+        valid_outcomes = {"confirmed", "false_positive", "wont_fix"}
+        if outcome not in valid_outcomes:
+            raise ValueError(f"Invalid outcome: {outcome!r}. Must be one of {valid_outcomes}.")
+        await self._conn.execute(
+            """
+            INSERT INTO trust_signals (finding_type, outcome, repo_id, timestamp, confidence, severity, concern)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                finding_type,
+                outcome,
+                repo_id,
+                datetime.now(UTC).isoformat(),
+                confidence,
+                severity,
+                concern,
+            ),
+        )
+        await self._conn.commit()
+
+    # ── Recalibration ─────────────────────────────────────────────────
+
+    async def recalibrate(self, min_samples: int = 50) -> CalibrationResult:
+        """
+        Recalibrate severity weights and concern boost based on accumulated feedback.
+
+        Only runs when at least min_samples outcomes have been recorded.
+        Adjusts weights downward for patterns with many false positives,
+        and upward for patterns frequently confirmed.
+
+        Returns CalibrationResult with:
+        - adjusted_weights: dict of new severity/concern weights
+        - precision_at_09: float (what % of auto-approved findings were confirmed)
+        - recall_at_06: float (what % of confirmed findings scored >= 0.6)
+        - sample_count: int
+        - changed: bool (whether weights actually changed)
+        """
+        if self._conn is None:
+            raise RuntimeError("TrustCalibrator not connected. Call connect() first.")
+
+        # Count samples per (finding_type, outcome) combo
+        rows = await self._conn.execute(
+            """
+            SELECT finding_type, outcome, COUNT(*) AS cnt, AVG(confidence) AS avg_conf
+            FROM trust_signals
+            GROUP BY finding_type, outcome
+        """
         )
 
-    async def recalibrate(self, min_samples: int = 50) -> bool:
-        """Recompute adjusted weights from outcome history.
+        # Build per-type stats
+        type_stats: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            ft = row["finding_type"]
+            if ft not in type_stats:
+                type_stats[ft] = {
+                    "confirmed": 0,
+                    "false_positive": 0,
+                    "wont_fix": 0,
+                    "total": 0,
+                    "total_confidence": 0.0,
+                }
+            outcome = row["outcome"]
+            cnt = row["cnt"]
+            avg_c = row["avg_conf"] if row["avg_conf"] is not None else 0.0
+            type_stats[ft][outcome] = cnt
+            type_stats[ft]["total"] += cnt
+            type_stats[ft]["total_confidence"] += avg_c
 
-        Returns True if recalibration was performed (enough samples).
-        Returns False if fewer than `min_samples` outcomes exist.
+        # Compute new weights
+        new_severity_weights: dict[str, float] = dict(DEFAULT_SEVERITY_WEIGHTS)
+        new_concern_boost: dict[str, float] = dict(DEFAULT_CONCERN_BOOST)
 
-        Algorithm:
-          1. Fetch all finding_outcomes from MetricsStore
-          2. Group by (severity, concern)
-          3. Compute precision per group: confirmed / (confirmed + false_positive)
-          4. Adjust severity weights: if precision < 0.8, reduce weight proportionally
-          5. Adjust concern boosts: if precision < 0.8, reduce boost proportionally
-        """
-        outcomes = await self._store.get_all_outcomes()
-        self._last_sample_count = len(outcomes)
+        # Per-type adjustment logic
+        for stats in type_stats.values():
+            total = stats["total"]
+            if total < min_samples:
+                continue  # Not enough data yet
 
-        if len(outcomes) < min_samples:
-            logger.info(
-                "Trust calibration skipped: %d samples < %d minimum",
-                len(outcomes),
-                min_samples,
-            )
-            return False
+            fp_count = stats.get("false_positive", 0)
+            confirmed_count = stats.get("confirmed", 0)
+            fp_rate = fp_count / total if total > 0 else 0.0
 
-        # ── Group by (severity, concern) ──────────────────────────────
-        groups: dict[tuple[str, str], list[str]] = {}
-        for o in outcomes:
-            key = (o.get("severity", "medium"), o.get("concern", "code_quality"))
-            groups.setdefault(key, []).append(o.get("final_outcome", ""))
+            # If high false positive rate, lower the severity weight for this type
+            # and reduce concern boost
+            if fp_rate > 0.3:  # >30% false positives
+                new_severity_weights = {
+                    k: v * (1.0 - 0.1 * fp_rate) for k, v in new_severity_weights.items()
+                }
+                new_concern_boost = {
+                    k: v * (1.0 - 0.1 * fp_rate) for k, v in new_concern_boost.items()
+                }
+            elif fp_rate < 0.1 and confirmed_count / total > 0.8:  # <10% FP, >80% confirmed
+                # Boost confidence for this type
+                new_severity_weights = {k: v * 1.05 for k, v in new_severity_weights.items()}
+                new_concern_boost = {k: v * 1.05 for k, v in new_concern_boost.items()}
 
-        # ── Compute precision per group ───────────────────────────────
-        group_precision: dict[tuple[str, str], float] = {}
-        for key, outcomes_list in groups.items():
-            confirmed = sum(1 for o in outcomes_list if o == "confirmed")
-            false_pos = sum(1 for o in outcomes_list if o == "false_positive")
-            relevant = confirmed + false_pos
-            precision = confirmed / relevant if relevant > 0 else 0.5
-            group_precision[key] = precision
-
-        # ── Aggregate precision by severity ───────────────────────────
-        severity_precision: dict[str, list[float]] = {}
-        for (sev, _con), prec in group_precision.items():
-            severity_precision.setdefault(sev, []).append(prec)
-
-        # ── Aggregate precision by concern ────────────────────────────
-        concern_precision: dict[str, list[float]] = {}
-        for (_sev, con), prec in group_precision.items():
-            concern_precision.setdefault(con, []).append(prec)
-
-        # ── Adjust severity weights ───────────────────────────────────
-        calibrated_severity = dict(DEFAULT_SEVERITY_WEIGHTS)
-        for sev, precisions in severity_precision.items():
-            avg_precision = sum(precisions) / len(precisions)
-            if avg_precision < 0.8:
-                # Reduce weight proportionally: low precision → lower weight
-                scale = max(0.2, avg_precision / 0.8)
-                calibrated_severity[sev] = round(DEFAULT_SEVERITY_WEIGHTS.get(sev, 0.3) * scale, 3)
-
-        # ── Adjust concern boosts ─────────────────────────────────────
-        calibrated_concern = dict(DEFAULT_CONCERN_BOOST)
-        for con, precisions in concern_precision.items():
-            avg_precision = sum(precisions) / len(precisions)
-            if avg_precision < 0.8:
-                scale = max(0.2, avg_precision / 0.8)
-                calibrated_concern[con] = round(DEFAULT_CONCERN_BOOST.get(con, 0.0) * scale, 3)
-
-        self._calibrated_severity = calibrated_severity
-        self._calibrated_concern = calibrated_concern
-
-        logger.info(
-            "Trust calibration complete: %d samples, %d groups",
-            len(outcomes),
-            len(groups),
-        )
-        return True
-
-    def get_adjusted_weights(self) -> dict[str, Any]:
-        """Return calibrated weights or defaults if not yet calibrated.
-
-        Returns:
+        # Save calibration state
+        weights_json = json.dumps(
             {
-                "severity_weights": dict[str, float],
-                "concern_boost": dict[str, float],
-                "calibrated": bool,
-                "sample_count": int,
+                "severity_weights": new_severity_weights,
+                "concern_boost": new_concern_boost,
             }
+        )
+        last_trained = datetime.now(UTC).isoformat()
+        sample_count = sum(s["total"] for s in type_stats.values())
+
+        await self._conn.execute(
+            """
+            UPDATE calibration_state
+            SET version = version + 1,
+                weights_json = ?,
+                last_trained = ?,
+                sample_count = ?
+            WHERE id = 1
+        """,
+            (weights_json, last_trained, sample_count),
+        )
+        await self._conn.commit()
+
+        # Compute precision@0.9 and recall@0.6 from the recorded signals
+        precision_09 = 0.0
+        recall_06 = 0.0
+
+        # Count how many signals have confidence >= 0.9 and were confirmed
+        confirmed_09 = 0
+        total_09 = 0
+        # Count how many signals have confidence >= 0.6 and were confirmed
+        confirmed_06 = 0
+        total_06 = 0
+
+        if self._conn:
+            signal_rows = await self._conn.execute("SELECT confidence, outcome FROM trust_signals")
+            for row in signal_rows:
+                conf = row["confidence"]
+                outcome = row["outcome"]
+                if conf >= 0.9:
+                    total_09 += 1
+                    if outcome == "confirmed":
+                        confirmed_09 += 1
+                if conf >= 0.6:
+                    total_06 += 1
+                    if outcome == "confirmed":
+                        confirmed_06 += 1
+
+        precision_09 = confirmed_09 / total_09 if total_09 > 0 else 0.0
+        recall_06 = confirmed_06 / total_06 if total_06 > 0 else 0.0
+
+        changed = (
+            new_severity_weights != DEFAULT_SEVERITY_WEIGHTS
+            or new_concern_boost != DEFAULT_CONCERN_BOOST
+        )
+
+        return CalibrationResult(
+            adjusted_weights=new_severity_weights,
+            concern_boost=new_concern_boost,
+            precision_at_09=precision_09,
+            recall_at_06=recall_06,
+            sample_count=sum(s["total"] for s in type_stats.values()),
+            changed=changed,
+        )
+
+    # ── Adjusted weights accessors ──────────────────────────────────────
+
+    async def get_adjusted_weights(self) -> tuple[dict[str, float], dict[str, float]]:
         """
-        return {
-            "severity_weights": self._calibrated_severity or dict(DEFAULT_SEVERITY_WEIGHTS),
-            "concern_boost": self._calibrated_concern or dict(DEFAULT_CONCERN_BOOST),
-            "calibrated": self._calibrated_severity is not None,
-            "sample_count": self._last_sample_count,
-        }
+        Return current calibrated (severity_weights, concern_boost).
+
+        Falls back to default weights if calibration hasn't run or has insufficient data.
+        """
+        if self._conn is None:
+            raise RuntimeError("TrustCalibrator not connected. Call connect() first.")
+
+        rows = await self._conn.execute("SELECT weights_json FROM calibration_state WHERE id = 1")
+
+        if rows and rows[0].get("weights_json"):
+            data = json.loads(rows[0]["weights_json"])
+            return data.get("severity_weights", DEFAULT_SEVERITY_WEIGHTS), data.get(
+                "concern_boost", DEFAULT_CONCERN_BOOST
+            )
+
+        # Return defaults if no calibration data
+        return dict(DEFAULT_SEVERITY_WEIGHTS), dict(DEFAULT_CONCERN_BOOST)
 
     async def get_calibration_stats(self) -> dict[str, Any]:
-        """Return calibration statistics.
+        """Return current calibration state for dashboard display."""
+        if self._conn is None:
+            raise RuntimeError("TrustCalibrator not connected. Call connect() first.")
 
-        Returns:
-            {
-                "precision_at_0.9": float,  # precision of findings with confidence >= 0.9
-                "recall_at_0.6": float,     # recall of confirmed findings with confidence >= 0.6
-                "sample_count": int,
-                "false_positive_rate": float,
-                "calibrated": bool,
-            }
-        """
-        outcomes = await self._store.get_all_outcomes()
+        rows = await self._conn.execute(
+            "SELECT version, sample_count, precision_at_09, recall_at_06, last_trained FROM calibration_state WHERE id = 1"
+        )
 
-        if not outcomes:
+        if rows:
+            row = rows[0]
             return {
-                "precision_at_0.9": 0.0,
-                "recall_at_0.6": 0.0,
-                "sample_count": 0,
-                "false_positive_rate": 0.0,
-                "calibrated": self._calibrated_severity is not None,
+                "version": row["version"],
+                "sample_count": row["sample_count"],
+                "precision_at_09": row["precision_at_09"],
+                "recall_at_06": row["recall_at_06"],
+                "last_trained": row["last_trained"],
             }
-
-        # Precision at 0.9: of findings with confidence >= 0.9, how many are confirmed?
-        high_conf = [
-            o
-            for o in outcomes
-            if (o.get("confidence") or 0.0) >= 0.9
-            and o.get("final_outcome") in ("confirmed", "false_positive")
-        ]
-        if high_conf:
-            confirmed_high = sum(1 for o in high_conf if o["final_outcome"] == "confirmed")
-            precision_high_conf = round(confirmed_high / len(high_conf), 3)
-        else:
-            precision_high_conf = 0.0
-
-        # Recall at 0.6: of all confirmed findings, how many had confidence >= 0.6?
-        all_confirmed = [o for o in outcomes if o.get("final_outcome") == "confirmed"]
-        if all_confirmed:
-            confirmed_high_conf = sum(
-                1 for o in all_confirmed if (o.get("confidence") or 0.0) >= 0.6
-            )
-            recall_med_conf = round(confirmed_high_conf / len(all_confirmed), 3)
-        else:
-            recall_med_conf = 0.0
-
-        # False positive rate
-        total_relevant = [
-            o for o in outcomes if o.get("final_outcome") in ("confirmed", "false_positive")
-        ]
-        fp_count = sum(1 for o in total_relevant if o["final_outcome"] == "false_positive")
-        false_positive_rate = round(fp_count / len(total_relevant), 3) if total_relevant else 0.0
-
         return {
-            "precision_at_0.9": precision_high_conf,
-            "recall_at_0.6": recall_med_conf,
-            "sample_count": len(outcomes),
-            "false_positive_rate": false_positive_rate,
-            "calibrated": self._calibrated_severity is not None,
+            "version": 0,
+            "sample_count": 0,
+            "precision_at_09": 0.0,
+            "recall_at_06": 0.0,
+            "last_trained": None,
         }

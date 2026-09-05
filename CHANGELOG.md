@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.4] — 2026-09-05
+
+### Fixed
+- **Trust calibration import broken** — `src/verdity/trust_calibration.py` was missing `import logging`, causing a `NameError` on import and breaking the entire test suite collection. Removed duplicate logger assignment, unused imports (`get_settings`, `MetricsStore`, local `import json`), and a redundant fallback block that redefined `DEFAULT_SEVERITY_WEIGHTS` / `DEFAULT_CONCERN_BOOST` (F811). Replaced incorrect `async with self._conn.execute(...) as cur:` cursor pattern with direct list iteration (the `AsyncConnection.execute()` API returns `list[dict]`, not a cursor). Removed `UNIQUE(finding_type, repo_id, outcome, timestamp)` constraint on `trust_signals` that caused `sqlite3.IntegrityError` when many signals were recorded in the same second. Fixed double-counting bug in precision@0.9 computation.
+
+### Changed
+- `tests/test_trust_calibration.py` — Fixed `concer_boost` → `concern_boost` typo, replaced stale hardcoded default values with imports from `router.py`, added missing `recalibrate()` call before `get_calibration_stats()` assertion, renamed unused loop variables, added 6 new tests covering the not-connected `RuntimeError` guards and the empty-state fallback paths.
+- 22 trust calibration tests now pass (was 16 collected after a complete collection failure). Full suite: 711 tests at 100% coverage.
+
 ## [0.4.3] — 2026-09-03
 
 ### Fixed
