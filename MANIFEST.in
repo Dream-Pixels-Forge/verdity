@@ -6,6 +6,7 @@ include CHANGELOG.md
 include .env.example
 include pyproject.toml
 recursive-include dev-notes *
+recursive-include skills *
 graft tests
 global-exclude __pycache__
 global-exclude *.py[cod]
