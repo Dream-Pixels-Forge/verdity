@@ -16,8 +16,8 @@ metadata:
 ## Quick Start
 
 ```bash
-# Install via npx add (from PyPI package)
-npx add verdity
+# Install via npx skills add (from GitHub)
+npx skills add github.com/Dream-Pixels-Forge/verdity/tree/main/skills/verdity
 
 # Verify installation
 verdity --version
@@ -35,10 +35,10 @@ Verdity is an AI-powered PR review and code security scanning system that detect
 
 ## Installation
 
-### Using npx add (recommended)
+### Using npx skills add (recommended)
 
 ```bash
-npx add verdity
+npx skills add github.com/Dream-Pixels-Forge/verdity/tree/main/skills/verdity
 
 # Verify
 verdity --version
@@ -98,7 +98,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: npx add verdity
+      - run: npx skills add github.com/Dream-Pixels-Forge/verdity/tree/main/skills/verdity
       - run: verdity-scan --pr ${{ github.event.pull_request.number }}
         env:
           VERDITY_TOKEN: ${{ secrets.VERDITY_TOKEN }}
