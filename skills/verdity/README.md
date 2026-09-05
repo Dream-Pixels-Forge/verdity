@@ -2,11 +2,11 @@
 
 ## Installation
 
-### Using npx add (recommended)
+### Using npx skills add (recommended)
 
 ```bash
-# Install the Verdity skill
-npx add verdity
+# Install the Verdity skill from GitHub
+npx skills add github.com/Dream-Pixels-Forge/verdity/tree/main/skills/verdity
 
 # Verify installation
 verdity --version
