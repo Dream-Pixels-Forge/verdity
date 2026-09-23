@@ -1,10 +1,12 @@
 """Tests for MCP Server module."""
 
+import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from verdity.mcp_server import MCPServer, create_mcp_server
+from verdity.schemas import ConcernType, Finding, Severity, SpecialistResponse
 
 
 class TestMCPServer:
@@ -49,9 +51,11 @@ class TestMCPServer:
         server = MCPServer()
         with patch("verdity.agents.security.SecurityAgent") as mock_agent:
             mock_instance = MagicMock()
-            mock_result = MagicMock()
-            mock_result.findings = []
-            mock_result.summary = "No findings"
+            mock_result = SpecialistResponse(
+                review_run_id=uuid.uuid4(),
+                specialist="security",
+                status="complete",
+            )
             mock_instance.run = AsyncMock(return_value=mock_result)
             mock_agent.return_value = mock_instance
 
@@ -62,13 +66,58 @@ class TestMCPServer:
             assert result["agent"] == "security"
 
     @pytest.mark.asyncio
+    async def test_review_security_real_response_surfaces_findings(self):
+        """Issue #8: a real SpecialistResponse (no MagicMock shape) must yield findings.
+
+        The old tests injected `.summary` via MagicMock, masking the fact that the
+        real model had no summary field — AttributeError was swallowed by the inner
+        except and every real review returned zero findings.
+        """
+        server = MCPServer()
+        real_response = SpecialistResponse(
+            review_run_id=uuid.uuid4(),
+            specialist="security",
+            status="complete",
+            findings=[
+                Finding(
+                    concern=ConcernType.SECURITY,
+                    severity=Severity.HIGH,
+                    file="app.py",
+                    line_start=3,
+                    line_end=3,
+                    summary="Potential HARDCODED PASSWORD detected",
+                    explanation='Pattern "password = \'" found in app.py:3.',
+                    confidence=0.9,
+                    agent_version="security-agent@0.1.0",
+                    prompt_hash="sha256:abc123",
+                )
+            ],
+        )
+        with patch("verdity.agents.security.SecurityAgent") as mock_agent:
+            mock_instance = MagicMock()
+            mock_instance.run = AsyncMock(return_value=real_response)
+            mock_agent.return_value = mock_instance
+
+            result = await server.call_tool(
+                "review_security", {"diff": "+ password = 'x'", "file_path": "app.py"}
+            )
+
+        assert "error" not in result
+        assert len(result["findings"]) == 1
+        assert result["findings"][0]["message"] == "Potential HARDCODED PASSWORD detected"
+        assert result["findings"][0]["severity"] == "high"
+        assert "summary" in result
+
+    @pytest.mark.asyncio
     async def test_call_tool_review_quality(self):
         server = MCPServer()
         with patch("verdity.agents.code_quality.CodeQualityAgent") as mock_agent:
             mock_instance = MagicMock()
-            mock_result = MagicMock()
-            mock_result.findings = []
-            mock_result.summary = "No findings"
+            mock_result = SpecialistResponse(
+                review_run_id=uuid.uuid4(),
+                specialist="quality",
+                status="complete",
+            )
             mock_instance.run = AsyncMock(return_value=mock_result)
             mock_agent.return_value = mock_instance
 
@@ -83,9 +132,11 @@ class TestMCPServer:
         server = MCPServer()
         with patch("verdity.agents.testing.TestingAgent") as mock_agent:
             mock_instance = MagicMock()
-            mock_result = MagicMock()
-            mock_result.findings = []
-            mock_result.summary = "No findings"
+            mock_result = SpecialistResponse(
+                review_run_id=uuid.uuid4(),
+                specialist="testing",
+                status="complete",
+            )
             mock_instance.run = AsyncMock(return_value=mock_result)
             mock_agent.return_value = mock_instance
 
@@ -100,9 +151,11 @@ class TestMCPServer:
         server = MCPServer()
         with patch("verdity.agents.documentation.DocumentationAgent") as mock_agent:
             mock_instance = MagicMock()
-            mock_result = MagicMock()
-            mock_result.findings = []
-            mock_result.summary = "No findings"
+            mock_result = SpecialistResponse(
+                review_run_id=uuid.uuid4(),
+                specialist="documentation",
+                status="complete",
+            )
             mock_instance.run = AsyncMock(return_value=mock_result)
             mock_agent.return_value = mock_instance
 
@@ -116,9 +169,11 @@ class TestMCPServer:
     async def test_call_tool_review_full(self):
         server = MCPServer()
         with patch.object(server, "_orchestrator") as mock_orchestrator:
-            mock_result = MagicMock()
-            mock_result.findings = []
-            mock_result.summary = "No findings"
+            mock_result = SpecialistResponse(
+                review_run_id=uuid.uuid4(),
+                specialist="full",
+                status="complete",
+            )
             mock_orchestrator.review = AsyncMock(return_value=mock_result)
 
             result = await server.call_tool(

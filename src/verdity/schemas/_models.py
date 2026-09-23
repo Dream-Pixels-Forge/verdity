@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field, StrictStr, field_validator
+from pydantic import BaseModel, Field, StrictStr, field_validator, model_validator
 
 # ── Trigger Types ────────────────────────────────────────────────────
 
@@ -167,6 +167,15 @@ class SpecialistResponse(BaseModel):
     tokens_used: dict[str, int] = Field(default_factory=dict)
     cost_usd: float = Field(default=0.0, ge=0)
     error: StrictStr | None = None
+    summary: StrictStr = ""
+
+    @model_validator(mode="after")
+    def derive_summary(self) -> SpecialistResponse:
+        """Derive a sensible summary from findings when none was provided."""
+        if not self.summary:
+            n = len(self.findings)
+            self.summary = "No findings" if n == 0 else f"{n} finding{'s' if n > 1 else ''}"
+        return self
 
 
 # ── Aggregator Output ─────────────────────────────────────────────────

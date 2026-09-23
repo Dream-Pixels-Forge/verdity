@@ -379,7 +379,13 @@ class MCPServer:
             ]
             return {"findings": findings, "summary": result.summary, "agent": "security"}
         except Exception as e:
-            return {"findings": [], "summary": str(e), "agent": "security", "error": str(e)}
+            return {
+                "findings": [],
+                "summary": str(e),
+                "agent": "security",
+                "error": str(e),
+                "status": "error",
+            }
 
     async def _review_quality(self, args: dict[str, Any]) -> dict[str, Any]:
         """Run code quality review."""
@@ -424,7 +430,13 @@ class MCPServer:
             ]
             return {"findings": findings, "summary": result.summary, "agent": "quality"}
         except Exception as e:
-            return {"findings": [], "summary": str(e), "agent": "quality", "error": str(e)}
+            return {
+                "findings": [],
+                "summary": str(e),
+                "agent": "quality",
+                "error": str(e),
+                "status": "error",
+            }
 
     async def _review_testing(self, args: dict[str, Any]) -> dict[str, Any]:
         """Run testing review."""
@@ -469,7 +481,13 @@ class MCPServer:
             ]
             return {"findings": findings, "summary": result.summary, "agent": "testing"}
         except Exception as e:
-            return {"findings": [], "summary": str(e), "agent": "testing", "error": str(e)}
+            return {
+                "findings": [],
+                "summary": str(e),
+                "agent": "testing",
+                "error": str(e),
+                "status": "error",
+            }
 
     async def _review_documentation(self, args: dict[str, Any]) -> dict[str, Any]:
         """Run documentation review."""
@@ -514,7 +532,13 @@ class MCPServer:
             ]
             return {"findings": findings, "summary": result.summary, "agent": "documentation"}
         except Exception as e:
-            return {"findings": [], "summary": str(e), "agent": "documentation", "error": str(e)}
+            return {
+                "findings": [],
+                "summary": str(e),
+                "agent": "documentation",
+                "error": str(e),
+                "status": "error",
+            }
 
     async def _review_full(self, args: dict[str, Any]) -> dict[str, Any]:
         """Run full review with all agents."""
@@ -553,7 +577,13 @@ class MCPServer:
             ]
             return {"findings": findings, "summary": result.summary, "agent": "full"}
         except Exception as e:
-            return {"findings": [], "summary": str(e), "agent": "full", "error": str(e)}
+            return {
+                "findings": [],
+                "summary": str(e),
+                "agent": "full",
+                "error": str(e),
+                "status": "error",
+            }
 
     async def _generate_fix(self, args: dict[str, Any]) -> dict[str, Any]:
         """Generate a fix for a finding."""

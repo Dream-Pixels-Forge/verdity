@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import tempfile
+import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from verdity.mcp_server import MCPServer, _diff_to_files
+from verdity.schemas import ConcernType, Finding, Severity, SpecialistResponse
 
 
 class TestDiffToFiles:
@@ -62,15 +64,29 @@ class TestCallToolExceptions:
     """Cover the except branches and the _review_full orchestrator-not-yet-initialized path."""
 
     @staticmethod
-    def _mock_finding(summary: str = "issue", severity_value: str = "high"):
-        f = MagicMock()
-        f.summary = summary
-        f.file = "x.py"
-        f.line_start = 1
-        f.severity = MagicMock()
-        f.severity.value = severity_value
-        f.confidence = 0.5
-        return f
+    def _real_finding(summary: str = "issue", severity: Severity = Severity.HIGH) -> Finding:
+        """A real Finding model — never inject fields the real model lacks."""
+        return Finding(
+            concern=ConcernType.SECURITY,
+            severity=severity,
+            file="x.py",
+            line_start=1,
+            line_end=1,
+            summary=summary,
+            explanation="e",
+            confidence=0.5,
+            agent_version="v",
+            prompt_hash="h",
+        )
+
+    @staticmethod
+    def _real_response(findings: list[Finding] | None = None, specialist: str = "security"):
+        return SpecialistResponse(
+            review_run_id=uuid.uuid4(),
+            specialist=specialist,
+            status="complete",
+            findings=findings or [],
+        )
 
     @pytest.mark.asyncio
     async def test_call_tool_review_security_returns_findings(self):
@@ -78,10 +94,7 @@ class TestCallToolExceptions:
         server = MCPServer()
         with patch("verdity.agents.security.SecurityAgent") as mock_agent:
             mock_instance = MagicMock()
-            mock_result = MagicMock()
-            mock_result.findings = [self._mock_finding()]
-            mock_result.summary = "summary"
-            mock_instance.run = AsyncMock(return_value=mock_result)
+            mock_instance.run = AsyncMock(return_value=self._real_response([self._real_finding()]))
             mock_agent.return_value = mock_instance
             result = await server.call_tool(
                 "review_security",
@@ -89,16 +102,17 @@ class TestCallToolExceptions:
             )
             assert result["findings"][0]["rule_id"] == "security-0"
             assert result["agent"] == "security"
+            assert "error" not in result
+            assert result["summary"] == "1 finding"
 
     @pytest.mark.asyncio
     async def test_call_tool_review_quality_returns_findings(self):
         server = MCPServer()
         with patch("verdity.agents.code_quality.CodeQualityAgent") as mock_agent:
             mock_instance = MagicMock()
-            mock_result = MagicMock()
-            mock_result.findings = [self._mock_finding()]
-            mock_result.summary = "summary"
-            mock_instance.run = AsyncMock(return_value=mock_result)
+            mock_instance.run = AsyncMock(
+                return_value=self._real_response([self._real_finding()], specialist="quality")
+            )
             mock_agent.return_value = mock_instance
             result = await server.call_tool(
                 "review_quality",
@@ -111,10 +125,9 @@ class TestCallToolExceptions:
         server = MCPServer()
         with patch("verdity.agents.testing.TestingAgent") as mock_agent:
             mock_instance = MagicMock()
-            mock_result = MagicMock()
-            mock_result.findings = [self._mock_finding()]
-            mock_result.summary = "summary"
-            mock_instance.run = AsyncMock(return_value=mock_result)
+            mock_instance.run = AsyncMock(
+                return_value=self._real_response([self._real_finding()], specialist="testing")
+            )
             mock_agent.return_value = mock_instance
             result = await server.call_tool(
                 "review_testing",
@@ -127,10 +140,9 @@ class TestCallToolExceptions:
         server = MCPServer()
         with patch("verdity.agents.documentation.DocumentationAgent") as mock_agent:
             mock_instance = MagicMock()
-            mock_result = MagicMock()
-            mock_result.findings = [self._mock_finding()]
-            mock_result.summary = "summary"
-            mock_instance.run = AsyncMock(return_value=mock_result)
+            mock_instance.run = AsyncMock(
+                return_value=self._real_response([self._real_finding()], specialist="documentation")
+            )
             mock_agent.return_value = mock_instance
             result = await server.call_tool(
                 "review_documentation",
@@ -150,6 +162,8 @@ class TestCallToolExceptions:
                 {"diff": "test", "file_path": "x.py"},
             )
             assert "error" in result
+            assert result["status"] == "error"
+            assert result["error"]
             assert result["agent"] == "security"
 
     @pytest.mark.asyncio
@@ -164,6 +178,8 @@ class TestCallToolExceptions:
                 {"diff": "test", "file_path": "x.py"},
             )
             assert "error" in result
+            assert result["status"] == "error"
+            assert result["error"]
             assert result["agent"] == "quality"
 
     @pytest.mark.asyncio
@@ -178,6 +194,8 @@ class TestCallToolExceptions:
                 {"diff": "test", "file_path": "x.py"},
             )
             assert "error" in result
+            assert result["status"] == "error"
+            assert result["error"]
             assert result["agent"] == "testing"
 
     @pytest.mark.asyncio
@@ -192,6 +210,8 @@ class TestCallToolExceptions:
                 {"diff": "test", "file_path": "x.py"},
             )
             assert "error" in result
+            assert result["status"] == "error"
+            assert result["error"]
             assert result["agent"] == "documentation"
 
     @pytest.mark.asyncio
@@ -207,6 +227,8 @@ class TestCallToolExceptions:
                 {"diff": "test", "file_path": "x.py"},
             )
             assert "error" in result
+            assert result["status"] == "error"
+            assert result["error"]
             assert result["agent"] == "full"
 
     @pytest.mark.asyncio
@@ -258,17 +280,26 @@ class TestReviewFullInitialize:
             mock_orch = MagicMock()
             mock_orch.initialize = AsyncMock()
 
-            # Review returns a result with findings
-            finding_mock = MagicMock()
-            finding_mock.summary = "issue"
-            finding_mock.file = "x.py"
-            finding_mock.line_start = 1
-            finding_mock.severity = MagicMock()
-            finding_mock.severity.value = "high"
-            finding_mock.confidence = 0.5
-            mock_result = MagicMock()
-            mock_result.findings = [finding_mock]
-            mock_result.summary = "summary"
+            # Review returns a real SpecialistResponse with findings
+            mock_result = SpecialistResponse(
+                review_run_id=uuid.uuid4(),
+                specialist="full",
+                status="complete",
+                findings=[
+                    Finding(
+                        concern=ConcernType.SECURITY,
+                        severity=Severity.HIGH,
+                        file="x.py",
+                        line_start=1,
+                        line_end=1,
+                        summary="issue",
+                        explanation="e",
+                        confidence=0.5,
+                        agent_version="v",
+                        prompt_hash="h",
+                    )
+                ],
+            )
             mock_orch.review = AsyncMock(return_value=mock_result)
 
             mock_orch_cls.return_value = mock_orch
