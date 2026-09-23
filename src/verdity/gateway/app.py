@@ -345,6 +345,15 @@ async def handle_github_webhook(
         secret_previous_raw.encode() if secret_previous_raw else b""
     )  # pragma: no cover
 
+    # Fail closed: an empty current secret would let anyone forge valid
+    # signatures (issue #26). Parity with the unified endpoint's guard.
+    if not secret_current:
+        logger.warning(
+            "No webhook HMAC secret configured — rejecting delivery %s",
+            x_github_delivery,
+        )
+        raise HTTPException(status_code=401, detail="No secret configured")
+
     verified, matched = verify_with_rotation(
         secret_current=secret_current,  # pragma: no cover
         secret_previous=secret_previous,  # pragma: no cover
