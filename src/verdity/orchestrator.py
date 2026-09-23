@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 
+from verdity.approval_queue import ApprovalQueueStore
 from verdity.audit_store import AuditStore
 from verdity.event_queue import EventQueue
 from verdity.metrics_store import MetricsStore
@@ -182,12 +183,14 @@ class Orchestrator:
         token_economics: TokenEconomicsService,
         audit_store: AuditStore,
         metrics_store: MetricsStore | None = None,
+        approval_queue: ApprovalQueueStore | None = None,
     ) -> None:
         self._queue = queue
         self._index = semantic_index
         self._te = token_economics
         self._audit = audit_store
         self._metrics = metrics_store
+        self._approval_queue = approval_queue
         self._runs: dict[uuid.UUID, ReviewRun] = {}
         self._specialists: dict[str, SpecialistFn] = {}
 
@@ -291,6 +294,9 @@ class Orchestrator:
         # ── Phase 11: Adversarial self-review ────────────────────────
         if policy.adversarial_review_enabled:
             await self._run_adversarial_review(run, event)
+
+        # ── Approval gate: route aggregated findings into the queue ──
+        await self._route_to_approval_queue(run, event)
 
         # ── Phase 9: Record engineering metrics ──────────────────────
         if self._metrics is not None:
@@ -488,6 +494,46 @@ class Orchestrator:
                 "Run %s: adversarial review failed (non-blocking)",
                 run.review_run_id,
                 exc_info=True,
+            )
+
+    async def _route_to_approval_queue(self, run: ReviewRun, event: VerdityEvent) -> None:
+        """
+        Phase 5: aggregate specialist findings, compute batch routing, and
+        enqueue every routed finding into the approval gate.
+        Nothing posts to GitHub without first passing through this queue.
+        """
+        from verdity.aggregator import AggregatorAgent
+        from verdity.router import compute_batch_routing, record_routing_outcomes
+
+        responses = list(run.specialist_results.values())
+        output = AggregatorAgent().aggregate(run.review_run_id, event.repo, responses)
+        decisions = compute_batch_routing(output.ranked_findings)
+        repo_id = f"{event.repo.owner}/{event.repo.name}"
+        pr_number = event.pull_request.number if event.pull_request else None
+
+        if self._approval_queue is not None:
+            for finding, decision in decisions:
+                await self._approval_queue.enqueue(
+                    run_id=run.review_run_id,
+                    finding_id=finding.finding_id,
+                    repo_id=repo_id,
+                    concern=finding.concern.value,
+                    severity=finding.severity.value,
+                    file=finding.file,
+                    line_start=finding.line_start,
+                    summary=finding.summary,
+                    explanation=finding.explanation,
+                    confidence=finding.confidence,
+                    route_action=decision.action.value,
+                    route_reason=decision.reason,
+                )
+
+        if self._metrics is not None:
+            await record_routing_outcomes(
+                self._metrics,
+                decisions,
+                repo_id=repo_id,
+                pr_number=pr_number,
             )
 
     def get_run(self, review_run_id: uuid.UUID) -> ReviewRun | None:

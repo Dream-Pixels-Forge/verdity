@@ -232,7 +232,7 @@ class TestRouterOutcomes:
 
     @pytest.mark.asyncio
     async def test_record_auto_approve_outcome(self, store):
-        """Auto-approved findings should be recorded as auto_fixed."""
+        """Auto-approved findings must be recorded as auto_approved, not auto_fixed."""
         from verdity.router import RouteAction, RoutingDecision, record_routing_outcomes
         from verdity.schemas import ConcernType, Finding, Severity
 
@@ -257,7 +257,8 @@ class TestRouterOutcomes:
             pr_number=42,
         )
         summary = await store.get_repo_summary("acme/widgets")
-        assert summary["outcome_counts"].get("auto_fixed") == 1
+        assert summary["outcome_counts"].get("auto_approved") == 1
+        assert summary["outcome_counts"].get("auto_fixed") is None
 
     @pytest.mark.asyncio
     async def test_record_auto_dismiss_outcome(self, store):

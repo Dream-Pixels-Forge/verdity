@@ -7,10 +7,12 @@ Target: bring src/verdity/coding_agent.py to 100% line coverage.
 
 from __future__ import annotations
 
+import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from verdity.approval_queue import ApprovalQueueStore
 from verdity.coding_agent import CodingAgent, ProposedFix
 from verdity.schemas import ConcernType, Finding, Severity
 
@@ -32,6 +34,29 @@ def _make_finding(**overrides) -> Finding:
     }
     defaults.update(overrides)
     return Finding(**defaults)
+
+
+async def _approved_queue(finding: Finding) -> ApprovalQueueStore:
+    """In-memory approval queue where `finding` has status 'approved'."""
+    store = ApprovalQueueStore(db_path=":memory:")
+    await store.connect()
+    await store.enqueue(
+        run_id=uuid.uuid4(),
+        finding_id=finding.finding_id,
+        repo_id="acme/widgets",
+        concern=finding.concern.value,
+        severity=finding.severity.value,
+        file=finding.file,
+        line_start=finding.line_start,
+        summary=finding.summary,
+        explanation=finding.explanation,
+        confidence=finding.confidence,
+        route_action="manual_review",
+        route_reason=None,
+    )
+    pending = await store.get_pending()
+    await store.resolve(pending[0]["id"], reviewer_id="rev-1", action="approved")
+    return store
 
 
 class TestProposeFix:
@@ -321,6 +346,7 @@ class TestApplyFixAndOpenPR:
         This still exercises the success branch lines and the error wrapper."""
         agent = CodingAgent()
         f = _make_finding(concern=ConcernType.SECURITY, summary="hardcoded password detected")
+        aq = await _approved_queue(f)
         with patch("verdity.github_client.GitHubClient") as mock_client_cls:
             mock_instance = MagicMock()
             mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
@@ -333,6 +359,7 @@ class TestApplyFixAndOpenPR:
                 diff="+ # new",
                 owner="acme",
                 repo="widgets",
+                approval_queue=aq,
             )
             # The success branch (lines 158-164) raises TypeError on FixResult
             # (missing explanation/confidence fields). This is a defensive bug
@@ -345,6 +372,7 @@ class TestApplyFixAndOpenPR:
         """If get_pr raises, the code falls back to post_pr_review."""
         agent = CodingAgent()
         f = _make_finding(concern=ConcernType.SECURITY, summary="hardcoded password detected")
+        aq = await _approved_queue(f)
         with patch("verdity.github_client.GitHubClient") as mock_client_cls:
             mock_instance = MagicMock()
             mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
@@ -358,6 +386,7 @@ class TestApplyFixAndOpenPR:
                 diff="+ # new",
                 owner="acme",
                 repo="widgets",
+                approval_queue=aq,
             )
             # post_pr_review is the fallback path that gets exercised.
             mock_instance.post_pr_review.assert_awaited_once()
@@ -367,6 +396,7 @@ class TestApplyFixAndOpenPR:
         """If an unexpected exception occurs, returns FixResult with success=False."""
         agent = CodingAgent()
         f = _make_finding(concern=ConcernType.SECURITY, summary="hardcoded password detected")
+        aq = await _approved_queue(f)
         with patch("verdity.github_client.GitHubClient") as mock_client_cls:
             # Construct a context manager whose __aenter__ raises
             mock_instance = MagicMock()
@@ -379,6 +409,7 @@ class TestApplyFixAndOpenPR:
                 diff="+ # new",
                 owner="acme",
                 repo="widgets",
+                approval_queue=aq,
             )
             assert result.success is False
             assert "boom" in (result.error or "")
@@ -396,6 +427,7 @@ class TestApplyFixAndOpenPR:
             summary="hardcoded password detected",
             file=str(file_path),
         )
+        aq = await _approved_queue(f)
         with patch("verdity.github_client.GitHubClient") as mock_client_cls:
             mock_instance = MagicMock()
             mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
@@ -408,6 +440,7 @@ class TestApplyFixAndOpenPR:
                 diff="+ # diff",
                 owner="acme",
                 repo="widgets",
+                approval_queue=aq,
             )
             mock_instance.get_pr.assert_awaited_once()
 
@@ -420,6 +453,7 @@ class TestApplyFixAndOpenPR:
             summary="hardcoded password detected",
             file=str(tmp_path / "does_not_exist.py"),
         )
+        aq = await _approved_queue(f)
         with patch("verdity.github_client.GitHubClient") as mock_client_cls:
             mock_instance = MagicMock()
             mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
@@ -432,5 +466,6 @@ class TestApplyFixAndOpenPR:
                 diff="+ # diff",
                 owner="acme",
                 repo="widgets",
+                approval_queue=aq,
             )
             mock_instance.get_pr.assert_awaited_once()

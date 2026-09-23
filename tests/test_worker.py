@@ -696,6 +696,7 @@ async def test_run_worker_registers_all_specialists():
 
         with (
             patch("verdity.token_economics.TokenEconomicsService") as MockTE,
+            patch("verdity.approval_queue.ApprovalQueueStore") as MockApproval,
             patch("verdity.worker.EventQueue") as MockQueue,
             patch("verdity.worker.Worker", return_value=mock_worker),
             patch("verdity.worker.asyncio.get_running_loop") as mock_loop,
@@ -705,6 +706,11 @@ async def test_run_worker_registers_all_specialists():
             mock_te.connect = AsyncMock()
             mock_te.close = AsyncMock()
             MockTE.return_value = mock_te
+
+            mock_approval = MagicMock()
+            mock_approval.connect = AsyncMock()
+            mock_approval.close = AsyncMock()
+            MockApproval.return_value = mock_approval
 
             mock_queue = MagicMock()
             mock_queue.connect = AsyncMock()
@@ -770,6 +776,7 @@ async def test_run_worker_handles_windows_not_implemented_error():
 
         with (
             patch("verdity.token_economics.TokenEconomicsService") as MockTE,
+            patch("verdity.approval_queue.ApprovalQueueStore") as MockApproval,
             patch("verdity.worker.EventQueue") as MockQueue,
             patch("verdity.worker.Worker", return_value=mock_worker),
             patch("verdity.worker.asyncio.get_running_loop") as mock_loop,
@@ -779,6 +786,11 @@ async def test_run_worker_handles_windows_not_implemented_error():
             mock_te.connect = AsyncMock()
             mock_te.close = AsyncMock()
             MockTE.return_value = mock_te
+
+            mock_approval = MagicMock()
+            mock_approval.connect = AsyncMock()
+            mock_approval.close = AsyncMock()
+            MockApproval.return_value = mock_approval
 
             mock_queue = MagicMock()
             mock_queue.connect = AsyncMock()

@@ -22,6 +22,7 @@ class MetricsStore:
     Tracks:
       - review_metrics: finding counts, severity distribution, costs per review
       - finding_outcomes: human decisions (confirmed/false_positive/wont_fix/auto_fixed)
+        plus routed outcomes (auto_approved, false_positive)
       - review_timings: phase-level duration tracking
     """
 
@@ -129,14 +130,14 @@ class MetricsStore:
             finding_id: UUID of the finding
             repo_id: owner/name identifier
             pr_number: PR or MR number (optional)
-            final_outcome: one of confirmed, false_positive, wont_fix, auto_fixed
+            final_outcome: one of confirmed, false_positive, wont_fix, auto_fixed, auto_approved
             confidence: original confidence score at time of decision
             severity: severity level at time of decision
             concern: concern type at time of decision
         """
         if self._conn is None:
             raise RuntimeError("MetricsStore is not connected. Call connect() first.")
-        valid_outcomes = {"confirmed", "false_positive", "wont_fix", "auto_fixed"}
+        valid_outcomes = {"confirmed", "false_positive", "wont_fix", "auto_fixed", "auto_approved"}
         if final_outcome not in valid_outcomes:
             raise ValueError(f"Invalid outcome: {final_outcome!r}. Must be one of {valid_outcomes}")
         await self._conn.execute(
