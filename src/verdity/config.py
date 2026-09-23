@@ -22,7 +22,9 @@ class Settings(BaseSettings):
     # HMAC secret for GitHub webhook verification.
     # NEVER commit a value here; use a dev-only env var in non-prod.
     webhook_hmac_secret: SecretStr = Field(
-        ..., description="HMAC-SHA256 secret for GitHub webhook verification"
+        ...,
+        min_length=32,
+        description="HMAC-SHA256 secret for GitHub webhook verification (min 32 chars)",
     )
     webhook_hmac_secret_previous: SecretStr = Field(
         default="",
