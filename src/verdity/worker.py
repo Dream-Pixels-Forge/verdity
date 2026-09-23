@@ -88,9 +88,9 @@ class Worker:
             if now < backoff_expiry:
                 remaining = backoff_expiry - now
                 logger.debug("Backing off repo %s for %.1fs remaining", repo_id, remaining)
-                # Put message back on queue for retry
+                # Return message to queue without burning retry budget (#10)
                 msg_id = envelope.event.delivery_id
-                await self._queue.nack(msg_id, error_msg="backoff")
+                await self._queue.requeue(msg_id)
                 await asyncio.sleep(min(remaining, 1.0))
                 return
             # Backoff expired, clear it

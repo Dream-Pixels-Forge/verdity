@@ -353,7 +353,7 @@ async def test_drain_one_backoff():
 
 @pytest.mark.asyncio
 async def test_drain_one_backoff_not_expired():
-    """_drain_one nacks and sleeps when backoff hasn't expired yet."""
+    """_drain_one requeues (no retry burn) and sleeps when backoff hasn't expired."""
     from verdity.worker import Worker
 
     queue = MagicMock()
@@ -364,6 +364,7 @@ async def test_drain_one_backoff_not_expired():
     queue.consume = AsyncMock(return_value=msg)
     queue.acknowledge = AsyncMock()
     queue.nack = AsyncMock()
+    queue.requeue = AsyncMock()
 
     worker = Worker(queue, orch)
     worker._backoffs["backoff/pending"] = 5.0  # 5 second backoff
@@ -374,8 +375,9 @@ async def test_drain_one_backoff_not_expired():
 
     with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
         await worker._drain_one()
-        # Should have nacked the message
-        queue.nack.assert_called_once_with("msg-bp", error_msg="backoff")
+        # Should have requeued the message without burning retry budget (#10)
+        queue.requeue.assert_called_once_with("msg-bp")
+        queue.nack.assert_not_called()
         # Should have slept for remaining time (capped at 1.0s)
         mock_sleep.assert_called_once()
         sleep_arg = mock_sleep.call_args[0][0]
@@ -866,3 +868,82 @@ async def test_run_forever_with_backoff_and_sleep():
     # Next consume returns None → sleep
     envelope = await queue.consume(timeout_ms=500)
     assert envelope is None
+
+
+@pytest.mark.asyncio
+async def test_backoff_drain_does_not_burn_retry_budget():
+    """Issue #10: drain cycles during repo backoff leave messages pending.
+
+    While a repo is in backoff, N drain cycles must not increment
+    retry_count or dead-letter the pending message — the backoff is a
+    rate limit, not a processing failure.
+    """
+    import time
+
+    from verdity.event_queue import EventQueue
+    from verdity.schemas import QueueEnvelope, RepoRef, TriggerType, VerdityEvent
+
+    q = EventQueue(db_path=":memory:")
+    await q.connect()
+    evt = VerdityEvent(
+        delivery_id="del-backoff-1",
+        trigger_type=TriggerType.PR_OPENED,
+        repo=RepoRef(owner="acme", name="widgets", id=1),
+    )
+    await q.publish(QueueEnvelope(event=evt))
+
+    orch = MagicMock()
+    orch.process_event = AsyncMock(return_value=uuid.uuid4())
+    worker = Worker(q, orch)
+
+    repo_id = "acme/widgets"
+    worker._backoffs[repo_id] = 60.0
+    worker._backoff_expiry_times[repo_id] = time.monotonic() + 60.0
+
+    # More drain cycles than max_retries (3) — old behavior dead-lettered here
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        for _ in range(5):
+            await worker._drain_one()
+
+    counts = await q.count_by_state()
+    assert counts["pending"] == 1, f"expected pending, got {counts}"
+    assert counts["dead"] == 0, f"backoff burned retry budget: {counts}"
+    assert counts["processing"] == 0
+
+    consumed = await q.consume()
+    assert consumed is not None
+    assert consumed.retry_count == 0, "backoff must not increment retry_count"
+    orch.process_event.assert_not_called()
+    await q.close()
+
+
+@pytest.mark.asyncio
+async def test_processing_failures_still_dead_letter_after_retries():
+    """Genuine processing failures still burn retry budget and dead-letter."""
+    from verdity.event_queue import EventQueue
+    from verdity.schemas import QueueEnvelope, RepoRef, TriggerType, VerdityEvent
+
+    q = EventQueue(db_path=":memory:")
+    await q.connect()
+    evt = VerdityEvent(
+        delivery_id="del-fail-1",
+        trigger_type=TriggerType.PR_OPENED,
+        repo=RepoRef(owner="acme", name="widgets", id=1),
+    )
+    await q.publish(QueueEnvelope(event=evt))
+
+    orch = MagicMock()
+    orch.process_event = AsyncMock(side_effect=RuntimeError("boom"))
+    worker = Worker(q, orch)
+
+    # max_retries defaults to 3 in EventQueue.nack
+    for _ in range(3):
+        envelope = await q.consume()
+        assert envelope is not None, "message should still be consumable before budget exhausted"
+        await worker._process_one(envelope)
+
+    counts = await q.count_by_state()
+    assert counts["dead"] == 1, f"real failures must dead-letter: {counts}"
+    assert counts["pending"] == 0
+    assert orch.process_event.await_count == 3
+    await q.close()
