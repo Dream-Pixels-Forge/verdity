@@ -4,8 +4,9 @@ GitHub API client for posting PR review comments.
 Handles GitHub App authentication (JWT → installation token),
 and provides typed methods for posting PR comments and reviews.
 
-This is the output path: findings flow from the orchestrator through
-the router to this client, which posts them as GitHub PR comments.
+This is a low-level transport client: it has no approval gate of its
+own. Callers must verify ApprovalQueue status `approved` before posting
+findings.
 """
 
 from __future__ import annotations

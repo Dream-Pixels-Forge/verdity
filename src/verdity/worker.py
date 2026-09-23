@@ -181,6 +181,7 @@ def parse_args(argv: list[str] | None = None) -> Any:
 async def _run_worker(args: Any) -> None:  # pragma: no cover
     """Initialize and run the worker loop. Exported for testability."""
     # Initialize queue and orchestrator
+    from verdity.approval_queue import ApprovalQueueStore
     from verdity.audit_store import AuditStore
     from verdity.semantic_index import SemanticIndex
     from verdity.token_economics import TokenEconomicsService
@@ -200,6 +201,9 @@ async def _run_worker(args: Any) -> None:  # pragma: no cover
     index = SemanticIndex(db_path=args.audit_path)
     await index.connect()
 
+    approval_queue = ApprovalQueueStore(db_path=args.audit_path)
+    await approval_queue.connect()
+
     # Initialize multi-model fallback for agent reliability
     from verdity.model_fallback import MultiModelFallback
 
@@ -210,6 +214,7 @@ async def _run_worker(args: Any) -> None:  # pragma: no cover
         semantic_index=index,
         token_economics=te,
         audit_store=audit,
+        approval_queue=approval_queue,
     )
 
     # Register all specialist agents
@@ -249,6 +254,7 @@ async def _run_worker(args: Any) -> None:  # pragma: no cover
     await audit.close()
     await te.close()
     await index.close()
+    await approval_queue.close()
 
 
 def main(argv: list[str] | None = None) -> None:

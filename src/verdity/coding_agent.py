@@ -11,9 +11,12 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from verdity.schemas import ConcernType, Finding
+
+if TYPE_CHECKING:
+    from verdity.approval_queue import ApprovalQueueStore
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +84,7 @@ class CodingAgent:
         pr_title: str = "fix: automated fix from Verdity",
         pr_body: str = "",
         base_branch: str = "main",
+        approval_queue: ApprovalQueueStore | None = None,
     ) -> FixResult:
         """
         Generate a fix for a finding, apply it as a commit, and open a PR.
@@ -93,6 +97,7 @@ class CodingAgent:
             pr_title: PR title (default: "fix: automated fix from Verdity")
             pr_body: PR body (defaults to concise summary)
             base_branch: Base branch for the PR (default: "main")
+            approval_queue: Approval gate — posting requires status 'approved'
 
         Returns:
             FixResult with success status, commit SHA, and PR URL
@@ -138,6 +143,23 @@ class CodingAgent:
             # For now, we'll create the fix as a comment-enabled PR
             # The actual file modification would happen via git operations
             # In dev mode, we just return the proposed fix metadata
+
+            # Approval gate: fail closed unless the queue says 'approved'
+            # (missing, unreachable, or non-approved queue never posts).
+            status: str | None = None
+            if approval_queue is not None:
+                try:
+                    status = await approval_queue.get_status(finding.finding_id)
+                except Exception:
+                    logger.warning("Approval queue unreachable — failing closed", exc_info=True)
+            if status != "approved":
+                return FixResult(
+                    success=False,
+                    finding_id=finding.finding_id,
+                    file_path=finding.file,
+                    error="Approval required: finding does not have ApprovalQueue "
+                    "status 'approved'",
+                )
 
             # Step 4: Open a PR with the fix summary
             async with GitHubClient(

@@ -165,13 +165,13 @@ async def record_routing_outcomes(
 ) -> None:
     """Record routing outcomes to the metrics store.
 
-    Auto-approved findings → 'auto_fixed' outcome
+    Auto-approved findings → 'auto_approved' outcome
     Auto-dismissed findings → 'false_positive' outcome
     Manual review findings → no outcome recorded (awaiting human decision)
     """
     for finding, decision in decisions:
         outcome_map = {
-            RouteAction.AUTO_APPROVE: "auto_fixed",
+            RouteAction.AUTO_APPROVE: "auto_approved",
             RouteAction.AUTO_DISMISS: "false_positive",
         }
         outcome = outcome_map.get(decision.action)

@@ -141,6 +141,14 @@ class ApprovalQueueStore:
         )
         await self._conn.commit()
 
+    async def get_status(self, finding_id: uuid.UUID) -> str | None:
+        """Return the current queue status for a finding (None if not enqueued)."""
+        rows = await self._conn.execute(
+            "SELECT status FROM approval_queue WHERE finding_id=? ORDER BY created_at DESC LIMIT 1",
+            (str(finding_id),),
+        )
+        return rows[0]["status"] if rows else None
+
     async def stats(self, repo_id: str | None = None) -> dict[str, int]:
         if repo_id:
             rows = await self._conn.execute(
