@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
+from verdity.enforcement import EnforcementEngine, EnforcementDecision
 from verdity.metrics_store import MetricsStore
 from verdity.schemas import (
     ConcernType,
@@ -135,6 +136,7 @@ async def route(
     finding: Finding,
     calibrator: TrustCalibrator | None = None,
     context: dict[str, Any] | None = None,
+    enforcement_engine: EnforcementEngine | None = None,
 ) -> RoutingDecision:
     """
     Compute confidence (with optional calibration) and route a finding.
@@ -147,10 +149,27 @@ async def route(
         finding: the finding to route
         calibrator: optional TrustCalibrator for calibrated weights
         context: optional context dict for additional signals
+        enforcement_engine: optional EnforcementEngine for blocking rules
 
     Returns:
         RoutingDecision with action, confidence, and reason
     """
+    # First, evaluate enforcement rules
+    if enforcement_engine is not None:
+        enforcement_decision = await enforcement_engine.evaluate(finding)
+        if enforcement_decision.blocked:
+            # Map enforcement action to RouteAction
+            action_map = {
+                "BLOCK": RouteAction.MANUAL_REVIEW,
+                "REQUIRE_APPROVAL": RouteAction.MANUAL_REVIEW,
+                "ESCALATE": RouteAction.MANUAL_REVIEW,
+            }
+            return RoutingDecision(
+                action=action_map.get(enforcement_decision.action.upper(), RouteAction.MANUAL_REVIEW),
+                confidence=finding.confidence,
+                reason=f"Enforcement: {enforcement_decision.message}",
+            )
+
     if calibrator is not None:
         severity_weights, concern_boost = await calibrator.get_adjusted_weights()
     else:

@@ -104,6 +104,28 @@ class GitHubClient:
             )
         return self._client
 
+    async def _request(
+        self,
+        method: str,
+        url: str,
+        **kwargs: Any,
+    ) -> httpx.Response:
+        """
+        Make an authenticated HTTP request to the GitHub API.
+
+        Args:
+            method: HTTP method (GET, POST, PATCH, etc.)
+            url: Full URL to request
+            **kwargs: Additional arguments passed to httpx.AsyncClient.request
+
+        Returns:
+            httpx.Response object
+        """
+        client = self._get_client()
+        headers = await self._auth_headers(client)
+        resp = await client.request(method, url, headers=headers, **kwargs)
+        return resp
+
     # ── Authentication ────────────────────────────────────────────────
 
     def _generate_jwt(self) -> str:
@@ -274,6 +296,112 @@ class GitHubClient:
             path,
             line,
         )
+        return resp.json()
+
+    # ── GitHub Checks API ───────────────────────────────────────────────
+
+    async def create_check_run(
+        self,
+        owner: str,
+        repo: str,
+        name: str,
+        head_sha: str,
+        status: str = "in_progress",
+        conclusion: str | None = None,
+        output: dict[str, Any] | None = None,
+        started_at: str | None = None,
+        completed_at: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Create a new check run on a commit.
+
+        Args:
+            owner: Repository owner
+            repo: Repository name
+            name: Name of the check (e.g., "verdity-review")
+            head_sha: SHA of the commit to check
+            status: "queued", "in_progress", or "completed"
+            conclusion: Required if status is "completed" - "success", "failure", "neutral", etc.
+            output: Optional output object with title, summary, text, annotations, images
+            started_at: ISO 8601 timestamp when check started
+            completed_at: ISO 8601 timestamp when check completed (required if status=completed)
+
+        Returns:
+            GitHub check run object
+        """
+        client = self._get_client()
+        headers = await self._auth_headers(client)
+
+        payload: dict[str, Any] = {
+            "name": name,
+            "head_sha": head_sha,
+            "status": status,
+        }
+        if conclusion:
+            payload["conclusion"] = conclusion
+        if output:
+            payload["output"] = output
+        if started_at:
+            payload["started_at"] = started_at
+        if completed_at:
+            payload["completed_at"] = completed_at
+
+        resp = await client.post(
+            f"{self._base_url}/repos/{owner}/{repo}/check-runs",
+            json=payload,
+            headers=headers,
+        )
+        if resp.status_code not in (200, 201):
+            raise GitHubClientError(f"Failed to create check run: {resp.status_code} {resp.text}")
+        logger.info("Created check run '%s' on %s/%s@%s", name, owner, repo, head_sha[:7])
+        return resp.json()
+
+    async def update_check_run(
+        self,
+        owner: str,
+        repo: str,
+        check_run_id: int,
+        status: str | None = None,
+        conclusion: str | None = None,
+        output: dict[str, Any] | None = None,
+        completed_at: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Update an existing check run.
+
+        Args:
+            owner: Repository owner
+            repo: Repository name
+            check_run_id: ID of the check run to update
+            status: New status ("queued", "in_progress", "completed")
+            conclusion: New conclusion if status is "completed"
+            output: Updated output object
+            completed_at: ISO 8601 timestamp when check completed
+
+        Returns:
+            Updated GitHub check run object
+        """
+        client = self._get_client()
+        headers = await self._auth_headers(client)
+
+        payload: dict[str, Any] = {}
+        if status:
+            payload["status"] = status
+        if conclusion:
+            payload["conclusion"] = conclusion
+        if output:
+            payload["output"] = output
+        if completed_at:
+            payload["completed_at"] = completed_at
+
+        resp = await client.patch(
+            f"{self._base_url}/repos/{owner}/{repo}/check-runs/{check_run_id}",
+            json=payload,
+            headers=headers,
+        )
+        if resp.status_code not in (200, 201):
+            raise GitHubClientError(f"Failed to update check run: {resp.status_code} {resp.text}")
+        logger.info("Updated check run %d on %s/%s", check_run_id, owner, repo)
         return resp.json()
 
     # ── Utility ───────────────────────────────────────────────────────

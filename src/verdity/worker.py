@@ -40,6 +40,7 @@ class Worker:
 
     Handles graceful shutdown on SIGINT/SIGTERM, exponential backoff on
     transient errors, and per-repo ordering (one message at a time per repo).
+    Also runs periodic SLA escalation checks for the approval queue.
     """
 
     def __init__(
@@ -51,6 +52,8 @@ class Worker:
         backoff_initial: float = _INITIAL_BACKOFF,
         backoff_max: float = _MAX_BACKOFF,
         backoff_factor: float = _BACKOFF_FACTOR,
+        sla_check_interval: float = 3600.0,  # 1 hour
+        approval_queue: "ApprovalQueueStore | None" = None,
     ) -> None:
         self._queue = queue
         self._orchestrator = orchestrator
@@ -62,14 +65,49 @@ class Worker:
         self._tasks: set[asyncio.Task] = set()
         self._backoffs: dict[str, float] = {}  # repo_id → next backoff seconds
         self._backoff_expiry_times: dict[str, float] = {}  # repo_id → monotonic expiry
+        self._sla_check_interval = sla_check_interval
+        self._sla_task: asyncio.Task | None = None
+        self._approval_queue = approval_queue
 
     async def run_forever(self) -> None:
         """Main loop: dequeue and process events until shutdown."""
         self._running = True
         logger.info("Worker started, draining queue…")
 
+        # Start SLA escalation background task if approval queue is configured
+        if self._approval_queue:
+            self._sla_task = asyncio.create_task(
+                self._sla_escalation_loop(),
+                name="sla-escalation-loop",
+            )
+
         while self._running:
             await self._drain_one()
+
+    async def _sla_escalation_loop(self) -> None:
+        """Periodically check for approval items past their SLA."""
+        while self._running:
+            try:
+                await asyncio.sleep(self._sla_check_interval)
+                if self._running and self._approval_queue:
+                    escalated = await self._approval_queue.check_sla_escalations()
+                    if escalated:
+                        logger.info("SLA escalation: %d items escalated", len(escalated))
+            except asyncio.CancelledError:
+                break
+            except Exception:  # pragma: no cover
+                logger.exception("SLA escalation check failed")
+
+    async def check_sla_escalations(self) -> list[dict[str, Any]]:
+        """
+        Manually trigger SLA escalation check.
+
+        Returns:
+            List of escalated items
+        """
+        if self._approval_queue:
+            return await self._approval_queue.check_sla_escalations()
+        return []
 
     async def _drain_one(self) -> None:
         """Process a single queue cycle: consume, check backoff, dispatch."""
@@ -137,6 +175,13 @@ class Worker:
         """Graceful shutdown: stop accepting new work, drain in-flight tasks."""
         logger.info("Shutdown signal received (%s), draining in-flight tasks…", signum)
         self._running = False
+        # Cancel SLA escalation task
+        if self._sla_task:
+            self._sla_task.cancel()
+            try:
+                await self._sla_task
+            except asyncio.CancelledError:
+                pass
         if self._tasks:
             logger.info("Waiting for %d in-flight tasks…", len(self._tasks))
             await asyncio.gather(*self._tasks, return_exceptions=True)

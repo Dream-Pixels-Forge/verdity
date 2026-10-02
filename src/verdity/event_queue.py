@@ -226,3 +226,18 @@ class EventQueue:
         for row in rows:
             result[row["state"]] = row["cnt"]
         return result
+
+    async def get_events(self, limit: int = 100) -> list[dict]:
+        """Get recent events from the queue for monitoring."""
+        if self._conn is None:
+            raise RuntimeError("EventQueue is not connected. Call connect() first.")
+
+        rows = await self._conn.execute(
+            """
+            SELECT * FROM queue_messages
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        return [dict(row) for row in rows]
