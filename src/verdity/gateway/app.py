@@ -72,16 +72,16 @@ DEFAULT_GITHUB_WEBHOOK_IPS = (
 
 def _parse_ip_allowlist(cidr_string: str) -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
     """Parse comma-separated CIDR string into list of IP networks.
-    
+
     Args:
         cidr_string: Comma-separated CIDR notations (e.g., "192.168.1.0/24,10.0.0.1")
-        
+
     Returns:
         List of IPv4Network or IPv6Network objects. Empty list if input is empty.
     """
     if not cidr_string or not cidr_string.strip():
         return []
-    
+
     networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
     for part in cidr_string.split(","):
         part = part.strip()
@@ -105,17 +105,19 @@ def _parse_ip_allowlist(cidr_string: str) -> list[ipaddress.IPv4Network | ipaddr
     return networks
 
 
-def _is_ip_allowed(client_ip: str, allowed_networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network]) -> bool:
+def _is_ip_allowed(
+    client_ip: str, allowed_networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network]
+) -> bool:
     """Check if client IP is in any of the allowed networks."""
     if not allowed_networks:
         return True  # No allowlist configured = allow all
-    
+
     try:
         ip = ipaddress.ip_address(client_ip)
     except ValueError:
         logger.warning("Invalid client IP address: %s", client_ip)
         return False
-    
+
     for network in allowed_networks:
         if ip in network:
             return True
@@ -204,18 +206,18 @@ return {1, 0}
 
 class RedisRateLimiter:
     """Redis-backed sliding-window rate limiter for distributed deployments.
-    
+
     Uses a sorted set in Redis to track request timestamps per client IP.
     Implements sliding window algorithm via atomic Lua script.
     Falls back to in-memory limiter on Redis errors.
-    
+
     Usage:
         limiter = RedisRateLimiter(redis_url="redis://localhost:6379/0")
         await limiter.connect()
         allowed, retry_after = await limiter.is_allowed(request)
         await limiter.close()
     """
-    
+
     def __init__(
         self,
         redis_url: str,
@@ -234,7 +236,7 @@ class RedisRateLimiter:
     async def connect(self) -> None:
         """Establish Redis connection and load Lua script."""
         import redis.asyncio as redis
-        
+
         self._redis = redis.from_url(
             self._redis_url,
             encoding="utf-8",
@@ -265,18 +267,18 @@ class RedisRateLimiter:
 
     async def is_allowed(self, request: Request) -> tuple[bool, float]:
         """Check if the request is within the rate limit.
-        
+
         Returns (allowed, retry_after_seconds).
         Falls back to in-memory limiter on Redis errors.
         """
         if not self._connected or self._redis is None:
             logger.warning("Redis rate limiter not connected, using fallback")
             return self._fallback_limiter.is_allowed(request)
-        
+
         ip = self._client_ip(request)
         key = f"rate_limit:{ip}"
         now = time.time()
-        
+
         try:
             # Execute Lua script atomically
             result = await self._redis.evalsha(
@@ -417,7 +419,7 @@ async def lifespan(app: FastAPI):
     await app.state.queue.connect()
     app.state.audit = AuditStore(db_path=settings.audit_sqlite_path)
     await app.state.audit.connect()
-    
+
     # Initialize rate limiter (Redis-backed if enabled, otherwise in-memory)
     if getattr(settings, "redis_rate_limiter_enabled", False):
         redis_url = getattr(settings, "redis_url", "redis://localhost:6379/0")
@@ -457,7 +459,7 @@ async def lifespan(app: FastAPI):
     app.state.delivery_ids: set[str] = await app.state._delivery_cache.load_recent()
     app.state._delivery_cache_ts: dict[str, float] = {}
     app.state._last_eviction: float = time.time()
-    
+
     # Load IP allowlist for GitHub webhooks (Issue #41)
     # Config-gated via GITHUB_WEBHOOK_IPS env var
     github_webhook_ips = getattr(settings, "github_webhook_ips", "")
@@ -472,7 +474,7 @@ async def lifespan(app: FastAPI):
         )
     else:
         logger.info("GitHub IP allowlist disabled (no networks configured)")
-    
+
     logger.info(
         "Ingestion Gateway initialized (loaded %d cached delivery IDs)",
         len(app.state.delivery_ids),
@@ -543,7 +545,7 @@ async def rate_limit_middleware(request: Request, call_next):
 @app.middleware("http")
 async def ip_allowlist_middleware(request: Request, call_next):
     """IP allowlist for GitHub webhook endpoint (config-gated via GITHUB_WEBHOOK_IPS).
-    
+
     Only applies to POST /verdity/webhooks/github.
     When allowlist is empty (feature disabled), all IPs are allowed.
     """
@@ -556,7 +558,7 @@ async def ip_allowlist_middleware(request: Request, call_next):
                 client_ip = forwarded.split(",")[0].strip()
             else:
                 client_ip = request.client.host if request.client else "unknown"
-            
+
             if not _is_ip_allowed(client_ip, allowed_networks):
                 logger.warning(
                     "IP allowlist rejected request from %s to /verdity/webhooks/github",

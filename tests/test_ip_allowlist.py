@@ -8,6 +8,7 @@ The IP allowlist middleware should:
 - Apply only to /verdity/webhooks/github endpoint
 - Support CIDR notation for IP ranges
 """
+
 from __future__ import annotations
 
 import os
@@ -30,6 +31,7 @@ GITHUB_SECRET = "test-hmac-secret-key-for-dev-only"
 def _sign(secret: str, body: bytes) -> str:
     import hmac
     import hashlib
+
     return "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
 
 
@@ -63,7 +65,9 @@ async def gw_client() -> AsyncGenerator[AsyncClient, None]:
     app.state._last_eviction = 0.0
     app.state._rate_limiter = _RateLimiter()
     # Set IP allowlist for this test
-    app.state._github_ip_allowlist = _parse_ip_allowlist("192.30.252.0/22,185.199.108.0/22,140.82.112.0/20")
+    app.state._github_ip_allowlist = _parse_ip_allowlist(
+        "192.30.252.0/22,185.199.108.0/22,140.82.112.0/20"
+    )
     app.state._delivery_cache = DeliveryCache(db_path=":memory:")
     await app.state._delivery_cache.connect()
     app.state.queue = EventQueue(db_path=":memory:")
@@ -149,7 +153,7 @@ class TestIPAllowlistMiddleware:
         """Request from IP in allowlist should succeed (202)."""
         body = b'{"action":"opened","pull_request":{"number":1,"head":{"sha":"abc"},"base":{"sha":"def"},"title":"T","body":"","user":{"login":"u"}},"repository":{"name":"r","owner":{"login":"o"}}}'
         sig = _sign(GITHUB_SECRET, body)
-        
+
         # 192.30.252.1 is in 192.30.252.0/22 (GitHub's webhook IP range)
         resp = await gw_client.post(
             "/verdity/webhooks/github",
@@ -169,7 +173,7 @@ class TestIPAllowlistMiddleware:
         """Request from IP NOT in allowlist should be rejected (403)."""
         body = b'{"action":"opened","pull_request":{"number":1,"head":{"sha":"abc"},"base":{"sha":"def"},"title":"T","body":"","user":{"login":"u"}},"repository":{"name":"r","owner":{"login":"o"}}}'
         sig = _sign(GITHUB_SECRET, body)
-        
+
         # 10.0.0.1 is NOT in GitHub's webhook IP ranges
         resp = await gw_client.post(
             "/verdity/webhooks/github",
@@ -190,7 +194,7 @@ class TestIPAllowlistMiddleware:
         """When GITHUB_WEBHOOK_IPS is not set, allowlist should be disabled (allow all)."""
         body = b'{"action":"opened","pull_request":{"number":1,"head":{"sha":"abc"},"base":{"sha":"def"},"title":"T","body":"","user":{"login":"u"}},"repository":{"name":"r","owner":{"login":"o"}}}'
         sig = _sign(GITHUB_SECRET, body)
-        
+
         # Even an IP not in GitHub's ranges should be allowed when feature is disabled
         resp = await gw_client_no_allowlist.post(
             "/verdity/webhooks/github",
@@ -210,7 +214,7 @@ class TestIPAllowlistMiddleware:
         """IP allowlist should only apply to /verdity/webhooks/github, not other endpoints."""
         body = b'{"action":"opened","pull_request":{"number":1,"head":{"sha":"abc"},"base":{"sha":"def"},"title":"T","body":"","user":{"login":"u"}},"repository":{"name":"r","owner":{"login":"o"}}}'
         sig = _sign(GITHUB_SECRET, body)
-        
+
         # Other webhook endpoints should not be affected by IP allowlist
         resp = await gw_client.post(
             "/verdity/webhooks/gitlab",
@@ -229,7 +233,7 @@ class TestIPAllowlistMiddleware:
         """IP allowlist should support CIDR notation for IP ranges."""
         body = b'{"action":"opened","pull_request":{"number":1,"head":{"sha":"abc"},"base":{"sha":"def"},"title":"T","body":"","user":{"login":"u"}},"repository":{"name":"r","owner":{"login":"o"}}}'
         sig = _sign(GITHUB_SECRET, body)
-        
+
         # Test edge of CIDR range - 185.199.108.0/22 covers 185.199.108.0 - 185.199.111.255
         resp = await gw_client.post(
             "/verdity/webhooks/github",
@@ -249,7 +253,7 @@ class TestIPAllowlistMiddleware:
         """IP just outside CIDR range should be rejected."""
         body = b'{"action":"opened","pull_request":{"number":1,"head":{"sha":"abc"},"base":{"sha":"def"},"title":"T","body":"","user":{"login":"u"}},"repository":{"name":"r","owner":{"login":"o"}}}'
         sig = _sign(GITHUB_SECRET, body)
-        
+
         # 185.199.112.0 is just outside 185.199.108.0/22
         resp = await gw_client.post(
             "/verdity/webhooks/github",
@@ -269,7 +273,7 @@ class TestIPAllowlistMiddleware:
         """Should use the first IP in X-Forwarded-For header."""
         body = b'{"action":"opened","pull_request":{"number":1,"head":{"sha":"abc"},"base":{"sha":"def"},"title":"T","body":"","user":{"login":"u"}},"repository":{"name":"r","owner":{"login":"o"}}}'
         sig = _sign(GITHUB_SECRET, body)
-        
+
         # First IP is allowed, second is not - should use first (allowed)
         resp = await gw_client.post(
             "/verdity/webhooks/github",
@@ -289,7 +293,7 @@ class TestIPAllowlistMiddleware:
         """Should fall back to request.client.host when no X-Forwarded-For header."""
         body = b'{"action":"opened","pull_request":{"number":1,"head":{"sha":"abc"},"base":{"sha":"def"},"title":"T","body":"","user":{"login":"u"}},"repository":{"name":"r","owner":{"login":"o"}}}'
         sig = _sign(GITHUB_SECRET, body)
-        
+
         # No X-Forwarded-For header - should use direct connection IP
         # Note: TestClient uses a default IP, this tests the fallback logic
         resp = await gw_client.post(
@@ -312,7 +316,7 @@ class TestIPAllowlistConfig:
     def test_parse_cidr_list(self):
         """Test parsing comma-separated CIDR list."""
         from verdity.gateway.app import _parse_ip_allowlist
-        
+
         cidr_str = "192.30.252.0/22,185.199.108.0/22,140.82.112.0/20"
         networks = _parse_ip_allowlist(cidr_str)
         assert len(networks) == 3
@@ -320,22 +324,20 @@ class TestIPAllowlistConfig:
     def test_parse_single_ip(self):
         """Test parsing single IP (treated as /32)."""
         from verdity.gateway.app import _parse_ip_allowlist
-        
+
         networks = _parse_ip_allowlist("192.168.1.1")
         assert len(networks) == 1
 
     def test_parse_empty_string(self):
         """Empty string should return empty list."""
         from verdity.gateway.app import _parse_ip_allowlist
-        
+
         networks = _parse_ip_allowlist("")
         assert networks == []
 
     def test_parse_whitespace_handling(self):
         """Should handle whitespace around commas."""
         from verdity.gateway.app import _parse_ip_allowlist
-        
+
         networks = _parse_ip_allowlist(" 192.30.252.0/22 , 185.199.108.0/22 ")
         assert len(networks) == 2
-
-

@@ -27,12 +27,15 @@ from verdity.token_economics import TokenEconomicsService, estimate_cost
 
 logger = logging.getLogger(__name__)
 
+
 # Default HTTPX timeout configuration (Issue #41)
 def _get_default_timeout_total() -> float:
     return get_settings().http_timeout_total
 
+
 def _get_default_timeout_connect() -> float:
     return get_settings().http_timeout_connect
+
 
 # ── Schema validation helpers ─────────────────────────────────────────
 

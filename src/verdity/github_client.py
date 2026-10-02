@@ -27,9 +27,11 @@ logger = logging.getLogger(__name__)
 
 GITHUB_API_BASE = "https://api.github.com"
 
+
 # Default HTTPX timeout configuration (Issue #41)
 def _get_default_timeout_total() -> float:
     return get_settings().http_timeout_total
+
 
 def _get_default_timeout_connect() -> float:
     return get_settings().http_timeout_connect

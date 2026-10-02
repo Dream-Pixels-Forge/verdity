@@ -22,13 +22,17 @@ from verdity.platforms.base import Platform
 
 logger = logging.getLogger(__name__)
 
+
 # Default HTTPX timeout configuration (Issue #41)
 def _get_default_timeout_total() -> float:
     from verdity.config import get_settings
+
     return get_settings().http_timeout_total
+
 
 def _get_default_timeout_connect() -> float:
     from verdity.config import get_settings
+
     return get_settings().http_timeout_connect
 
 
