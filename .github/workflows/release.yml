@@ -17,11 +17,14 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install build
-      - run: python -m build
+      # Force clean build by disabling cache for this step
+      - run: python -m build --no-isolation
       - uses: actions/upload-artifact@v4
         with:
           name: dist
           path: dist/
+          # Prevent cache reuse - include version in artifact name
+          retention-days: 1
 
   publish:
     needs: build
