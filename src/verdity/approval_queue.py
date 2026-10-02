@@ -137,6 +137,8 @@ class ApprovalQueue:
     async def add_item(self, item: ApprovalItem) -> None:
         """Add an ApprovalItem to the queue."""
         now = datetime.now(UTC).isoformat()
+        # Use item.created_at if provided, otherwise use current time
+        created_at = item.created_at.isoformat() if item.created_at else now
         await self._conn.execute(
             """
             INSERT OR REPLACE INTO approval_queue
@@ -163,7 +165,7 @@ class ApprovalQueue:
                 "pending",
                 None,  # reviewer_id
                 None,  # resolved_at
-                now,
+                created_at,
                 item.sla_hours,
                 1 if item.escalated else 0,
             ),
