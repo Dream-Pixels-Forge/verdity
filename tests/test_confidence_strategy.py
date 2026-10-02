@@ -33,6 +33,7 @@ from verdity.trust_calibration import CalibrationResult, TrustCalibrator
 
 # ── Test Finding Schema Extension ────────────────────────────────────────
 
+
 class TestFindingConfidenceSignals:
     """Test Finding model extended with confidence_signals and calibration_version."""
 
@@ -85,10 +86,18 @@ class TestFindingConfidenceSignals:
             confidence=0.8,
             agent_version="test@0.1.0",
             prompt_hash="sha256:abc123",
-            confidence_signals={"verifier_agreement": 0.9, "severity_weight": 0.8, "agent_confidence": 0.85},
+            confidence_signals={
+                "verifier_agreement": 0.9,
+                "severity_weight": 0.8,
+                "agent_confidence": 0.85,
+            },
             calibration_version=3,
         )
-        assert f.confidence_signals == {"verifier_agreement": 0.9, "severity_weight": 0.8, "agent_confidence": 0.85}
+        assert f.confidence_signals == {
+            "verifier_agreement": 0.9,
+            "severity_weight": 0.8,
+            "agent_confidence": 0.85,
+        }
         assert f.calibration_version == 3
 
     def test_finding_confidence_signals_validation(self):
@@ -113,6 +122,7 @@ class TestFindingConfidenceSignals:
 
 
 # ── TrustCalibrator.check_drift() Tests ──────────────────────────────────
+
 
 class TestTrustCalibratorDriftDetection:
     """Test TrustCalibrator.check_drift() method for calibration drift detection."""
@@ -212,6 +222,7 @@ class TestTrustCalibratorDriftDetection:
 
 
 # ── MetricsStore record_confidence_histogram() Tests ─────────────────────
+
 
 class TestMetricsStoreConfidenceHistogram:
     """Test MetricsStore.record_confidence_histogram() for confidence distribution tracking."""
@@ -327,6 +338,7 @@ class TestMetricsStoreConfidenceHistogram:
 
 # ── Orchestrator Nightly Recalibration Tests ────────────────────────────
 
+
 class TestOrchestratorNightlyRecalibration:
     """Test Orchestrator nightly recalibration job."""
 
@@ -433,11 +445,12 @@ class TestOrchestratorNightlyRecalibration:
 
         # Start nightly recalibration with very short interval for testing
         task = await orchestrator.start_nightly_recalibration(interval_seconds=0.1)
-        
+
         # Wait for a couple of intervals
         import asyncio
+
         await asyncio.sleep(0.3)
-        
+
         task.cancel()
         try:
             await task
@@ -449,6 +462,7 @@ class TestOrchestratorNightlyRecalibration:
 
 
 # ── Router compute_confidence with TrustCalibrator Tests ─────────────────
+
 
 class TestRouterWithTrustCalibrator:
     """Test router.compute_confidence() wired with TrustCalibrator."""
@@ -473,19 +487,17 @@ class TestRouterWithTrustCalibrator:
     async def test_compute_confidence_uses_calibrated_weights(self):
         """compute_confidence should accept calibrated severity_weights and concern_boost."""
         f = self._make_finding(severity=Severity.MEDIUM, confidence=0.6)
-        
+
         # Default weights
         score_default = compute_confidence(f)
-        
+
         # Calibrated weights (higher severity weight)
         calibrated_severity = {k: v * 1.2 for k, v in DEFAULT_SEVERITY_WEIGHTS.items()}
         calibrated_concern = {k: v * 1.2 for k, v in DEFAULT_CONCERN_BOOST.items()}
         score_calibrated = compute_confidence(
-            f, 
-            severity_weights=calibrated_severity,
-            concern_boost=calibrated_concern
+            f, severity_weights=calibrated_severity, concern_boost=calibrated_concern
         )
-        
+
         # Calibrated should produce different score
         assert score_calibrated != score_default
 
@@ -493,10 +505,10 @@ class TestRouterWithTrustCalibrator:
     async def test_compute_confidence_populates_confidence_signals(self):
         """compute_confidence should populate finding.confidence_signals."""
         f = self._make_finding(severity=Severity.HIGH, confidence=0.8)
-        
+
         # Call compute_confidence with context that might include signals
         score = compute_confidence(f, context={"verifier_agreement": 0.9})
-        
+
         # The finding should have confidence_signals populated
         # (Note: compute_confidence currently doesn't modify the finding,
         # this test documents the expected behavior after implementation)
@@ -506,14 +518,14 @@ class TestRouterWithTrustCalibrator:
     async def test_route_finding_uses_compute_confidence(self):
         """route_finding should internally call compute_confidence."""
         f = self._make_finding(severity=Severity.CRITICAL, confidence=0.95)
-        
+
         # route_finding expects a pre-computed confidence
         # But we need a route() function that computes confidence then routes
         from verdity.router import route_finding
-        
+
         score = compute_confidence(f)
         decision = route_finding(f, score)
-        
+
         assert decision.action == RouteAction.AUTO_APPROVE
         assert decision.confidence == score
 
@@ -525,10 +537,10 @@ class TestRouterWithTrustCalibrator:
             self._make_finding(severity=Severity.INFO, confidence=0.3, summary="I1"),
         ]
         ranked = [RankedFinding(finding=f, rank_score=0.0) for f in findings]
-        
+
         # With default weights
         results_default = compute_batch_routing(ranked)
-        
+
         # With calibrated weights
         calibrated_severity = {k: v * 1.1 for k, v in DEFAULT_SEVERITY_WEIGHTS.items()}
         calibrated_concern = {k: v * 1.1 for k, v in DEFAULT_CONCERN_BOOST.items()}
@@ -537,13 +549,14 @@ class TestRouterWithTrustCalibrator:
             severity_weights=calibrated_severity,
             concern_boost=calibrated_concern,
         )
-        
+
         # Results may differ with calibrated weights
         assert len(results_default) == 2
         assert len(results_calibrated) == 2
 
 
 # ── Integration Tests ─────────────────────────────────────────────────────
+
 
 class TestConfidenceStrategyIntegration:
     """End-to-end integration tests for the confidence strategy."""
@@ -553,10 +566,10 @@ class TestConfidenceStrategyIntegration:
         """Test the full flow: finding -> routing -> histogram recording."""
         from verdity.metrics_store import MetricsStore
         from verdity.router import record_routing_outcomes
-        
+
         store = MetricsStore(db_path=":memory:")
         await store.connect()
-        
+
         try:
             # Create a finding
             f = Finding(
@@ -573,11 +586,11 @@ class TestConfidenceStrategyIntegration:
                 confidence_signals={"verifier_agreement": 0.9, "severity_weight": 1.0},
                 calibration_version=1,
             )
-            
+
             # Compute confidence and route
             score = compute_confidence(f)
             decision = route_finding(f, score)
-            
+
             # Record outcome
             await record_routing_outcomes(
                 store,
@@ -585,7 +598,7 @@ class TestConfidenceStrategyIntegration:
                 repo_id="acme/widgets",
                 pr_number=42,
             )
-            
+
             # Record confidence histogram
             await store.record_confidence_histogram(
                 repo_id="acme/widgets",
@@ -593,7 +606,7 @@ class TestConfidenceStrategyIntegration:
                 severity=f.severity.value,
                 concern=f.concern.value,
             )
-            
+
             # Verify histogram recorded
             hist = await store.get_confidence_histogram(repo_id="acme/widgets")
             assert hist["total_count"] == 1
@@ -606,12 +619,12 @@ class TestConfidenceStrategyIntegration:
         """calibration_version should increment when TrustCalibrator recalibrates."""
         calibrator = TrustCalibrator(db_path=":memory:")
         await calibrator.connect()
-        
+
         try:
             # Initial state
             stats1 = await calibrator.get_calibration_stats()
             version1 = stats1["version"]
-            
+
             # Record outcomes and recalibrate
             for _i in range(60):
                 await calibrator.record_outcome(
@@ -623,7 +636,7 @@ class TestConfidenceStrategyIntegration:
                     concern="security",
                 )
             await calibrator.recalibrate(min_samples=50)
-            
+
             # Version should increment
             stats2 = await calibrator.get_calibration_stats()
             assert stats2["version"] == version1 + 1
@@ -632,6 +645,7 @@ class TestConfidenceStrategyIntegration:
 
 
 # ── Gate Test ────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_gate_issue40_confidence_strategy():

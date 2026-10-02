@@ -170,14 +170,30 @@ async def route(
         finding.confidence_signals = {
             "base_confidence": finding.confidence,
             "severity_weight": severity_weights.get(
-                finding.severity.value if hasattr(finding.severity, "value") else str(finding.severity), 0.3
-            ) if severity_weights else DEFAULT_SEVERITY_WEIGHTS.get(
-                finding.severity.value if hasattr(finding.severity, "value") else str(finding.severity), 0.3
+                finding.severity.value
+                if hasattr(finding.severity, "value")
+                else str(finding.severity),
+                0.3,
+            )
+            if severity_weights
+            else DEFAULT_SEVERITY_WEIGHTS.get(
+                finding.severity.value
+                if hasattr(finding.severity, "value")
+                else str(finding.severity),
+                0.3,
             ),
             "concern_boost": concern_boost.get(
-                finding.concern.value if hasattr(finding.concern, "value") else str(finding.concern), 0.0
-            ) if concern_boost else DEFAULT_CONCERN_BOOST.get(
-                finding.concern.value if hasattr(finding.concern, "value") else str(finding.concern), 0.0
+                finding.concern.value
+                if hasattr(finding.concern, "value")
+                else str(finding.concern),
+                0.0,
+            )
+            if concern_boost
+            else DEFAULT_CONCERN_BOOST.get(
+                finding.concern.value
+                if hasattr(finding.concern, "value")
+                else str(finding.concern),
+                0.0,
             ),
         }
         finding.calibration_version = stats.get("version", 0)

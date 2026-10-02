@@ -393,9 +393,7 @@ class TrustCalibrator:
             raise RuntimeError("TrustCalibrator not connected. Call connect() first.")
 
         # Compute fresh metrics from all trust_signals
-        signal_rows = await self._conn.execute(
-            "SELECT confidence, outcome FROM trust_signals"
-        )
+        signal_rows = await self._conn.execute("SELECT confidence, outcome FROM trust_signals")
 
         if len(signal_rows) < min_samples_for_check:
             # Not enough data to determine drift

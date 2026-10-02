@@ -589,7 +589,9 @@ class Orchestrator:
         """
 
         async def nightly_task():
-            logger.info("Starting nightly trust recalibration task (interval=%.0fs)", interval_seconds)
+            logger.info(
+                "Starting nightly trust recalibration task (interval=%.0fs)", interval_seconds
+            )
             while True:
                 try:
                     await asyncio.sleep(interval_seconds)
