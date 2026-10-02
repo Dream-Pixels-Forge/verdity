@@ -37,6 +37,7 @@ async def gw_client() -> AsyncGenerator[AsyncClient, None]:
     import os
 
     from verdity.config import get_settings
+    from verdity.gateway.app import _parse_ip_allowlist
 
     get_settings.cache_clear()
     os.environ["WEBHOOK_HMAC_SECRET"] = "test-hmac-secret-key-for-dev-only"
@@ -64,6 +65,8 @@ async def gw_client() -> AsyncGenerator[AsyncClient, None]:
     app.state._delivery_cache_ts = {}
     app.state._last_eviction = 0.0
     app.state._rate_limiter = _RateLimiter()
+    # Disable IP allowlist for tests
+    app.state._github_ip_allowlist = _parse_ip_allowlist("")
     app.state._delivery_cache = DeliveryCache(db_path=":memory:")
     await app.state._delivery_cache.connect()
     app.state.queue = EventQueue(db_path=":memory:")

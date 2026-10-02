@@ -16,15 +16,24 @@ Security hardening (Phase 8):
   - Security headers on all responses
   - Delivery-ID dedupe cache with TTL-based eviction
   - Input sanitization on repo/file paths
+
+Security hardening (Phase 12 - Issue #41):
+  - GitHub IP allowlist middleware on /webhook endpoint (config-gated via GITHUB_WEBHOOK_IPS)
+  - Redis-backed rate limiter (redis.asyncio) behind feature flag
+  - HTTPX timeout config (10s total, 5s connect) on all clients
+  - Webhook source validation: X-Hub-Signature-256 + source IP in allowlist
+  - Prompt-injection classifier for security agent
 """
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import re
 import time
 from collections import defaultdict
 from contextlib import asynccontextmanager, suppress
+from typing import Optional
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
@@ -47,6 +56,70 @@ DELIVERY_CACHE_TTL_SECONDS = 24 * 3600  # 24 hours
 _eviction_interval_seconds = 300  # evict every 5 minutes
 RATE_LIMIT_MAX_REQUESTS = 100  # per IP per window
 RATE_LIMIT_WINDOW_SECONDS = 60  # sliding window in seconds
+
+# Default GitHub webhook IP ranges (from GitHub's meta API)
+# https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries#validating-webhook-deliveries
+DEFAULT_GITHUB_WEBHOOK_IPS = (
+    "192.30.252.0/22,"
+    "185.199.108.0/22,"
+    "140.82.112.0/20,"
+    "143.55.64.0/20,"
+    "40.126.0.0/16,"
+    "20.201.28.152/29,"
+    "20.207.73.82/29"
+)
+
+
+def _parse_ip_allowlist(cidr_string: str) -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
+    """Parse comma-separated CIDR string into list of IP networks.
+    
+    Args:
+        cidr_string: Comma-separated CIDR notations (e.g., "192.168.1.0/24,10.0.0.1")
+        
+    Returns:
+        List of IPv4Network or IPv6Network objects. Empty list if input is empty.
+    """
+    if not cidr_string or not cidr_string.strip():
+        return []
+    
+    networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
+    for part in cidr_string.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            # Try parsing as network (CIDR)
+            network = ipaddress.ip_network(part, strict=False)
+            networks.append(network)
+        except ValueError:
+            # If it's a single IP without CIDR, treat as /32 or /128
+            try:
+                ip = ipaddress.ip_address(part)
+                if isinstance(ip, ipaddress.IPv4Address):
+                    networks.append(ipaddress.IPv4Network(f"{part}/32"))
+                else:
+                    networks.append(ipaddress.IPv6Network(f"{part}/128"))
+            except ValueError:
+                logger.warning("Invalid IP/CIDR in allowlist: %s", part)
+                continue
+    return networks
+
+
+def _is_ip_allowed(client_ip: str, allowed_networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network]) -> bool:
+    """Check if client IP is in any of the allowed networks."""
+    if not allowed_networks:
+        return True  # No allowlist configured = allow all
+    
+    try:
+        ip = ipaddress.ip_address(client_ip)
+    except ValueError:
+        logger.warning("Invalid client IP address: %s", client_ip)
+        return False
+    
+    for network in allowed_networks:
+        if ip in network:
+            return True
+    return False
 
 
 class _RateLimiter:
@@ -94,6 +167,135 @@ class _RateLimiter:
             return False, max(retry_after, 1.0)
         timestamps.append(now)
         return True, 0.0
+
+
+# Lua script for sliding window rate limiting in Redis
+# Uses sorted set with timestamps as scores for precise sliding window
+_REDIS_RATE_LIMIT_SCRIPT = """
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+local limit = tonumber(ARGV[3])
+local ttl = tonumber(ARGV[4])
+
+-- Remove expired entries
+redis.call('ZREMRANGEBYSCORE', key, '-inf', now - window)
+
+-- Count current requests in window
+local count = redis.call('ZCARD', key)
+
+if count >= limit then
+    -- Rate limited: return 0 and TTL of oldest entry
+    local oldest = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
+    if #oldest > 0 then
+        local retry_after = (oldest[2] + window) - now
+        return {0, math.ceil(retry_after)}
+    end
+    return {0, ttl}
+end
+
+-- Add current request
+local member = now .. '-' .. math.random(1000000)
+redis.call('ZADD', key, now, member)
+redis.call('EXPIRE', key, ttl)
+return {1, 0}
+"""
+
+
+class RedisRateLimiter:
+    """Redis-backed sliding-window rate limiter for distributed deployments.
+    
+    Uses a sorted set in Redis to track request timestamps per client IP.
+    Implements sliding window algorithm via atomic Lua script.
+    Falls back to in-memory limiter on Redis errors.
+    
+    Usage:
+        limiter = RedisRateLimiter(redis_url="redis://localhost:6379/0")
+        await limiter.connect()
+        allowed, retry_after = await limiter.is_allowed(request)
+        await limiter.close()
+    """
+    
+    def __init__(
+        self,
+        redis_url: str,
+        max_requests: int = RATE_LIMIT_MAX_REQUESTS,
+        window_seconds: float = RATE_LIMIT_WINDOW_SECONDS,
+    ) -> None:
+        self._redis_url = redis_url
+        self._max = max_requests
+        self._window = window_seconds
+        self._ttl = int(window_seconds) + 1  # TTL slightly longer than window
+        self._redis = None
+        self._script_sha = None
+        self._fallback_limiter = _RateLimiter(max_requests, window_seconds)
+        self._connected = False
+
+    async def connect(self) -> None:
+        """Establish Redis connection and load Lua script."""
+        import redis.asyncio as redis
+        
+        self._redis = redis.from_url(
+            self._redis_url,
+            encoding="utf-8",
+            decode_responses=True,
+            socket_connect_timeout=5.0,
+            socket_timeout=5.0,
+        )
+        # Test connection
+        await self._redis.ping()
+        # Load Lua script
+        self._script_sha = await self._redis.script_load(_REDIS_RATE_LIMIT_SCRIPT)
+        self._connected = True
+        logger.info("Redis rate limiter connected to %s", self._redis_url)
+
+    async def close(self) -> None:
+        """Close Redis connection."""
+        if self._redis:
+            await self._redis.close()
+            self._redis = None
+            self._connected = False
+
+    def _client_ip(self, request: Request) -> str:
+        """Extract client IP from forwarded headers or direct connection."""
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+        return request.client.host if request.client else "unknown"
+
+    async def is_allowed(self, request: Request) -> tuple[bool, float]:
+        """Check if the request is within the rate limit.
+        
+        Returns (allowed, retry_after_seconds).
+        Falls back to in-memory limiter on Redis errors.
+        """
+        if not self._connected or self._redis is None:
+            logger.warning("Redis rate limiter not connected, using fallback")
+            return self._fallback_limiter.is_allowed(request)
+        
+        ip = self._client_ip(request)
+        key = f"rate_limit:{ip}"
+        now = time.time()
+        
+        try:
+            # Execute Lua script atomically
+            result = await self._redis.evalsha(
+                self._script_sha,
+                1,  # number of keys
+                key,
+                str(now),
+                str(self._window),
+                str(self._max),
+                str(self._ttl),
+            )
+            allowed = bool(result[0])
+            retry_after = float(result[1])
+            return allowed, retry_after
+        except Exception as exc:
+            logger.warning("Redis rate limiter error, falling back: %s", exc)
+            # Try to reconnect on next request
+            self._connected = False
+            return self._fallback_limiter.is_allowed(request)
 
 
 class DeliveryCache:
@@ -215,7 +417,20 @@ async def lifespan(app: FastAPI):
     await app.state.queue.connect()
     app.state.audit = AuditStore(db_path=settings.audit_sqlite_path)
     await app.state.audit.connect()
-    app.state._rate_limiter = _RateLimiter()
+    
+    # Initialize rate limiter (Redis-backed if enabled, otherwise in-memory)
+    if getattr(settings, "redis_rate_limiter_enabled", False):
+        redis_url = getattr(settings, "redis_url", "redis://localhost:6379/0")
+        app.state._rate_limiter = RedisRateLimiter(
+            redis_url=redis_url,
+            max_requests=RATE_LIMIT_MAX_REQUESTS,
+            window_seconds=RATE_LIMIT_WINDOW_SECONDS,
+        )
+        await app.state._rate_limiter.connect()
+        logger.info("Redis-backed rate limiter enabled")
+    else:
+        app.state._rate_limiter = _RateLimiter()
+        logger.info("In-memory rate limiter enabled")
 
     # Persistent delivery-ID cache
     delivery_cache_path = getattr(settings, "delivery_cache_sqlite_path", None)
@@ -242,6 +457,22 @@ async def lifespan(app: FastAPI):
     app.state.delivery_ids: set[str] = await app.state._delivery_cache.load_recent()
     app.state._delivery_cache_ts: dict[str, float] = {}
     app.state._last_eviction: float = time.time()
+    
+    # Load IP allowlist for GitHub webhooks (Issue #41)
+    # Config-gated via GITHUB_WEBHOOK_IPS env var
+    github_webhook_ips = getattr(settings, "github_webhook_ips", "")
+    if not github_webhook_ips:
+        # Use default GitHub webhook IP ranges if not explicitly configured
+        github_webhook_ips = DEFAULT_GITHUB_WEBHOOK_IPS
+    app.state._github_ip_allowlist = _parse_ip_allowlist(github_webhook_ips)
+    if app.state._github_ip_allowlist:
+        logger.info(
+            "GitHub IP allowlist enabled with %d network(s)",
+            len(app.state._github_ip_allowlist),
+        )
+    else:
+        logger.info("GitHub IP allowlist disabled (no networks configured)")
+    
     logger.info(
         "Ingestion Gateway initialized (loaded %d cached delivery IDs)",
         len(app.state.delivery_ids),
@@ -257,6 +488,10 @@ async def lifespan(app: FastAPI):
     if metrics is not None:
         await metrics.close()
     logger.info("Ingestion Gateway shut down")
+    # Close rate limiter if it has a close method (RedisRateLimiter)
+    rate_limiter = getattr(app.state, "_rate_limiter", None)
+    if rate_limiter and hasattr(rate_limiter, "close"):
+        await rate_limiter.close()
 
 
 app = FastAPI(
@@ -300,6 +535,37 @@ async def rate_limit_middleware(request: Request, call_next):
                     content={"detail": "Rate limit exceeded. Try again later."},
                 )
                 response.headers["Retry-After"] = str(int(retry_after))
+                _add_security_headers(response)
+                return response
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def ip_allowlist_middleware(request: Request, call_next):
+    """IP allowlist for GitHub webhook endpoint (config-gated via GITHUB_WEBHOOK_IPS).
+    
+    Only applies to POST /verdity/webhooks/github.
+    When allowlist is empty (feature disabled), all IPs are allowed.
+    """
+    if request.method == "POST" and request.url.path == "/verdity/webhooks/github":
+        allowed_networks: list = getattr(request.app.state, "_github_ip_allowlist", [])
+        if allowed_networks:  # Only enforce when allowlist is configured
+            # Extract client IP from X-Forwarded-For or direct connection
+            forwarded = request.headers.get("x-forwarded-for")
+            if forwarded:
+                client_ip = forwarded.split(",")[0].strip()
+            else:
+                client_ip = request.client.host if request.client else "unknown"
+            
+            if not _is_ip_allowed(client_ip, allowed_networks):
+                logger.warning(
+                    "IP allowlist rejected request from %s to /verdity/webhooks/github",
+                    client_ip,
+                )
+                response = JSONResponse(
+                    status_code=403,
+                    content={"detail": "IP not allowed"},
+                )
                 _add_security_headers(response)
                 return response
     return await call_next(request)

@@ -6,6 +6,10 @@ Constraint #8:  Every call goes through TokenEconomicsService.record_call().
 Constraint #5:  Temperature defaults to 0.0 for deterministic scoring.
 
 The LLM is an enhancement — deterministic regex is the primary path.
+
+HTTPX timeout configuration (Issue #41):
+  - Total timeout: 10 seconds (configurable via VERDITY_HTTP_TIMEOUT_TOTAL)
+  - Connect timeout: 5 seconds (configurable via VERDITY_HTTP_TIMEOUT_CONNECT)
 """
 
 from __future__ import annotations
@@ -18,9 +22,17 @@ from typing import Any
 
 import httpx
 
+from verdity.config import get_settings
 from verdity.token_economics import TokenEconomicsService, estimate_cost
 
 logger = logging.getLogger(__name__)
+
+# Default HTTPX timeout configuration (Issue #41)
+def _get_default_timeout_total() -> float:
+    return get_settings().http_timeout_total
+
+def _get_default_timeout_connect() -> float:
+    return get_settings().http_timeout_connect
 
 # ── Schema validation helpers ─────────────────────────────────────────
 
@@ -113,6 +125,8 @@ class LLMClient:
         agent_name: str = "llm-client",
         repo_owner: str = "",
         repo_name: str = "",
+        timeout_total: float | None = None,
+        timeout_connect: float | None = None,
     ) -> None:
         self._token_economics = token_economics
         self._api_key = api_key
@@ -121,6 +135,8 @@ class LLMClient:
         self._agent_name = agent_name
         self._repo_owner = repo_owner
         self._repo_name = repo_name
+        self._timeout_total = timeout_total or _get_default_timeout_total()
+        self._timeout_connect = timeout_connect or _get_default_timeout_connect()
 
     @property
     def enabled(self) -> bool:
@@ -162,7 +178,14 @@ class LLMClient:
         }
 
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(
+                    connect=self._timeout_connect,
+                    read=self._timeout_total,
+                    write=self._timeout_total,
+                    pool=self._timeout_total,
+                )
+            ) as client:
                 resp = await client.post(
                     f"{self._base_url}/chat/completions",
                     headers=headers,

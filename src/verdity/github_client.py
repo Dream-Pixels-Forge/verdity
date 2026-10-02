@@ -6,6 +6,10 @@ and provides typed methods for posting PR comments and reviews.
 
 This is the output path: findings flow from the orchestrator through
 the router to this client, which posts them as GitHub PR comments.
+
+HTTPX timeout configuration (Issue #41):
+  - Total timeout: 10 seconds (configurable via VERDITY_HTTP_TIMEOUT_TOTAL)
+  - Connect timeout: 5 seconds (configurable via VERDITY_HTTP_TIMEOUT_CONNECT)
 """
 
 from __future__ import annotations
@@ -17,9 +21,18 @@ from typing import Any, Self
 import httpx
 import jwt  # PyJWT
 
+from verdity.config import get_settings
+
 logger = logging.getLogger(__name__)
 
 GITHUB_API_BASE = "https://api.github.com"
+
+# Default HTTPX timeout configuration (Issue #41)
+def _get_default_timeout_total() -> float:
+    return get_settings().http_timeout_total
+
+def _get_default_timeout_connect() -> float:
+    return get_settings().http_timeout_connect
 
 
 class GitHubClientError(Exception):
@@ -47,6 +60,8 @@ class GitHubClient:
         *,
         base_url: str = GITHUB_API_BASE,
         token_lifetime_seconds: int = 600,
+        timeout_total: float | None = None,
+        timeout_connect: float | None = None,
     ) -> None:
         self._app_id = app_id
         self._private_key = (
@@ -55,6 +70,8 @@ class GitHubClient:
         self._installation_id = installation_id
         self._base_url = base_url.rstrip("/")
         self._token_lifetime = token_lifetime_seconds
+        self._timeout_total = timeout_total or _get_default_timeout_total()
+        self._timeout_connect = timeout_connect or _get_default_timeout_connect()
 
         # Cached tokens
         self._jwt: str | None = None
@@ -71,7 +88,12 @@ class GitHubClient:
         """Return the shared HTTP client, creating it lazily if needed."""
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
-                timeout=30.0,
+                timeout=httpx.Timeout(
+                    connect=self._timeout_connect,
+                    read=self._timeout_total,
+                    write=self._timeout_total,
+                    pool=self._timeout_total,
+                ),
                 limits=httpx.Limits(
                     max_connections=10,
                     max_keepalive_connections=5,

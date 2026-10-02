@@ -3,6 +3,10 @@ GitHub Platform — webhook verification, event normalization, and PR commenting
 
 Refactored from github_client.py. The original module is kept as a thin wrapper
 for backward compatibility.
+
+HTTPX timeout configuration (Issue #41):
+  - Total timeout: 10 seconds
+  - Connect timeout: 5 seconds
 """
 
 from __future__ import annotations
@@ -18,6 +22,15 @@ from verdity.platforms.base import Platform
 
 logger = logging.getLogger(__name__)
 
+# Default HTTPX timeout configuration (Issue #41)
+def _get_default_timeout_total() -> float:
+    from verdity.config import get_settings
+    return get_settings().http_timeout_total
+
+def _get_default_timeout_connect() -> float:
+    from verdity.config import get_settings
+    return get_settings().http_timeout_connect
+
 
 class GitHubPlatform(Platform):
     """
@@ -28,6 +41,15 @@ class GitHubPlatform(Platform):
     """
 
     PLATFORM_NAME = "github"
+
+    def __init__(
+        self,
+        *,
+        timeout_total: float | None = None,
+        timeout_connect: float | None = None,
+    ) -> None:
+        self._timeout_total = timeout_total or _get_default_timeout_total()
+        self._timeout_connect = timeout_connect or _get_default_timeout_connect()
 
     def verify_webhook(
         self,
@@ -109,6 +131,17 @@ class GitHubPlatform(Platform):
             },
         }
 
+    def _get_client(self) -> httpx.AsyncClient:
+        """Return an HTTP client with configured timeouts."""
+        return httpx.AsyncClient(
+            timeout=httpx.Timeout(
+                connect=self._timeout_connect,
+                read=self._timeout_total,
+                write=self._timeout_total,
+                pool=self._timeout_total,
+            ),
+        )
+
     async def post_comment(
         self,
         *,
@@ -119,7 +152,7 @@ class GitHubPlatform(Platform):
     ) -> dict[str, Any]:
         """Post a review comment on a GitHub PR."""
         url = f"https://api.github.com/repos/{owner}/{repo}/issues/{number}/comments"
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with self._get_client() as client:
             resp = await client.post(
                 url,
                 json={"body": body},
@@ -153,7 +186,7 @@ class GitHubPlatform(Platform):
                 }
             ],
         }
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with self._get_client() as client:
             resp = await client.post(
                 url,
                 json=payload,

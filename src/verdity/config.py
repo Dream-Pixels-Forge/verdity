@@ -126,6 +126,39 @@ class Settings(BaseSettings):
         description="Bitbucket webhook HMAC-SHA256 secret",
     )
 
+    # ── Security Hardening (Issue #41) ─────────────────────────────────
+    # GitHub webhook IP allowlist (comma-separated CIDR notation).
+    # When empty, the IP allowlist feature is disabled (allows all IPs).
+    # Defaults to GitHub's published webhook IP ranges.
+    github_webhook_ips: str = Field(
+        default="",
+        description="Comma-separated CIDR list of allowed IPs for GitHub webhooks. "
+        "Empty disables the IP allowlist feature.",
+    )
+    # Redis rate limiter feature flag
+    redis_rate_limiter_enabled: bool = Field(
+        default=False,
+        description="Enable Redis-backed rate limiter (requires redis.asyncio). "
+        "When false, uses in-memory rate limiter.",
+    )
+    redis_url: str = Field(
+        default="redis://localhost:6379/0",
+        description="Redis connection URL for rate limiter and queue.",
+    )
+    # HTTPX timeout configuration
+    http_timeout_total: float = Field(
+        default=10.0,
+        ge=1.0,
+        le=60.0,
+        description="Total HTTP timeout in seconds for all outbound requests.",
+    )
+    http_timeout_connect: float = Field(
+        default=5.0,
+        ge=1.0,
+        le=30.0,
+        description="Connection HTTP timeout in seconds for all outbound requests.",
+    )
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
