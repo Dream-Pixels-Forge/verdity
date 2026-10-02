@@ -23,6 +23,7 @@ from verdity.router import (
     RouteAction,
     compute_batch_routing,
     compute_confidence,
+    route,
     route_finding,
 )
 from verdity.schemas import ConcernType, Finding, RankedFinding, Severity
@@ -549,6 +550,44 @@ class TestRouterWithTrustCalibrator:
         # Results may differ with calibrated weights
         assert len(results_default) == 2
         assert len(results_calibrated) == 2
+
+    @pytest.mark.asyncio
+    async def test_route_with_calibrator(self):
+        """route() should use calibrator for adjusted weights and populate finding signals."""
+        calibrator = TrustCalibrator(db_path=":memory:")
+        await calibrator.connect()
+        try:
+            # Record enough outcomes for calibration
+            for _i in range(60):
+                await calibrator.record_outcome(
+                    finding_type="security-high",
+                    outcome="confirmed",
+                    repo_id="acme/widgets",
+                    confidence=0.9,
+                    severity="high",
+                    concern="security",
+                )
+            await calibrator.recalibrate(min_samples=50)
+
+            f = self._make_finding(severity=Severity.HIGH, confidence=0.8)
+            decision = await route(f, calibrator=calibrator)
+            assert decision.action in (RouteAction.AUTO_APPROVE, RouteAction.MANUAL_REVIEW, RouteAction.AUTO_DISMISS)
+            assert hasattr(f, "confidence_signals")
+            assert "base_confidence" in f.confidence_signals
+            assert "severity_weight" in f.confidence_signals
+            assert "concern_boost" in f.confidence_signals
+            assert f.calibration_version > 0
+        finally:
+            await calibrator.close()
+
+    @pytest.mark.asyncio
+    async def test_route_without_calibrator(self):
+        """route() should work without calibrator using default weights."""
+        f = self._make_finding(severity=Severity.MEDIUM, confidence=0.6)
+        decision = await route(f, calibrator=None)
+        assert decision.action in (RouteAction.AUTO_APPROVE, RouteAction.MANUAL_REVIEW, RouteAction.AUTO_DISMISS)
+        # Should not have confidence_signals populated when no calibrator
+        assert not hasattr(f, "confidence_signals") or f.confidence_signals == {}
 
 
 # ── Integration Tests ─────────────────────────────────────────────────────

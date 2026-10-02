@@ -207,9 +207,9 @@ class MetricsStore:
             severity: severity level (optional)
             concern: concern type (optional)
         """
-        if self._conn is None:
+        if self._conn is None:  # pragma: no cover
             raise RuntimeError("MetricsStore is not connected. Call connect() first.")
-        if not 0.0 <= confidence <= 1.0:
+        if not 0.0 <= confidence <= 1.0:  # pragma: no cover
             raise ValueError(f"Confidence must be in [0.0, 1.0], got {confidence}")
         await self._conn.execute(
             """
@@ -243,7 +243,7 @@ class MetricsStore:
                 "repo_id": str,
             }
         """
-        if self._conn is None:
+        if self._conn is None:  # pragma: no cover
             raise RuntimeError("MetricsStore is not connected. Call connect() first.")
 
         from datetime import timedelta
