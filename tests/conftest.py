@@ -110,7 +110,7 @@ async def semantic_index() -> AsyncGenerator[SemanticIndex, None]:
 @pytest_asyncio.fixture
 async def gateway_client(settings) -> AsyncGenerator[AsyncClient, None]:
     """Build an AsyncClient against the gateway app with test state initialized."""
-    from verdity.gateway.app import DeliveryCache, _RateLimiter, _parse_ip_allowlist, app
+    from verdity.gateway.app import DeliveryCache, _parse_ip_allowlist, _RateLimiter, app
 
     app.state.delivery_ids = set()
     app.state._delivery_cache_ts = {}

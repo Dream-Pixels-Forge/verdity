@@ -59,7 +59,7 @@ def _sign(body: bytes) -> str:
 async def gateway_client_and_queue() -> AsyncGenerator[tuple[AsyncClient, EventQueue], None]:
     """Create gateway client and expose the queue for inspection."""
     from verdity.audit_store import AuditStore
-    from verdity.gateway.app import DeliveryCache, _RateLimiter, _parse_ip_allowlist, app
+    from verdity.gateway.app import DeliveryCache, _parse_ip_allowlist, _RateLimiter, app
 
     app.state.delivery_ids = set()
     app.state._delivery_cache_ts = {}

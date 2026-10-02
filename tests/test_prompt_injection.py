@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import pytest
 import pytest_asyncio
-from unittest.mock import AsyncMock, MagicMock
 
 from verdity.agents.security import SecurityAgent
 
@@ -161,6 +160,7 @@ class TestPromptInjectionIntegration:
     async def test_security_agent_scans_for_prompt_injection(self):
         """Security agent should scan diff files for prompt injection."""
         import uuid
+
         from verdity.schemas import SpecialistContext
 
         agent = SecurityAgent()

@@ -24,13 +24,12 @@ from verdity.gateway.app import DeliveryCache, _RateLimiter, app
 from verdity.metrics_store import MetricsStore
 from verdity.schemas import RepoRef
 
-
 GITHUB_SECRET = "test-hmac-secret-key-for-dev-only"
 
 
 def _sign(secret: str, body: bytes) -> str:
-    import hmac
     import hashlib
+    import hmac
 
     return "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
 
@@ -213,7 +212,7 @@ class TestIPAllowlistMiddleware:
     async def test_allowlist_applies_only_to_github_webhook(self, gw_client):
         """IP allowlist should only apply to /verdity/webhooks/github, not other endpoints."""
         body = b'{"action":"opened","pull_request":{"number":1,"head":{"sha":"abc"},"base":{"sha":"def"},"title":"T","body":"","user":{"login":"u"}},"repository":{"name":"r","owner":{"login":"o"}}}'
-        sig = _sign(GITHUB_SECRET, body)
+        _ = _sign(GITHUB_SECRET, body)  # sig not used for GitLab endpoint
 
         # Other webhook endpoints should not be affected by IP allowlist
         resp = await gw_client.post(

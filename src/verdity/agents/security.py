@@ -578,7 +578,7 @@ class SecurityAgent(BaseSpecialistAgent):
                                 file=path,
                                 line_start=line_start,
                                 line_end=line_start,
-                                summary=f"[LLM] Prompt injection attempt detected",
+                                summary="[LLM] Prompt injection attempt detected",
                                 explanation=(
                                     f"LLM judge detected prompt injection in {path} ({text_type}) "
                                     f"at line {line_start}. Reason: {llm_result.pattern_matched}. "

@@ -33,7 +33,6 @@ import re
 import time
 from collections import defaultdict
 from contextlib import asynccontextmanager, suppress
-from typing import Optional
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
@@ -118,10 +117,7 @@ def _is_ip_allowed(
         logger.warning("Invalid client IP address: %s", client_ip)
         return False
 
-    for network in allowed_networks:
-        if ip in network:
-            return True
-    return False
+    return any(ip in network for network in allowed_networks)
 
 
 class _RateLimiter:

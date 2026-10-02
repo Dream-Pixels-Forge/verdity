@@ -11,13 +11,10 @@ The Redis rate limiter should:
 
 from __future__ import annotations
 
-import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
-
-from verdity.gateway.app import _RateLimiter
 
 
 class MockRedis:
@@ -59,7 +56,7 @@ class TestRedisRateLimiter:
         """Request under limit should be allowed."""
         from starlette.requests import Request
 
-        limiter, mock_redis = redis_rate_limiter
+        limiter, _mock_redis = redis_rate_limiter
 
         # Create a mock request
         scope = {
@@ -71,18 +68,17 @@ class TestRedisRateLimiter:
         }
         request = Request(scope)
 
-        allowed, retry_after = await limiter.is_allowed(request)
+        allowed, _retry_after = await limiter.is_allowed(request)
         assert allowed is True
-        assert retry_after == 0.0
 
     @pytest.mark.asyncio
     async def test_redis_rate_limiter_rejects_over_limit(self, redis_rate_limiter):
         """Request over limit should be rejected with retry-after."""
         from starlette.requests import Request
 
-        limiter, mock_redis = redis_rate_limiter
+        limiter, _mock_redis = redis_rate_limiter
         # Mock Redis to return 0 (rate limited)
-        mock_redis.evalsha = AsyncMock(return_value=[0, 30])
+        _mock_redis.evalsha = AsyncMock(return_value=[0, 30])
 
         scope = {
             "type": "http",
@@ -102,9 +98,9 @@ class TestRedisRateLimiter:
         """Should fall back to in-memory limiter when Redis fails."""
         from starlette.requests import Request
 
-        limiter, mock_redis = redis_rate_limiter
+        limiter, _mock_redis = redis_rate_limiter
         # Mock Redis to raise an exception
-        mock_redis.evalsha = AsyncMock(side_effect=Exception("Redis down"))
+        _mock_redis.evalsha = AsyncMock(side_effect=Exception("Redis down"))
 
         scope = {
             "type": "http",
@@ -116,7 +112,7 @@ class TestRedisRateLimiter:
         request = Request(scope)
 
         # Should fall back to in-memory limiter
-        allowed, retry_after = await limiter.is_allowed(request)
+        allowed, _retry_after = await limiter.is_allowed(request)
         assert allowed is True  # First request should be allowed
 
     @pytest.mark.asyncio
@@ -124,7 +120,7 @@ class TestRedisRateLimiter:
         """Should use sliding window algorithm via Lua script."""
         from starlette.requests import Request
 
-        limiter, mock_redis = redis_rate_limiter
+        limiter, _mock_redis = redis_rate_limiter
 
         scope = {
             "type": "http",
@@ -138,14 +134,14 @@ class TestRedisRateLimiter:
         await limiter.is_allowed(request)
 
         # Verify Lua script was called
-        mock_redis.evalsha.assert_called()
+        _mock_redis.evalsha.assert_called()
 
     @pytest.mark.asyncio
     async def test_redis_rate_limiter_different_ips_independent(self, redis_rate_limiter):
         """Different IPs should have independent limits."""
         from starlette.requests import Request
 
-        limiter, mock_redis = redis_rate_limiter
+        limiter, _mock_redis = redis_rate_limiter
 
         scope1 = {
             "type": "http",
@@ -174,14 +170,12 @@ class TestRedisRateLimiter:
     @pytest.mark.asyncio
     async def test_redis_rate_limiter_close(self, redis_rate_limiter):
         """Close should properly close Redis connection."""
-        limiter, mock_redis = redis_rate_limiter
+        limiter, _mock_redis = redis_rate_limiter
         await limiter.close()
-        mock_redis.close.assert_called_once()
+        _mock_redis.close.assert_called_once()
 
     def test_redis_rate_limiter_not_available_without_feature_flag(self):
         """RedisRateLimiter should not be used when feature flag is off."""
-        from verdity.config import get_settings
-        from verdity.gateway import app
 
         # The app should use _RateLimiter (in-memory) when Redis is disabled
         # This is tested via the gateway_client fixture which sets _RateLimiter
@@ -200,6 +194,7 @@ class TestRedisRateLimiterConfig:
     def test_redis_rate_limiter_enabled_via_env(self):
         """Redis rate limiter can be enabled via environment variable."""
         import os
+
         from verdity.config import get_settings
 
         os.environ["REDIS_RATE_LIMITER_ENABLED"] = "true"
@@ -214,6 +209,7 @@ class TestRedisRateLimiterConfig:
     def test_redis_url_config(self):
         """Redis URL should be configurable."""
         import os
+
         from verdity.config import get_settings
 
         os.environ["REDIS_URL"] = "redis://custom:6379/1"

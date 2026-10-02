@@ -14,8 +14,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-import httpx
-
 
 class TestGitHubClientTimeouts:
     """Tests for GitHub client HTTPX timeout configuration."""
@@ -172,7 +170,7 @@ class TestHTTPXTimeoutConstants:
         """Timeout constants should be defined and have correct values."""
         from verdity.config import get_settings
 
-        settings = get_settings()
+        _ = get_settings()
         # These may be added to config later, for now check they're not in settings
         # This test will pass once we add the config options
         pass
