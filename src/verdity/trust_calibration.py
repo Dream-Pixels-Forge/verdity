@@ -245,29 +245,6 @@ class TrustCalibrator:
                 new_severity_weights = {k: v * 1.05 for k, v in new_severity_weights.items()}
                 new_concern_boost = {k: v * 1.05 for k, v in new_concern_boost.items()}
 
-        # Save calibration state
-        weights_json = json.dumps(
-            {
-                "severity_weights": new_severity_weights,
-                "concern_boost": new_concern_boost,
-            }
-        )
-        last_trained = datetime.now(UTC).isoformat()
-        sample_count = sum(s["total"] for s in type_stats.values())
-
-        await self._conn.execute(
-            """
-            UPDATE calibration_state
-            SET version = version + 1,
-                weights_json = ?,
-                last_trained = ?,
-                sample_count = ?
-            WHERE id = 1
-        """,
-            (weights_json, last_trained, sample_count),
-        )
-        await self._conn.commit()
-
         # Compute precision@0.9 and recall@0.6 from the recorded signals
         precision_09 = 0.0
         recall_06 = 0.0
@@ -295,6 +272,31 @@ class TrustCalibrator:
 
         precision_09 = confirmed_09 / total_09 if total_09 > 0 else 0.0
         recall_06 = confirmed_06 / total_06 if total_06 > 0 else 0.0
+
+        # Save calibration state with precision/recall metrics
+        weights_json = json.dumps(
+            {
+                "severity_weights": new_severity_weights,
+                "concern_boost": new_concern_boost,
+            }
+        )
+        last_trained = datetime.now(UTC).isoformat()
+        sample_count = sum(s["total"] for s in type_stats.values())
+
+        await self._conn.execute(
+            """
+            UPDATE calibration_state
+            SET version = version + 1,
+                weights_json = ?,
+                last_trained = ?,
+                sample_count = ?,
+                precision_at_09 = ?,
+                recall_at_06 = ?
+            WHERE id = 1
+        """,
+            (weights_json, last_trained, sample_count, precision_09, recall_06),
+        )
+        await self._conn.commit()
 
         changed = (
             new_severity_weights != DEFAULT_SEVERITY_WEIGHTS
@@ -357,3 +359,93 @@ class TrustCalibrator:
             "recall_at_06": 0.0,
             "last_trained": None,
         }
+
+    # ── Drift Detection ────────────────────────────────────────────────
+
+    async def check_drift(
+        self,
+        precision_threshold: float = 0.8,
+        recall_threshold: float = 0.7,
+        fp_rate_threshold: float = 0.3,
+        min_samples_for_check: int = 20,
+    ) -> bool:
+        """
+        Check if calibration has drifted significantly from expected performance.
+
+        Drift is detected when any of:
+        - Precision at confidence >= 0.9 falls below precision_threshold
+        - Recall at confidence >= 0.6 falls below recall_threshold
+        - Overall false positive rate exceeds fp_rate_threshold
+
+        Computes fresh metrics from all recorded trust_signals, not just
+        the last calibration snapshot.
+
+        Args:
+            precision_threshold: Minimum acceptable precision@0.9 (default 0.8)
+            recall_threshold: Minimum acceptable recall@0.6 (default 0.7)
+            fp_rate_threshold: Maximum acceptable false positive rate (default 0.3)
+            min_samples_for_check: Minimum samples needed to perform drift check (default 20)
+
+        Returns:
+            True if drift detected, False if calibration is stable
+        """
+        if self._conn is None:
+            raise RuntimeError("TrustCalibrator not connected. Call connect() first.")
+
+        # Compute fresh metrics from all trust_signals
+        signal_rows = await self._conn.execute(
+            "SELECT confidence, outcome FROM trust_signals"
+        )
+
+        if len(signal_rows) < min_samples_for_check:
+            # Not enough data to determine drift
+            return False
+
+        confirmed_09 = 0
+        total_09 = 0
+        confirmed_06 = 0
+        total_06 = 0
+        fp_count = 0
+        total_count = 0
+
+        for row in signal_rows:
+            conf = row["confidence"]
+            outcome = row["outcome"]
+            total_count += 1
+            if outcome == "false_positive":
+                fp_count += 1
+            if conf >= 0.9:
+                total_09 += 1
+                if outcome == "confirmed":
+                    confirmed_09 += 1
+            if conf >= 0.6:
+                total_06 += 1
+                if outcome == "confirmed":
+                    confirmed_06 += 1
+
+        precision_09 = confirmed_09 / total_09 if total_09 > 0 else 0.0
+        recall_06 = confirmed_06 / total_06 if total_06 > 0 else 0.0
+        fp_rate = fp_count / total_count if total_count > 0 else 0.0
+
+        # Check if metrics meet thresholds
+        precision_ok = precision_09 >= precision_threshold
+        recall_ok = recall_06 >= recall_threshold
+        fp_ok = fp_rate <= fp_rate_threshold
+
+        # Drift detected if any metric falls below threshold
+        has_drift = not (precision_ok and recall_ok and fp_ok)
+
+        if has_drift:
+            logger.warning(
+                "Calibration drift detected: precision@0.9=%.3f (threshold=%.3f), "
+                "recall@0.6=%.3f (threshold=%.3f), fp_rate=%.3f (threshold=%.3f), samples=%d",
+                precision_09,
+                precision_threshold,
+                recall_06,
+                recall_threshold,
+                fp_rate,
+                fp_rate_threshold,
+                len(signal_rows),
+            )
+
+        return has_drift

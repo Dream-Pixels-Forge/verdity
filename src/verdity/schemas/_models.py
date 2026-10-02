@@ -157,6 +157,8 @@ class Finding(BaseModel):
     evidence: list[EvidenceItem] = Field(default_factory=list)
     agent_version: StrictStr
     prompt_hash: StrictStr
+    confidence_signals: dict[str, float] = Field(default_factory=dict)
+    calibration_version: int = Field(default=0, ge=0)
 
 
 class SpecialistResponse(BaseModel):

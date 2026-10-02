@@ -23,6 +23,7 @@ class MetricsStore:
       - review_metrics: finding counts, severity distribution, costs per review
       - finding_outcomes: human decisions (confirmed/false_positive/wont_fix/auto_fixed)
       - review_timings: phase-level duration tracking
+      - confidence_histogram: confidence score distribution for calibration monitoring
     """
 
     CREATE_TABLES_SQL = """
@@ -65,6 +66,18 @@ class MetricsStore:
         );
         CREATE INDEX IF NOT EXISTS idx_rt_repo ON review_timings(repo_id);
         CREATE INDEX IF NOT EXISTS idx_rt_pr   ON review_timings(pr_number);
+
+        CREATE TABLE IF NOT EXISTS confidence_histogram (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            recorded_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+            repo_id       TEXT NOT NULL,
+            confidence    REAL NOT NULL,
+            severity      TEXT,
+            concern       TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_ch_repo ON confidence_histogram(repo_id);
+        CREATE INDEX IF NOT EXISTS idx_ch_conf ON confidence_histogram(confidence);
+        CREATE INDEX IF NOT EXISTS idx_ch_rec  ON confidence_histogram(recorded_at);
     """
 
     def __init__(self, db_path: str = ":memory:") -> None:
@@ -175,6 +188,105 @@ class MetricsStore:
             (repo_id, pr_number, phase, duration_ms),
         )
         await self._conn.commit()
+
+    # ── Confidence Histogram ──────────────────────────────────────────────
+
+    async def record_confidence_histogram(
+        self,
+        *,
+        repo_id: str,
+        confidence: float,
+        severity: str | None = None,
+        concern: str | None = None,
+    ) -> None:
+        """Record a confidence score for histogram/distribution tracking.
+
+        Args:
+            repo_id: owner/name identifier
+            confidence: confidence score [0.0, 1.0]
+            severity: severity level (optional)
+            concern: concern type (optional)
+        """
+        if self._conn is None:
+            raise RuntimeError("MetricsStore is not connected. Call connect() first.")
+        if not 0.0 <= confidence <= 1.0:
+            raise ValueError(f"Confidence must be in [0.0, 1.0], got {confidence}")
+        await self._conn.execute(
+            """
+            INSERT INTO confidence_histogram (repo_id, confidence, severity, concern)
+            VALUES (?, ?, ?, ?)
+            """,
+            (repo_id, confidence, severity, concern),
+        )
+        await self._conn.commit()
+
+    async def get_confidence_histogram(
+        self,
+        repo_id: str,
+        days: int = 30,
+        num_bins: int = 10,
+    ) -> dict[str, Any]:
+        """Return binned confidence histogram for a repo.
+
+        Args:
+            repo_id: owner/name identifier
+            days: time window in days
+            num_bins: number of equal-width bins (default 10, i.e., 0.1 width each)
+
+        Returns:
+            {
+                "bins": [
+                    {"bin_start": 0.0, "bin_end": 0.1, "count": 5},
+                    ...
+                ],
+                "total_count": int,
+                "repo_id": str,
+            }
+        """
+        if self._conn is None:
+            raise RuntimeError("MetricsStore is not connected. Call connect() first.")
+
+        from datetime import timedelta
+
+        cutoff = datetime.now(UTC) - timedelta(days=days)
+        cutoff_iso = cutoff.isoformat()
+
+        rows = await self._conn.execute(
+            """
+            SELECT confidence FROM confidence_histogram
+            WHERE repo_id = ? AND recorded_at >= ?
+            ORDER BY confidence
+            """,
+            (repo_id, cutoff_iso),
+        )
+
+        confidences = [float(r["confidence"]) for r in rows]
+        total_count = len(confidences)
+
+        # Create bins
+        bin_width = 1.0 / num_bins
+        bins = []
+        for i in range(num_bins):
+            bin_start = i * bin_width
+            bin_end = (i + 1) * bin_width
+            # Count confidences in this bin (left-inclusive, right-exclusive except last)
+            if i == num_bins - 1:
+                count = sum(1 for c in confidences if bin_start <= c <= bin_end)
+            else:
+                count = sum(1 for c in confidences if bin_start <= c < bin_end)
+            bins.append(
+                {
+                    "bin_start": round(bin_start, 3),
+                    "bin_end": round(bin_end, 3),
+                    "count": count,
+                }
+            )
+
+        return {
+            "bins": bins,
+            "total_count": total_count,
+            "repo_id": repo_id,
+        }
 
     # ── Query methods ──────────────────────────────────────────────────
 
