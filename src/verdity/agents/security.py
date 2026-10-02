@@ -534,7 +534,9 @@ class SecurityAgent(BaseSpecialistAgent):
                     lines = scan_text.split("\n")
                     line_start = 1
                     for i, line in enumerate(lines, 1):
-                        if result.pattern_matched.lower().replace("_", " ") in line.lower():  # pragma: no cover
+                        if (
+                            result.pattern_matched.lower().replace("_", " ") in line.lower()
+                        ):  # pragma: no cover
                             line_start = i  # pragma: no cover
                             break
 
@@ -570,7 +572,9 @@ class SecurityAgent(BaseSpecialistAgent):
                 # Optional LLM judge for more sophisticated detection
                 if use_llm and llm_client and llm_client.enabled:  # pragma: no cover
                     llm_result = await self._detect_prompt_injection_llm(scan_text, llm_client)
-                    if llm_result.detected and llm_result.confidence > result.confidence:  # pragma: no cover
+                    if (
+                        llm_result.detected and llm_result.confidence > result.confidence
+                    ):  # pragma: no cover
                         findings.append(
                             Finding(
                                 concern=ConcernType.SECURITY,
