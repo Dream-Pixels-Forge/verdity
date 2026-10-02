@@ -2,14 +2,15 @@
 Verdity — AI Pull Request Reviewer, Production Agent System
 Root package.
 
-v0.3.0 Features:
-- MCP Server exposure (Model Context Protocol)
-- Full-codebase context indexing
-- Agentic fix mode
-- Custom review rules (.verdity/rules.yml)
+v0.4.6 Features:
+- Enforcement engine with blocking rules (CEL expressions)
+- GitHub Checks API integration
+- Approval queue SLA escalation
+- Verification gate auto-escalation
+- Budget enforcer with specialist-level limits
 """
 
-__version__ = "0.3.0"
+__version__ = "0.4.6"
 
 __all__ = [
     "MCPServer",
