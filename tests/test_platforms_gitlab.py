@@ -7,8 +7,11 @@ Phase 13: Multi-Platform Webhook Support — GitLab
 from __future__ import annotations
 
 import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
 
+from fastapi import HTTPException, Request
 from verdity.platforms.gitlab import GitLabPlatform
+from verdity.schemas import TriggerType, VerdityEvent
 
 
 class TestGitLabVerifyWebhook:
@@ -281,3 +284,289 @@ class TestGitLabPostInlineComment:
         assert payload["body"] == "inline"
         assert payload["position"]["new_path"] == "src/x.py"
         assert payload["position"]["new_line"] == 5
+
+
+class TestGitLabHandleWebhook:
+    """Handle webhook: verify + normalize in one call."""
+
+    @pytest.mark.asyncio
+    async def test_handle_webhook_success(self):
+        """Valid webhook returns normalized VerdityEvent."""
+        platform = GitLabPlatform()
+        
+        # Create a mock Request
+        mock_request = MagicMock(spec=Request)
+        mock_request.headers = {
+            "x-gitlab-token": "secret-token",
+            "x-gitlab-event-uuid": "delivery-123",
+        }
+        mock_request.body = AsyncMock(return_value=b'{"object_kind": "merge_request", "object_attributes": {"action": "open", "iid": 42, "title": "Test", "description": "", "head_commit_sha": "abc", "target_commit_sha": "def", "author": {"username": "alice"}}, "project": {"namespace": "myorg", "name": "myrepo"}}')
+        
+        with patch.object(platform, "verify_webhook", return_value=True):
+            with patch("verdity.platforms.gitlab.get_settings") as mock_get_settings:
+                mock_settings = MagicMock()
+                mock_settings.gitlab_webhook_secret.get_secret_value.return_value = "secret-token"
+                mock_get_settings.return_value = mock_settings
+                event = await platform.handle_webhook(mock_request)
+        
+        assert isinstance(event, VerdityEvent)
+        assert event.trigger_type.value == "pr.opened"
+        assert event.repo.owner == "myorg"
+        assert event.repo.name == "myrepo"
+        assert event.pull_request.number == 42
+
+    @pytest.mark.asyncio
+    async def test_handle_webhook_invalid_signature(self):
+        """Invalid signature raises HTTPException."""
+        platform = GitLabPlatform()
+        
+        mock_request = MagicMock(spec=Request)
+        mock_request.headers = {"x-gitlab-token": "wrong-token"}
+        mock_request.body = AsyncMock(return_value=b"{}")
+        
+        with patch.object(platform, "verify_webhook", return_value=False):
+            with pytest.raises(Exception):  # HTTPException or similar
+                await platform.handle_webhook(mock_request)
+
+    @pytest.mark.asyncio
+    async def test_handle_webhook_invalid_signature_raises(self):
+        """Invalid signature raises HTTPException with 401."""
+        platform = GitLabPlatform()
+        
+        mock_request = MagicMock(spec=Request)
+        mock_request.headers = {"x-gitlab-token": "wrong-token"}
+        mock_request.body = AsyncMock(return_value=b"{}")
+        
+        with patch("verdity.platforms.gitlab.get_settings") as mock_get_settings:
+            mock_settings = MagicMock()
+            mock_settings.gitlab_webhook_secret.get_secret_value.return_value = "secret-token"
+            mock_get_settings.return_value = mock_settings
+            
+            with pytest.raises(HTTPException) as exc_info:
+                await platform.handle_webhook(mock_request)
+        
+        assert exc_info.value.status_code == 401
+        assert "Invalid or missing signature" in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_handle_webhook_json_decode_error(self):
+        """Invalid JSON raises HTTPException with 400."""
+        platform = GitLabPlatform()
+        
+        mock_request = MagicMock(spec=Request)
+        mock_request.headers = {"x-gitlab-token": "secret-token"}
+        mock_request.body = AsyncMock(return_value=b"invalid json")
+        
+        with patch("verdity.platforms.gitlab.get_settings") as mock_get_settings:
+            mock_settings = MagicMock()
+            mock_settings.gitlab_webhook_secret.get_secret_value.return_value = "secret-token"
+            mock_get_settings.return_value = mock_settings
+            
+            with patch.object(platform, "verify_webhook", return_value=True):
+                with pytest.raises(HTTPException) as exc_info:
+                    await platform.handle_webhook(mock_request)
+        
+        assert exc_info.value.status_code == 400
+        assert "Invalid JSON payload" in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_handle_webhook_unknown_trigger_type(self):
+        """Unknown trigger type falls back to PR_OPENED."""
+        platform = GitLabPlatform()
+        
+        mock_request = MagicMock(spec=Request)
+        mock_request.headers = {"x-gitlab-token": "secret-token", "x-gitlab-event-uuid": "delivery-123"}
+        # Use an action that maps to unknown trigger type
+        mock_request.body = AsyncMock(return_value=b'{"object_kind": "merge_request", "object_attributes": {"action": "unknown_action", "iid": 1, "title": "Test", "description": "", "head_commit_sha": "abc", "target_commit_sha": "def", "author": {"username": "alice"}}, "project": {"namespace": "myorg", "name": "myrepo", "id": 123}}')
+        
+        with patch("verdity.platforms.gitlab.get_settings") as mock_get_settings:
+            mock_settings = MagicMock()
+            mock_settings.gitlab_webhook_secret.get_secret_value.return_value = "secret-token"
+            mock_get_settings.return_value = mock_settings
+            
+            with patch.object(platform, "verify_webhook", return_value=True):
+                event = await platform.handle_webhook(mock_request)
+        
+        assert event.trigger_type == TriggerType.PR_OPENED
+
+
+class TestGitLabGetMergeRequest:
+    """Fetch merge request details from GitLab API."""
+
+    @pytest.mark.asyncio
+    async def test_get_merge_request_success(self):
+        """Fetch MR details by project_id and MR IID."""
+        platform = GitLabPlatform()
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "id": 1,
+            "iid": 42,
+            "title": "Test MR",
+            "description": "Description",
+            "state": "opened",
+            "head_commit_sha": "abc123",
+            "target_commit_sha": "def456",
+        }
+        
+        mock_http = MagicMock()
+        mock_http.get = AsyncMock(return_value=mock_response)
+        mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+        mock_http.__aexit__ = AsyncMock(return_value=False)
+        
+        with patch("verdity.platforms.gitlab.httpx.AsyncClient", return_value=mock_http):
+            result = await platform.get_merge_request("myorg/myproj", 42)
+        
+        assert result["iid"] == 42
+        assert result["title"] == "Test MR"
+        call_args = mock_http.get.call_args
+        assert "myorg/myproj" in call_args.args[0]
+        assert "merge_requests/42" in call_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_get_merge_request_not_found(self):
+        """404 raises exception."""
+        platform = GitLabPlatform()
+        mock_response = MagicMock()
+        mock_response.raise_for_status.side_effect = Exception("404 Not Found")
+        
+        mock_http = MagicMock()
+        mock_http.get = AsyncMock(return_value=mock_response)
+        mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+        mock_http.__aexit__ = AsyncMock(return_value=False)
+        
+        with patch("verdity.platforms.gitlab.httpx.AsyncClient", return_value=mock_http):
+            with pytest.raises(Exception):
+                await platform.get_merge_request("myorg/myproj", 999)
+
+    @pytest.mark.asyncio
+    async def test_get_merge_request_http_error(self):
+        """HTTP error raises exception."""
+        platform = GitLabPlatform()
+        import httpx
+        mock_response = MagicMock()
+        mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "404 Not Found", request=MagicMock(), response=MagicMock()
+        )
+        
+        mock_http = MagicMock()
+        mock_http.get = AsyncMock(return_value=mock_response)
+        mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+        mock_http.__aexit__ = AsyncMock(return_value=False)
+        
+        with patch("verdity.platforms.gitlab.httpx.AsyncClient", return_value=mock_http):
+            with pytest.raises(httpx.HTTPStatusError):
+                await platform.get_merge_request("myorg/myproj", 999)
+
+
+class TestGitLabGetDiff:
+    """Fetch MR diff from GitLab API."""
+
+    @pytest.mark.asyncio
+    async def test_get_diff_success(self):
+        """Fetch diff as string."""
+        platform = GitLabPlatform()
+        mock_response = MagicMock()
+        # GitLab API returns a list of diff objects, each with a "diff" field
+        mock_response.json.return_value = [
+            {"diff": "diff --git a/file.py b/file.py\n+new line"},
+            {"diff": "diff --git a/other.py b/other.py\n-changed line"},
+        ]
+        
+        mock_http = MagicMock()
+        mock_http.get = AsyncMock(return_value=mock_response)
+        mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+        mock_http.__aexit__ = AsyncMock(return_value=False)
+        
+        with patch("verdity.platforms.gitlab.httpx.AsyncClient", return_value=mock_http):
+            result = await platform.get_diff("myorg/myproj", 42)
+        
+        assert "diff --git" in result
+        assert "new line" in result
+        assert "changed line" in result
+        call_args = mock_http.get.call_args
+        assert "merge_requests/42/diffs" in call_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_get_diff_http_error(self):
+        """HTTP error raises exception."""
+        platform = GitLabPlatform()
+        import httpx
+        mock_response = MagicMock()
+        mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "404 Not Found", request=MagicMock(), response=MagicMock()
+        )
+        
+        mock_http = MagicMock()
+        mock_http.get = AsyncMock(return_value=mock_response)
+        mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+        mock_http.__aexit__ = AsyncMock(return_value=False)
+        
+        with patch("verdity.platforms.gitlab.httpx.AsyncClient", return_value=mock_http):
+            with pytest.raises(httpx.HTTPStatusError):
+                await platform.get_diff("myorg/myproj", 999)
+
+
+class TestGitLabGetFileContent:
+    """Fetch file content from GitLab repository."""
+
+    @pytest.mark.asyncio
+    async def test_get_file_content_success(self):
+        """Fetch file content at specific ref."""
+        platform = GitLabPlatform()
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "content": "ZGVmIGZvbygpOgogICAgcmV0dXJuICJoZWxsbyIK",
+            "encoding": "base64",
+        }
+        
+        mock_http = MagicMock()
+        mock_http.get = AsyncMock(return_value=mock_response)
+        mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+        mock_http.__aexit__ = AsyncMock(return_value=False)
+        
+        with patch("verdity.platforms.gitlab.httpx.AsyncClient", return_value=mock_http):
+            result = await platform.get_file_content("myorg/myproj", "src/main.py", "abc123")
+        
+        assert "def foo():" in result
+        call_args = mock_http.get.call_args
+        assert "repository/files" in call_args.args[0]
+        assert call_args.kwargs["params"]["ref"] == "abc123"
+
+    @pytest.mark.asyncio
+    async def test_get_file_content_non_base64(self):
+        """Fetch file content with non-base64 encoding."""
+        platform = GitLabPlatform()
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "content": "plain text content",
+            "encoding": "text",
+        }
+        
+        mock_http = MagicMock()
+        mock_http.get = AsyncMock(return_value=mock_response)
+        mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+        mock_http.__aexit__ = AsyncMock(return_value=False)
+        
+        with patch("verdity.platforms.gitlab.httpx.AsyncClient", return_value=mock_http):
+            result = await platform.get_file_content("myorg/myproj", "src/main.py", "abc123")
+        
+        assert result == "plain text content"
+
+    @pytest.mark.asyncio
+    async def test_get_file_content_http_error(self):
+        """HTTP error raises exception."""
+        platform = GitLabPlatform()
+        import httpx
+        mock_response = MagicMock()
+        mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "404 Not Found", request=MagicMock(), response=MagicMock()
+        )
+        
+        mock_http = MagicMock()
+        mock_http.get = AsyncMock(return_value=mock_response)
+        mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+        mock_http.__aexit__ = AsyncMock(return_value=False)
+        
+        with patch("verdity.platforms.gitlab.httpx.AsyncClient", return_value=mock_http):
+            with pytest.raises(httpx.HTTPStatusError):
+                await platform.get_file_content("myorg/myproj", "src/main.py", "abc123")

@@ -7,15 +7,28 @@ Unlike GitHub's HMAC, GitLab compares the token directly (constant-time).
 
 from __future__ import annotations
 
+import base64
 import hmac
 import logging
 from typing import Any
 
 import httpx
+from fastapi import HTTPException, Request
 
+from verdity.config import get_settings
 from verdity.platforms.base import Platform
+from verdity.schemas import VerdityEvent
 
 logger = logging.getLogger(__name__)
+
+
+# Default HTTPX timeout configuration (Issue #41)
+def _get_default_timeout_total() -> float:
+    return get_settings().http_timeout_total
+
+
+def _get_default_timeout_connect() -> float:
+    return get_settings().http_timeout_connect
 
 
 class GitLabPlatform(Platform):
@@ -27,6 +40,26 @@ class GitLabPlatform(Platform):
     """
 
     PLATFORM_NAME = "gitlab"
+
+    def __init__(
+        self,
+        *,
+        timeout_total: float | None = None,
+        timeout_connect: float | None = None,
+    ) -> None:
+        self._timeout_total = timeout_total or _get_default_timeout_total()
+        self._timeout_connect = timeout_connect or _get_default_timeout_connect()
+
+    def _get_client(self) -> httpx.AsyncClient:
+        """Return an HTTP client with configured timeouts."""
+        return httpx.AsyncClient(
+            timeout=httpx.Timeout(
+                connect=self._timeout_connect,
+                read=self._timeout_total,
+                write=self._timeout_total,
+                pool=self._timeout_total,
+            ),
+        )
 
     def verify_webhook(
         self,
@@ -105,6 +138,69 @@ class GitLabPlatform(Platform):
             },
         }
 
+    async def handle_webhook(self, request: Request) -> VerdityEvent:
+        """
+        Handle incoming GitLab webhook: verify signature and normalize to VerdityEvent.
+
+        This is the main entry point for the unified webhook endpoint.
+        """
+        raw_body = await request.body()
+        headers_dict = {k.lower(): v for k, v in request.headers.items()}
+
+        # Get secret from settings
+        settings = get_settings()
+        secret = settings.gitlab_webhook_secret.get_secret_value()
+
+        if not secret:
+            logger.warning("No GitLab webhook secret configured")
+            raise HTTPException(status_code=401, detail="No secret configured for gitlab")
+
+        if not self.verify_webhook(headers_dict, raw_body, secret):
+            delivery_id = headers_dict.get("x-gitlab-event-uuid", "unknown")
+            logger.warning("GitLab webhook verification failed for delivery=%s", delivery_id)
+            raise HTTPException(status_code=401, detail="Invalid or missing signature")
+
+        # Parse and normalize
+        import json
+        try:
+            payload = json.loads(raw_body)
+        except json.JSONDecodeError as exc:
+            logger.error("Failed to parse GitLab webhook JSON: %s", exc)
+            raise HTTPException(status_code=400, detail="Invalid JSON payload") from exc
+
+        event_dict = self.normalize_event(headers_dict, payload)
+
+        # Convert to VerdityEvent
+        from verdity.schemas import PullRequestRef, RepoRef, TriggerType
+
+        trigger_type_str = event_dict.get("trigger_type", "unknown")
+        try:
+            trigger_type = TriggerType(trigger_type_str)
+        except ValueError:
+            trigger_type = TriggerType.PR_OPENED
+
+        repo_dict = event_dict.get("repo", {})
+        pr_dict = event_dict.get("pull_request", {})
+
+        return VerdityEvent(
+            delivery_id=event_dict.get("delivery_id", ""),
+            trigger_type=trigger_type,
+            repo=RepoRef(
+                owner=repo_dict.get("owner", ""),
+                name=repo_dict.get("name", ""),
+                id=repo_dict.get("id", 0),
+            ),
+            pull_request=PullRequestRef(
+                number=pr_dict.get("number", 0),
+                head_sha=pr_dict.get("head_sha", ""),
+                base_sha=pr_dict.get("base_sha", ""),
+                title=pr_dict.get("title", ""),
+                body=pr_dict.get("body", ""),
+                author=pr_dict.get("author", ""),
+                diff_url=pr_dict.get("diff_url", ""),
+            ),
+        )
+
     async def post_comment(
         self,
         *,
@@ -120,7 +216,7 @@ class GitLabPlatform(Platform):
         """
         project_id = f"{owner}/{repo}"
         url = f"https://gitlab.com/api/v4/projects/{project_id}/merge_requests/{number}/notes"
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with self._get_client() as client:
             resp = await client.post(
                 url,
                 json={"body": body},
@@ -157,10 +253,88 @@ class GitLabPlatform(Platform):
                 "new_line": line,
             },
         }
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with self._get_client() as client:
             resp = await client.post(
                 url,
                 json=payload,
             )
             resp.raise_for_status()
             return resp.json()
+
+    async def get_merge_request(
+        self,
+        project_id: str,
+        mr_iid: int,
+    ) -> dict[str, Any]:
+        """
+        Fetch merge request details from GitLab API.
+
+        Args:
+            project_id: GitLab project ID (e.g., "owner/repo" or numeric ID)
+            mr_iid: Merge request IID (internal ID)
+
+        Returns:
+            MR details as dict
+        """
+        url = f"https://gitlab.com/api/v4/projects/{project_id}/merge_requests/{mr_iid}"
+        async with self._get_client() as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            return resp.json()
+
+    async def get_diff(
+        self,
+        project_id: str,
+        mr_iid: int,
+    ) -> str:
+        """
+        Fetch merge request diff from GitLab API.
+
+        Args:
+            project_id: GitLab project ID
+            mr_iid: Merge request IID
+
+        Returns:
+            Diff as unified diff string
+        """
+        url = f"https://gitlab.com/api/v4/projects/{project_id}/merge_requests/{mr_iid}/diffs"
+        async with self._get_client() as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            diffs = resp.json()
+            # Combine all diffs into a single unified diff string
+            diff_parts = []
+            for diff in diffs:
+                diff_parts.append(diff.get("diff", ""))
+            return "\n".join(diff_parts)
+
+    async def get_file_content(
+        self,
+        project_id: str,
+        file_path: str,
+        ref: str,
+    ) -> str:
+        """
+        Fetch file content from GitLab repository at a specific ref.
+
+        Args:
+            project_id: GitLab project ID
+            file_path: Path to the file
+            ref: Git ref (branch, tag, or commit SHA)
+
+        Returns:
+            Decoded file content as string
+        """
+        import urllib.parse
+        encoded_path = urllib.parse.quote(file_path, safe="")
+        url = f"https://gitlab.com/api/v4/projects/{project_id}/repository/files/{encoded_path}"
+        params = {"ref": ref}
+        async with self._get_client() as client:
+            resp = await client.get(url, params=params)
+            resp.raise_for_status()
+            file_data = resp.json()
+            content = file_data.get("content", "")
+            encoding = file_data.get("encoding", "base64")
+            if encoding == "base64":
+                return base64.b64decode(content).decode("utf-8")
+            return content

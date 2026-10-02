@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException, Request
 
 from verdity.platforms.bitbucket import BitbucketPlatform
+from verdity.schemas import TriggerType, VerdityEvent
 
 
 class TestBitbucketVerifyWebhook:
@@ -283,3 +286,260 @@ class TestBitbucketPostInlineComment:
         payload = call_args.kwargs["json"]
         assert payload["inline"]["path"] == "src/x.py"
         assert payload["inline"]["to"] == 10
+
+
+class TestBitbucketHandleWebhook:
+    """Handle webhook: verify + normalize in one call."""
+
+    @pytest.mark.asyncio
+    async def test_handle_webhook_success(self):
+        """Valid webhook returns normalized VerdityEvent."""
+        platform = BitbucketPlatform()
+        
+        # Create a mock Request
+        mock_request = MagicMock(spec=Request)
+        mock_request.headers = {
+            "x-hub-signature": "sha256=validsig",
+            "x-hook-uuid": "hook-123",
+            "x-event-key": "pullrequest:created",
+        }
+        mock_request.body = AsyncMock(return_value=b'{"pullrequest": {"id": 99, "title": "Test", "description": "", "source": {"commit": {"hash": "abc"}}, "destination": {"commit": {"hash": "def"}}, "author": {"username": "alice"}, "links": {"diff": {"href": "https://bitbucket.org/repo/diff/99"}}}, "repository": {"name": "myrepo", "owner": {"uuid": "owner-uuid", "username": "alice"}}}')
+        
+        with patch.object(platform, "verify_webhook", return_value=True):
+            with patch("verdity.platforms.bitbucket.get_settings") as mock_get_settings:
+                mock_settings = MagicMock()
+                mock_settings.bitbucket_webhook_secret.get_secret_value.return_value = "secret"
+                mock_get_settings.return_value = mock_settings
+                event = await platform.handle_webhook(mock_request)
+        
+        assert isinstance(event, VerdityEvent)
+        assert event.trigger_type.value == "pr.opened"
+        assert event.repo.owner == "owner-uuid"
+        assert event.repo.name == "myrepo"
+        assert event.pull_request.number == 99
+
+    @pytest.mark.asyncio
+    async def test_handle_webhook_invalid_signature(self):
+        """Invalid signature raises HTTPException."""
+        platform = BitbucketPlatform()
+        
+        mock_request = MagicMock(spec=Request)
+        mock_request.headers = {"x-hub-signature": "sha256=wrong"}
+        mock_request.body = AsyncMock(return_value=b"{}")
+        
+        with patch.object(platform, "verify_webhook", return_value=False):
+            with pytest.raises(Exception):  # HTTPException or similar
+                await platform.handle_webhook(mock_request)
+
+    @pytest.mark.asyncio
+    async def test_handle_webhook_invalid_signature_raises(self):
+        """Invalid signature raises HTTPException with 401."""
+        platform = BitbucketPlatform()
+        
+        mock_request = MagicMock(spec=Request)
+        mock_request.headers = {"x-hub-signature": "sha256=wrong"}
+        mock_request.body = AsyncMock(return_value=b"{}")
+        
+        with patch("verdity.platforms.bitbucket.get_settings") as mock_get_settings:
+            mock_settings = MagicMock()
+            mock_settings.bitbucket_webhook_secret.get_secret_value.return_value = "secret"
+            mock_get_settings.return_value = mock_settings
+            
+            with pytest.raises(HTTPException) as exc_info:
+                await platform.handle_webhook(mock_request)
+        
+        assert exc_info.value.status_code == 401
+        assert "Invalid or missing signature" in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_handle_webhook_json_decode_error(self):
+        """Invalid JSON raises HTTPException with 400."""
+        platform = BitbucketPlatform()
+        
+        mock_request = MagicMock(spec=Request)
+        mock_request.headers = {"x-hub-signature": "sha256=validsig"}
+        mock_request.body = AsyncMock(return_value=b"invalid json")
+        
+        with patch("verdity.platforms.bitbucket.get_settings") as mock_get_settings:
+            mock_settings = MagicMock()
+            mock_settings.bitbucket_webhook_secret.get_secret_value.return_value = "secret"
+            mock_get_settings.return_value = mock_settings
+            
+            with patch.object(platform, "verify_webhook", return_value=True):
+                with pytest.raises(HTTPException) as exc_info:
+                    await platform.handle_webhook(mock_request)
+        
+        assert exc_info.value.status_code == 400
+        assert "Invalid JSON payload" in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_handle_webhook_unknown_trigger_type(self):
+        """Unknown trigger type falls back to PR_OPENED."""
+        platform = BitbucketPlatform()
+        
+        mock_request = MagicMock(spec=Request)
+        mock_request.headers = {"x-hub-signature": "sha256=validsig", "x-event-key": "pullrequest:unknown", "x-hook-uuid": "hook-123"}
+        mock_request.body = AsyncMock(return_value=b'{"pullrequest": {"id": 1, "title": "Test", "description": "", "source": {"commit": {"hash": "abc"}}, "destination": {"commit": {"hash": "def"}}, "author": {"username": "alice"}, "links": {"diff": {"href": ""}}}, "repository": {"name": "myrepo", "owner": {"uuid": "owner-uuid", "username": "alice"}}}')
+        
+        with patch("verdity.platforms.bitbucket.get_settings") as mock_get_settings:
+            mock_settings = MagicMock()
+            mock_settings.bitbucket_webhook_secret.get_secret_value.return_value = "secret"
+            mock_get_settings.return_value = mock_settings
+            
+            with patch.object(platform, "verify_webhook", return_value=True):
+                event = await platform.handle_webhook(mock_request)
+        
+        assert event.trigger_type == TriggerType.PR_OPENED
+
+
+class TestBitbucketGetPullRequest:
+    """Fetch pull request details from Bitbucket API."""
+
+    @pytest.mark.asyncio
+    async def test_get_pull_request_success(self):
+        """Fetch PR details by workspace, repo_slug, and PR ID."""
+        platform = BitbucketPlatform()
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "id": 42,
+            "title": "Test PR",
+            "description": "Description",
+            "state": "OPEN",
+            "source": {"commit": {"hash": "abc123"}},
+            "destination": {"commit": {"hash": "def456"}},
+        }
+        
+        mock_http = MagicMock()
+        mock_http.get = AsyncMock(return_value=mock_response)
+        mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+        mock_http.__aexit__ = AsyncMock(return_value=False)
+        
+        with patch("verdity.platforms.bitbucket.httpx.AsyncClient", return_value=mock_http):
+            result = await platform.get_pull_request("myworkspace", "myrepo", 42)
+        
+        assert result["id"] == 42
+        assert result["title"] == "Test PR"
+        call_args = mock_http.get.call_args
+        assert "myworkspace/myrepo" in call_args.args[0]
+        assert "pullrequests/42" in call_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_get_pull_request_not_found(self):
+        """404 raises exception."""
+        platform = BitbucketPlatform()
+        mock_response = MagicMock()
+        mock_response.raise_for_status.side_effect = Exception("404 Not Found")
+        
+        mock_http = MagicMock()
+        mock_http.get = AsyncMock(return_value=mock_response)
+        mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+        mock_http.__aexit__ = AsyncMock(return_value=False)
+        
+        with patch("verdity.platforms.bitbucket.httpx.AsyncClient", return_value=mock_http):
+            with pytest.raises(Exception):
+                await platform.get_pull_request("myworkspace", "myrepo", 999)
+
+    @pytest.mark.asyncio
+    async def test_get_pull_request_http_error(self):
+        """HTTP error raises exception."""
+        platform = BitbucketPlatform()
+        import httpx
+        mock_response = MagicMock()
+        mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "404 Not Found", request=MagicMock(), response=MagicMock()
+        )
+        
+        mock_http = MagicMock()
+        mock_http.get = AsyncMock(return_value=mock_response)
+        mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+        mock_http.__aexit__ = AsyncMock(return_value=False)
+        
+        with patch("verdity.platforms.bitbucket.httpx.AsyncClient", return_value=mock_http):
+            with pytest.raises(httpx.HTTPStatusError):
+                await platform.get_pull_request("myworkspace", "myrepo", 999)
+
+
+class TestBitbucketGetDiff:
+    """Fetch PR diff from Bitbucket API."""
+
+    @pytest.mark.asyncio
+    async def test_get_diff_success(self):
+        """Fetch diff as string."""
+        platform = BitbucketPlatform()
+        mock_response = MagicMock()
+        # Bitbucket API returns diff in text format
+        mock_response.text = "diff --git a/file.py b/file.py\n+new line"
+        
+        mock_http = MagicMock()
+        mock_http.get = AsyncMock(return_value=mock_response)
+        mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+        mock_http.__aexit__ = AsyncMock(return_value=False)
+        
+        with patch("verdity.platforms.bitbucket.httpx.AsyncClient", return_value=mock_http):
+            result = await platform.get_diff("myworkspace", "myrepo", 42)
+        
+        assert "diff --git" in result
+        call_args = mock_http.get.call_args
+        assert "pullrequests/42/diff" in call_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_get_diff_http_error(self):
+        """HTTP error raises exception."""
+        platform = BitbucketPlatform()
+        import httpx
+        mock_response = MagicMock()
+        mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "404 Not Found", request=MagicMock(), response=MagicMock()
+        )
+        
+        mock_http = MagicMock()
+        mock_http.get = AsyncMock(return_value=mock_response)
+        mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+        mock_http.__aexit__ = AsyncMock(return_value=False)
+        
+        with patch("verdity.platforms.bitbucket.httpx.AsyncClient", return_value=mock_http):
+            with pytest.raises(httpx.HTTPStatusError):
+                await platform.get_diff("myworkspace", "myrepo", 999)
+
+
+class TestBitbucketGetFileContent:
+    """Fetch file content from Bitbucket repository."""
+
+    @pytest.mark.asyncio
+    async def test_get_file_content_success(self):
+        """Fetch file content at specific commit."""
+        platform = BitbucketPlatform()
+        mock_response = MagicMock()
+        mock_response.text = "def foo():\n    return 'hello'"
+        
+        mock_http = MagicMock()
+        mock_http.get = AsyncMock(return_value=mock_response)
+        mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+        mock_http.__aexit__ = AsyncMock(return_value=False)
+        
+        with patch("verdity.platforms.bitbucket.httpx.AsyncClient", return_value=mock_http):
+            result = await platform.get_file_content("myworkspace", "myrepo", "src/main.py", "abc123")
+        
+        assert "def foo():" in result
+        call_args = mock_http.get.call_args
+        assert "src%2Fmain.py" in call_args.args[0]
+        assert "abc123" in call_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_get_file_content_http_error(self):
+        """HTTP error raises exception."""
+        platform = BitbucketPlatform()
+        import httpx
+        mock_response = MagicMock()
+        mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "404 Not Found", request=MagicMock(), response=MagicMock()
+        )
+        
+        mock_http = MagicMock()
+        mock_http.get = AsyncMock(return_value=mock_response)
+        mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+        mock_http.__aexit__ = AsyncMock(return_value=False)
+        
+        with patch("verdity.platforms.bitbucket.httpx.AsyncClient", return_value=mock_http):
+            with pytest.raises(httpx.HTTPStatusError):
+                await platform.get_file_content("myworkspace", "myrepo", "src/main.py", "abc123")
