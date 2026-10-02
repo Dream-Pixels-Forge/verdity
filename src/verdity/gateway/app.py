@@ -118,8 +118,6 @@ def _is_ip_allowed(
     except ValueError:  # pragma: no cover
         return False
 
-    return any(ip in network for network in allowed_networks)
-
 
 class _RateLimiter:
     """In-memory sliding-window rate limiter, per client IP.
