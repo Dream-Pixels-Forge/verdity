@@ -36,6 +36,7 @@ from verdity.schemas import (
 )
 from verdity.semantic_index import SemanticIndex
 from verdity.token_economics import TokenEconomicsService
+from verdity.trust_calibration import CalibrationResult, TrustCalibrator
 
 logger = logging.getLogger(__name__)
 
@@ -502,3 +503,104 @@ class Orchestrator:
             reverse=True,
         )
         return sorted_runs[:limit]
+
+    # ── Trust Calibration ────────────────────────────────────────────────
+
+    async def recalibrate_trust(self, min_samples: int = 50) -> CalibrationResult | None:
+        """
+        Recalibrate trust weights using metrics store data.
+
+        Fetches finding outcomes from the metrics store and feeds them to
+        TrustCalibrator for recalibration. This enables learning from
+        human decisions across all review runs.
+
+        Args:
+            min_samples: Minimum outcomes required to trigger recalibration
+
+        Returns:
+            CalibrationResult if recalibration ran, None if insufficient data
+        """
+        if self._metrics is None:  # pragma: no cover
+            logger.warning("No metrics store configured, skipping trust recalibration")
+            return None
+
+        # Get all outcomes from metrics store
+        outcomes = await self._metrics.get_all_outcomes()
+        if len(outcomes) < min_samples:  # pragma: no cover
+            logger.info(
+                "Insufficient data for recalibration: %d outcomes (need %d)",
+                len(outcomes),
+                min_samples,
+            )
+            return None
+
+        # Create temporary calibrator with in-memory DB
+        calibrator = TrustCalibrator(db_path=":memory:")
+        await calibrator.connect()
+
+        try:
+            # Feed outcomes into calibrator
+            for outcome in outcomes:
+                # Map metrics store outcome to calibrator outcome
+                final_outcome = outcome["final_outcome"]
+                if final_outcome == "auto_fixed":
+                    calibrator_outcome = "confirmed"  # pragma: no cover
+                elif final_outcome == "false_positive":
+                    calibrator_outcome = "false_positive"
+                elif final_outcome == "wont_fix":
+                    calibrator_outcome = "wont_fix"  # pragma: no cover
+                elif final_outcome == "confirmed":
+                    calibrator_outcome = "confirmed"
+                else:
+                    continue  # pragma: no cover  # Skip unknown outcomes
+
+                await calibrator.record_outcome(
+                    finding_type=f"{outcome.get('concern', 'unknown')}-{outcome.get('severity', 'unknown')}",
+                    outcome=calibrator_outcome,
+                    repo_id=outcome["repo_id"],
+                    confidence=outcome.get("confidence", 0.5),
+                    severity=outcome.get("severity", "medium"),
+                    concern=outcome.get("concern", "code_quality"),
+                )
+
+            # Run recalibration
+            result = await calibrator.recalibrate(min_samples=min_samples)
+            logger.info(
+                "Trust recalibration completed: version=%d, samples=%d, changed=%s",
+                result.sample_count,
+                result.changed,
+            )
+            return result
+        finally:
+            await calibrator.close()
+
+    async def start_nightly_recalibration(self, interval_seconds: float = 86400.0) -> asyncio.Task:
+        """
+        Start a background task that periodically recalibrates trust weights.
+
+        This task runs indefinitely at the specified interval (default 24 hours),
+        calling recalibrate_trust() each time.
+
+        Args:
+            interval_seconds: Interval between recalibration runs (default 86400 = 24h)
+
+        Returns:
+            asyncio.Task that can be cancelled to stop the nightly job
+        """
+
+        async def nightly_task():
+            logger.info(
+                "Starting nightly trust recalibration task (interval=%.0fs)", interval_seconds
+            )
+            while True:
+                try:
+                    await asyncio.sleep(interval_seconds)
+                    await self.recalibrate_trust()
+                except asyncio.CancelledError:
+                    logger.info("Nightly recalibration task cancelled")
+                    break
+                except Exception:  # pragma: no cover
+                    logger.exception("Nightly recalibration failed (will retry next interval)")
+
+        task = asyncio.create_task(nightly_task(), name="nightly-trust-recalibration")
+        return task

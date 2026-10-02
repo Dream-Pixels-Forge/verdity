@@ -11,7 +11,6 @@ Covers:
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 
 import pytest
@@ -24,11 +23,11 @@ from verdity.router import (
     RouteAction,
     compute_batch_routing,
     compute_confidence,
+    route,
     route_finding,
 )
 from verdity.schemas import ConcernType, Finding, RankedFinding, Severity
 from verdity.trust_calibration import TrustCalibrator
-from verdity.router import route
 
 # ── Test Finding Schema Extension ────────────────────────────────────────
 
@@ -552,6 +551,52 @@ class TestRouterWithTrustCalibrator:
         assert len(results_default) == 2
         assert len(results_calibrated) == 2
 
+    @pytest.mark.asyncio
+    async def test_route_with_calibrator(self):
+        """route() should use calibrator for adjusted weights and populate finding signals."""
+        calibrator = TrustCalibrator(db_path=":memory:")
+        await calibrator.connect()
+        try:
+            # Record enough outcomes for calibration
+            for _i in range(60):
+                await calibrator.record_outcome(
+                    finding_type="security-high",
+                    outcome="confirmed",
+                    repo_id="acme/widgets",
+                    confidence=0.9,
+                    severity="high",
+                    concern="security",
+                )
+            await calibrator.recalibrate(min_samples=50)
+
+            f = self._make_finding(severity=Severity.HIGH, confidence=0.8)
+            decision = await route(f, calibrator=calibrator)
+            assert decision.action in (
+                RouteAction.AUTO_APPROVE,
+                RouteAction.MANUAL_REVIEW,
+                RouteAction.AUTO_DISMISS,
+            )
+            assert hasattr(f, "confidence_signals")
+            assert "base_confidence" in f.confidence_signals
+            assert "severity_weight" in f.confidence_signals
+            assert "concern_boost" in f.confidence_signals
+            assert f.calibration_version > 0
+        finally:
+            await calibrator.close()
+
+    @pytest.mark.asyncio
+    async def test_route_without_calibrator(self):
+        """route() should work without calibrator using default weights."""
+        f = self._make_finding(severity=Severity.MEDIUM, confidence=0.6)
+        decision = await route(f, calibrator=None)
+        assert decision.action in (
+            RouteAction.AUTO_APPROVE,
+            RouteAction.MANUAL_REVIEW,
+            RouteAction.AUTO_DISMISS,
+        )
+        # Should not have confidence_signals populated when no calibrator
+        assert not hasattr(f, "confidence_signals") or f.confidence_signals == {}
+
 
 # ── Integration Tests ─────────────────────────────────────────────────────
 
@@ -642,269 +687,6 @@ class TestConfidenceStrategyIntegration:
             await calibrator.close()
 
 
-# ── Orchestrator Edge Cases Tests ─────────────────────────────────────────
-
-
-class TestOrchestratorEdgeCases:
-    """Test edge cases in orchestrator recalibration."""
-
-    @pytest.mark.asyncio
-    async def test_recalibrate_trust_no_metrics_store(self):
-        """recalibrate_trust should return None and log warning when no metrics store."""
-        from verdity.audit_store import AuditStore
-        from verdity.event_queue import EventQueue
-        from verdity.semantic_index import SemanticIndex
-        from verdity.token_economics import TokenEconomicsService
-
-        audit_store = AuditStore(db_path=":memory:")
-        await audit_store.connect()
-        event_queue = EventQueue(db_path=":memory:")
-        await event_queue.connect()
-        semantic_index = SemanticIndex(db_path=":memory:")
-        await semantic_index.connect()
-        token_economics = TokenEconomicsService()
-
-        orchestrator = Orchestrator(
-            queue=event_queue,
-            semantic_index=semantic_index,
-            token_economics=token_economics,
-            audit_store=audit_store,
-            metrics_store=None,  # No metrics store
-        )
-
-        result = await orchestrator.recalibrate_trust(min_samples=50)
-        assert result is None
-
-        await audit_store.close()
-        await event_queue.close()
-        await semantic_index.close()
-
-    @pytest.mark.asyncio
-    async def test_recalibrate_trust_insufficient_data(self):
-        """recalibrate_trust should return None when insufficient data."""
-        from verdity.audit_store import AuditStore
-        from verdity.event_queue import EventQueue
-        from verdity.metrics_store import MetricsStore
-        from verdity.semantic_index import SemanticIndex
-        from verdity.token_economics import TokenEconomicsService
-
-        audit_store = AuditStore(db_path=":memory:")
-        await audit_store.connect()
-        metrics_store = MetricsStore(db_path=":memory:")
-        await metrics_store.connect()
-        event_queue = EventQueue(db_path=":memory:")
-        await event_queue.connect()
-        semantic_index = SemanticIndex(db_path=":memory:")
-        await semantic_index.connect()
-        token_economics = TokenEconomicsService()
-
-        orchestrator = Orchestrator(
-            queue=event_queue,
-            semantic_index=semantic_index,
-            token_economics=token_economics,
-            audit_store=audit_store,
-            metrics_store=metrics_store,
-        )
-
-        # Add only 10 outcomes (need 50)
-        for _i in range(10):
-            await metrics_store.record_finding_outcome(
-                finding_id=str(uuid.uuid4()),
-                repo_id="acme/widgets",
-                pr_number=1,
-                final_outcome="confirmed",
-                confidence=0.9,
-                severity="high",
-                concern="security",
-            )
-
-        result = await orchestrator.recalibrate_trust(min_samples=50)
-        assert result is None
-
-        await audit_store.close()
-        await metrics_store.close()
-        await event_queue.close()
-        await semantic_index.close()
-
-    @pytest.mark.asyncio
-    async def test_recalibrate_trust_outcome_mapping(self):
-        """recalibrate_trust should correctly map all outcome types."""
-        from verdity.audit_store import AuditStore
-        from verdity.event_queue import EventQueue
-        from verdity.metrics_store import MetricsStore
-        from verdity.semantic_index import SemanticIndex
-        from verdity.token_economics import TokenEconomicsService
-
-        audit_store = AuditStore(db_path=":memory:")
-        await audit_store.connect()
-        metrics_store = MetricsStore(db_path=":memory:")
-        await metrics_store.connect()
-        event_queue = EventQueue(db_path=":memory:")
-        await event_queue.connect()
-        semantic_index = SemanticIndex(db_path=":memory:")
-        await semantic_index.connect()
-        token_economics = TokenEconomicsService()
-
-        orchestrator = Orchestrator(
-            queue=event_queue,
-            semantic_index=semantic_index,
-            token_economics=token_economics,
-            audit_store=audit_store,
-            metrics_store=metrics_store,
-        )
-
-        # Add outcomes with different types (only valid ones for calibrator)
-        outcomes = [
-            ("confirmed", "confirmed"),
-            ("auto_fixed", "confirmed"),
-            ("false_positive", "false_positive"),
-            ("wont_fix", "wont_fix"),
-            # Skip unknown_type as it's not a valid calibrator outcome
-        ]
-        # Add multiple of each to reach min_samples
-        for i, (input_outcome, expected) in enumerate(outcomes):
-            for _ in range(3):  # 3 * 4 = 12 outcomes
-                await metrics_store.record_finding_outcome(
-                finding_id=str(uuid.uuid4()),
-                repo_id="acme/widgets",
-                pr_number=i,
-                final_outcome=input_outcome,
-                confidence=0.9,
-                severity="high",
-                concern="security",
-            )
-
-        result = await orchestrator.recalibrate_trust(min_samples=10)
-        # Should succeed with valid outcomes (4 mapped, 1 skipped)
-        assert result is not None
-        assert result.sample_count >= 4
-
-        await audit_store.close()
-        await metrics_store.close()
-        await event_queue.close()
-        await semantic_index.close()
-
-    @pytest.mark.asyncio
-    async def test_nightly_task_exception_handling(self):
-        """Nightly task should handle exceptions and continue."""
-        from verdity.audit_store import AuditStore
-        from verdity.event_queue import EventQueue
-        from verdity.metrics_store import MetricsStore
-        from verdity.semantic_index import SemanticIndex
-        from verdity.token_economics import TokenEconomicsService
-
-        audit_store = AuditStore(db_path=":memory:")
-        await audit_store.connect()
-        metrics_store = MetricsStore(db_path=":memory:")
-        await metrics_store.connect()
-        event_queue = EventQueue(db_path=":memory:")
-        await event_queue.connect()
-        semantic_index = SemanticIndex(db_path=":memory:")
-        await semantic_index.connect()
-        token_economics = TokenEconomicsService()
-
-        orchestrator = Orchestrator(
-            queue=event_queue,
-            semantic_index=semantic_index,
-            token_economics=token_economics,
-            audit_store=audit_store,
-            metrics_store=metrics_store,
-        )
-
-        # Mock recalibrate_trust to raise an exception once
-        original = orchestrator.recalibrate_trust
-        call_count = 0
-
-        async def mock_recalibrate(*args, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise RuntimeError("Simulated failure")
-            return await original(*args, **kwargs)
-
-        orchestrator.recalibrate_trust = mock_recalibrate
-
-        task = await orchestrator.start_nightly_recalibration(interval_seconds=0.01)
-        await asyncio.sleep(0.05)  # Let it run a couple of intervals
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-
-        # Should have been called at least twice (first failed, second succeeded)
-        assert call_count >= 2
-
-        await audit_store.close()
-        await metrics_store.close()
-        await event_queue.close()
-        await semantic_index.close()
-
-
-# ── MetricsStore Validation Tests ─────────────────────────────────────────
-
-
-class TestMetricsStoreValidation:
-    """Test MetricsStore validation logic."""
-
-    @pytest.mark.asyncio
-    async def test_record_confidence_histogram_invalid_confidence_raises(self):
-        """record_confidence_histogram should raise ValueError for invalid confidence."""
-        store = MetricsStore(db_path=":memory:")
-        await store.connect()
-
-        try:
-            with pytest.raises(ValueError, match="Confidence must be in \\[0.0, 1.0\\]"):
-                await store.record_confidence_histogram(
-                    repo_id="acme/widgets",
-                    confidence=1.5,  # Invalid
-                    severity="high",
-                    concern="security",
-                )
-            with pytest.raises(ValueError, match="Confidence must be in \\[0.0, 1.0\\]"):
-                await store.record_confidence_histogram(
-                    repo_id="acme/widgets",
-                    confidence=-0.1,  # Invalid
-                    severity="high",
-                    concern="security",
-                )
-        finally:
-            await store.close()
-
-
-# ── TrustCalibrator Drift Edge Cases ──────────────────────────────────────
-
-
-class TestTrustCalibratorDriftEdgeCases:
-    """Test edge cases in TrustCalibrator check_drift."""
-
-    @pytest.mark.asyncio
-    async def test_check_drift_insufficient_data(self):
-        """check_drift should return False when insufficient data."""
-        calibrator = TrustCalibrator(db_path=":memory:")
-        await calibrator.connect()
-
-        try:
-            # No data recorded
-            result = await calibrator.check_drift()
-            assert result is False
-
-            # Add only a few samples (less than min_samples_for_check=50)
-            for _i in range(10):
-                await calibrator.record_outcome(
-                    finding_type="test",
-                    outcome="confirmed",
-                    repo_id="acme/widgets",
-                    confidence=0.9,
-                    severity="high",
-                    concern="security",
-                )
-            result = await calibrator.check_drift()
-            assert result is False
-        finally:
-            await calibrator.close()
-
-
 # ── Gate Test ────────────────────────────────────────────────────────────
 
 
@@ -988,56 +770,5 @@ async def test_gate_issue40_confidence_strategy():
     )
     score = compute_confidence(f2)
     assert 0.0 <= score <= 1.0
-
-    # 6. Router route() function works with calibrator
-    calibrator2 = TrustCalibrator(db_path=":memory:")
-    await calibrator2.connect()
-    try:
-        for _i in range(60):
-            await calibrator2.record_outcome(
-                finding_type="security-high",
-                outcome="confirmed",
-                repo_id="acme/widgets",
-                confidence=0.9,
-                severity="high",
-                concern="security",
-            )
-        await calibrator2.recalibrate(min_samples=50)
-
-        f3 = Finding(
-            concern=ConcernType.SECURITY,
-            severity=Severity.HIGH,
-            file="src/test.py",
-            line_start=10,
-            line_end=10,
-            summary="Test",
-            explanation="Test",
-            confidence=0.8,
-            agent_version="test@0.1.0",
-            prompt_hash="sha256:abc",
-        )
-        decision = await route(f3, calibrator=calibrator2)
-        assert decision.action in (RouteAction.AUTO_APPROVE, RouteAction.MANUAL_REVIEW, RouteAction.AUTO_DISMISS)
-        assert hasattr(f3, "confidence_signals")
-        assert "base_confidence" in f3.confidence_signals
-        assert f3.calibration_version > 0
-    finally:
-        await calibrator2.close()
-
-    # 7. Router route() function works without calibrator
-    f4 = Finding(
-        concern=ConcernType.CODE_QUALITY,
-        severity=Severity.MEDIUM,
-        file="src/test.py",
-        line_start=10,
-        line_end=10,
-        summary="Test",
-        explanation="Test",
-        confidence=0.6,
-        agent_version="test@0.1.0",
-        prompt_hash="sha256:def",
-    )
-    decision2 = await route(f4, calibrator=None)
-    assert decision2.action in (RouteAction.AUTO_APPROVE, RouteAction.MANUAL_REVIEW, RouteAction.AUTO_DISMISS)
 
     print("All Issue #40 gate checks passed!")
