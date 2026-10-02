@@ -22,10 +22,132 @@ import httpx
 import jwt  # PyJWT
 
 from verdity.config import get_settings
+from verdity.schemas import Finding, Severity
 
 logger = logging.getLogger(__name__)
 
 GITHUB_API_BASE = "https://api.github.com"
+
+
+# ── GitHub Checks API Helpers ───────────────────────────────────────────
+
+
+def create_annotations(findings: list[Finding]) -> list[dict[str, Any]]:
+    """
+    Convert findings to GitHub Checks API annotations format.
+
+    GitHub limits annotations to 50 per check run.
+    """
+    annotations: list[dict[str, Any]] = []
+
+    for finding in findings:
+        # Determine annotation level based on severity
+        if finding.severity in (Severity.CRITICAL, Severity.HIGH):
+            annotation_level = "failure"
+        else:
+            annotation_level = "warning"
+
+        # Main annotation for the finding
+        annotations.append(
+            {
+                "path": finding.file,
+                "start_line": finding.line_start,
+                "end_line": finding.line_end,
+                "annotation_level": annotation_level,
+                "message": finding.summary,
+                "title": finding.concern.value,
+            }
+        )
+
+        # Add auto-fix suggestion as notice annotation if available
+        if finding.suggested_fix_diff:
+            annotations.append(
+                {
+                    "path": finding.file,
+                    "start_line": finding.line_start,
+                    "end_line": finding.line_end,
+                    "annotation_level": "notice",
+                    "message": f"Suggested fix: {finding.suggested_fix_diff}",
+                    "title": "Auto-fix available",
+                }
+            )
+
+    # GitHub API limit: max 50 annotations
+    return annotations[:50]
+
+
+def create_check_output(findings: list[Finding]) -> dict[str, Any]:
+    """
+    Create rich check run output with markdown summary and annotations.
+
+    Includes title, summary, detailed text, and annotations (limited to 50).
+    """
+    if not findings:
+        return {
+            "title": "Verdity Code Review",
+            "summary": "## Summary\n\nFound **0 issues** in this PR.",
+            "text": "## Summary\n\nNo issues found. Great job! 🎉",
+            "annotations": [],
+        }
+
+    # Group findings by concern type
+    from collections import defaultdict
+
+    by_concern: dict[str, list[Finding]] = defaultdict(list)
+    for finding in findings:
+        by_concern[finding.concern.value].append(finding)
+
+    # Build markdown text
+    text_parts = [
+        "## Summary",
+        "",
+        f"Found **{len(findings)} issues** in this PR.",
+        "",
+    ]
+
+    # Add breakdown by concern
+    if by_concern:
+        text_parts.append("### By Category")
+        text_parts.append("")
+        for concern, concern_findings in sorted(by_concern.items()):
+            text_parts.append(f"- **{concern}**: {len(concern_findings)} issue(s)")
+        text_parts.append("")
+
+    # Add details for each finding
+    text_parts.append("### Details")
+    text_parts.append("")
+
+    for i, finding in enumerate(findings, 1):
+        severity_emoji = {
+            "critical": "🔴",
+            "high": "🟠",
+            "medium": "🟡",
+            "low": "🔵",
+            "info": "⚪",
+        }.get(finding.severity.value, "⚪")
+
+        text_parts.append(
+            f"#### {i}. {severity_emoji} {finding.concern.value.title()}: {finding.summary}"
+        )
+        text_parts.append(f"**File:** `{finding.file}` (lines {finding.line_start}-{finding.line_end})")
+        text_parts.append(f"**Severity:** {finding.severity.value.upper()}")
+        text_parts.append(f"**Confidence:** {finding.confidence:.0%}")
+        text_parts.append(f"**Explanation:** {finding.explanation}")
+        if finding.suggested_fix_diff:
+            text_parts.append(f"**Suggested Fix:**\n```diff\n{finding.suggested_fix_diff}\n```")
+        text_parts.append("")
+
+    text = "\n".join(text_parts)
+
+    # Create annotations (limited to 50)
+    annotations = create_annotations(findings)
+
+    return {
+        "title": "Verdity Code Review",
+        "summary": f"## Summary\n\nFound **{len(findings)} issues** in this PR.",
+        "text": text,
+        "annotations": annotations,
+    }
 
 
 # Default HTTPX timeout configuration (Issue #41)
@@ -311,6 +433,7 @@ class GitHubClient:
         output: dict[str, Any] | None = None,
         started_at: str | None = None,
         completed_at: str | None = None,
+        actions: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """
         Create a new check run on a commit.
@@ -325,6 +448,7 @@ class GitHubClient:
             output: Optional output object with title, summary, text, annotations, images
             started_at: ISO 8601 timestamp when check started
             completed_at: ISO 8601 timestamp when check completed (required if status=completed)
+            actions: Optional list of action buttons for the check run
 
         Returns:
             GitHub check run object
@@ -345,6 +469,8 @@ class GitHubClient:
             payload["started_at"] = started_at
         if completed_at:
             payload["completed_at"] = completed_at
+        if actions:
+            payload["actions"] = actions
 
         resp = await client.post(
             f"{self._base_url}/repos/{owner}/{repo}/check-runs",
@@ -365,6 +491,7 @@ class GitHubClient:
         conclusion: str | None = None,
         output: dict[str, Any] | None = None,
         completed_at: str | None = None,
+        actions: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """
         Update an existing check run.
@@ -377,6 +504,7 @@ class GitHubClient:
             conclusion: New conclusion if status is "completed"
             output: Updated output object
             completed_at: ISO 8601 timestamp when check completed
+            actions: Optional list of action buttons for the check run
 
         Returns:
             Updated GitHub check run object
@@ -393,6 +521,8 @@ class GitHubClient:
             payload["output"] = output
         if completed_at:
             payload["completed_at"] = completed_at
+        if actions:
+            payload["actions"] = actions
 
         resp = await client.patch(
             f"{self._base_url}/repos/{owner}/{repo}/check-runs/{check_run_id}",
