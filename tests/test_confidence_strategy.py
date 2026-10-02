@@ -571,7 +571,11 @@ class TestRouterWithTrustCalibrator:
 
             f = self._make_finding(severity=Severity.HIGH, confidence=0.8)
             decision = await route(f, calibrator=calibrator)
-            assert decision.action in (RouteAction.AUTO_APPROVE, RouteAction.MANUAL_REVIEW, RouteAction.AUTO_DISMISS)
+            assert decision.action in (
+                RouteAction.AUTO_APPROVE,
+                RouteAction.MANUAL_REVIEW,
+                RouteAction.AUTO_DISMISS,
+            )
             assert hasattr(f, "confidence_signals")
             assert "base_confidence" in f.confidence_signals
             assert "severity_weight" in f.confidence_signals
@@ -585,7 +589,11 @@ class TestRouterWithTrustCalibrator:
         """route() should work without calibrator using default weights."""
         f = self._make_finding(severity=Severity.MEDIUM, confidence=0.6)
         decision = await route(f, calibrator=None)
-        assert decision.action in (RouteAction.AUTO_APPROVE, RouteAction.MANUAL_REVIEW, RouteAction.AUTO_DISMISS)
+        assert decision.action in (
+            RouteAction.AUTO_APPROVE,
+            RouteAction.MANUAL_REVIEW,
+            RouteAction.AUTO_DISMISS,
+        )
         # Should not have confidence_signals populated when no calibrator
         assert not hasattr(f, "confidence_signals") or f.confidence_signals == {}
 
