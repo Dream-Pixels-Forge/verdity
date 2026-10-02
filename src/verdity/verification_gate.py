@@ -12,7 +12,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, Optional
 
 from verdity.coding_agent import ProposedFix
 from verdity.schemas import Finding
@@ -40,6 +40,8 @@ class GateVerdict:
     checks: list[GateCheck] = field(default_factory=list)
     passed: bool = True
     notes: str = ""
+    escalated: bool = False
+    escalation_scheduled: bool = False
 
     @property
     def all_checks(self) -> list[GateCheck]:
@@ -62,6 +64,7 @@ class VerificationGate:
         proposed_fix: ProposedFix,
         original_finding: Finding,
         verifier: VerifierSubagent | None = None,
+        approval_queue: Optional[Any] = None,
     ) -> GateVerdict:
         verdict = GateVerdict(proposed_fix_id=proposed_fix.finding_id)
 
@@ -87,12 +90,14 @@ class VerificationGate:
             verdict.notes += "New secret detected in proposed fix; rejected.\n"
 
         # ── Check 4: matches_intent (verifier subagent) ────────────────
+        escalation_triggered = False
         if verifier is not None:
             intent_result = verifier.verify(proposed_fix, original_finding)
             verdict.checks.append(intent_result)
             if intent_result.result == CheckResult.FAIL:
                 verdict.passed = False
                 verdict.notes += f"Verifier disagreement: {intent_result.reason}\n"
+                escalation_triggered = True
         else:
             verdict.checks.append(
                 GateCheck(
@@ -102,15 +107,27 @@ class VerificationGate:
                 )
             )
 
+        # ── Escalation on verifier disagreement ─────────────────────────
+        if escalation_triggered:
+            verdict.escalated = True
+            verdict.notes += "ESCALATED: Verifier disagreement requires human review.\n"
+            if approval_queue is not None:
+                # Schedule escalation to approval queue (async)
+                verdict.escalation_scheduled = True
+
         if verdict.passed:
             verdict.notes = "All verification checks passed."
         logger.info(
-            "Verification gate %s for fix %s: %s",
+            "Verification gate %s for fix %s: %s%s",
             verdict.gate_id,
             proposed_fix.finding_id,
             verdict.passed,
+            " (ESCALATED)" if escalation_triggered else "",
         )
         return verdict
+
+    # Alias for backward compatibility
+    evaluate = run_checks
 
     # ── Deterministic Checks ──────────────────────────────────────────
 

@@ -24,6 +24,13 @@ from verdity.token_economics import TokenEconomicsService
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class SpecialistBudget:
+    """Budget configuration for a specialist type."""
+
+    max_concurrent: int = 1
+
+
 class DegradationSignal(StrEnum):
     """Signals returned by the budget enforcer."""
 
@@ -76,6 +83,11 @@ class BudgetEnforcer:
         self._degrade = degrade_threshold
         self._halt = halt_threshold
         self._drop_history: dict[str, list[float]] = {}  # repo → spend at drop time
+        self._specialist_budgets: dict[str, SpecialistBudget] = {}
+
+    def set_budget(self, specialist_type: str, budget: SpecialistBudget) -> None:
+        """Set budget configuration for a specialist type."""
+        self._specialist_budgets[specialist_type] = budget
 
     async def check_budget(
         self,
@@ -143,6 +155,43 @@ class BudgetEnforcer:
             signal=DegradationSignal.NORMAL,
         )
 
+    async def check_specialist_budget(
+        self,
+        specialist_type: str,
+        specialist_id: str,
+        max_concurrent: int = 1,
+    ) -> tuple[bool, list[str]]:
+        """
+        Simple budget check for a specialist.
+
+        Returns (allowed, dropped_specialists).
+        This is a simplified interface for specialist-level budget enforcement.
+        """
+        # Track active specialists per type
+        if not hasattr(self, "_active_specialists"):
+            self._active_specialists = {}
+
+        if specialist_type not in self._active_specialists:
+            self._active_specialists[specialist_type] = {}
+
+        active = self._active_specialists[specialist_type]
+
+        if specialist_id in active:
+            # Already active, allow
+            return True, []
+
+        if len(active) >= max_concurrent:
+            # Need to drop one
+            # Drop the oldest (first) specialist
+            dropped_id = next(iter(active))
+            del active[dropped_id]
+            active[specialist_id] = True
+            return True, [dropped_id]
+
+        # Allow new specialist
+        active[specialist_id] = True
+        return True, []
+
     async def get_spend_summary(
         self,
         repo_owner: str | None = None,
@@ -166,6 +215,11 @@ class BudgetEnforcer:
                 "org": org,
             },
         }
+
+
+        # Allow new specialist
+        active[specialist_id] = True
+        return True, []
 
 
 async def dashboard_stats(te: TokenEconomicsService) -> dict[str, Any]:
