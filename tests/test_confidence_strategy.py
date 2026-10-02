@@ -12,8 +12,6 @@ Covers:
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -28,8 +26,7 @@ from verdity.router import (
     route_finding,
 )
 from verdity.schemas import ConcernType, Finding, RankedFinding, Severity
-from verdity.trust_calibration import CalibrationResult, TrustCalibrator
-
+from verdity.trust_calibration import TrustCalibrator
 
 # ── Test Finding Schema Extension ────────────────────────────────────────
 
@@ -345,7 +342,6 @@ class TestOrchestratorNightlyRecalibration:
     @pytest.fixture
     async def setup_orchestrator(self):
         """Create an orchestrator with mocked dependencies."""
-        from verdity.async_sqlite import AsyncConnection
         from verdity.audit_store import AuditStore
         from verdity.event_queue import EventQueue
         from verdity.semantic_index import SemanticIndex
@@ -382,7 +378,7 @@ class TestOrchestratorNightlyRecalibration:
         """Orchestrator should have a recalibrate method."""
         orchestrator, _, _ = setup_orchestrator
         assert hasattr(orchestrator, "recalibrate_trust")
-        assert callable(getattr(orchestrator, "recalibrate_trust"))
+        assert callable(orchestrator.recalibrate_trust)
 
     @pytest.mark.asyncio
     async def test_recalibrate_trust_calls_calibrator(self, setup_orchestrator):
@@ -413,7 +409,7 @@ class TestOrchestratorNightlyRecalibration:
         """Orchestrator should have a method to start nightly recalibration task."""
         orchestrator, _, _ = setup_orchestrator
         assert hasattr(orchestrator, "start_nightly_recalibration")
-        assert callable(getattr(orchestrator, "start_nightly_recalibration"))
+        assert callable(orchestrator.start_nightly_recalibration)
 
     @pytest.mark.asyncio
     async def test_nightly_recalibration_runs_periodically(self, setup_orchestrator):
@@ -421,7 +417,7 @@ class TestOrchestratorNightlyRecalibration:
         orchestrator, metrics_store, _ = setup_orchestrator
 
         # Add some metrics data
-        for i in range(60):
+        for _ in range(60):
             await metrics_store.record_finding_outcome(
                 finding_id=str(uuid.uuid4()),
                 repo_id="acme/widgets",
@@ -452,10 +448,10 @@ class TestOrchestratorNightlyRecalibration:
         await asyncio.sleep(0.3)
 
         task.cancel()
-        try:
+        import contextlib
+
+        with contextlib.suppress(asyncio.CancelledError):
             await task
-        except asyncio.CancelledError:
-            pass
 
         # Should have been called at least once
         assert call_count >= 1
@@ -507,7 +503,7 @@ class TestRouterWithTrustCalibrator:
         f = self._make_finding(severity=Severity.HIGH, confidence=0.8)
 
         # Call compute_confidence with context that might include signals
-        score = compute_confidence(f, context={"verifier_agreement": 0.9})
+        _ = compute_confidence(f, context={"verifier_agreement": 0.9})
 
         # The finding should have confidence_signals populated
         # (Note: compute_confidence currently doesn't modify the finding,
@@ -682,7 +678,6 @@ async def test_gate_issue40_confidence_strategy():
     await store.close()
 
     # 4. Orchestrator has recalibrate_trust and start_nightly_recalibration
-    from verdity.async_sqlite import AsyncConnection
     from verdity.audit_store import AuditStore
     from verdity.event_queue import EventQueue
     from verdity.semantic_index import SemanticIndex
