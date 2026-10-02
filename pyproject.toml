@@ -63,6 +63,7 @@ dev = [
 
 [project.scripts]
 verdity-worker = "verdity.worker:run_entrypoint"
+verdity-enforce = "verdity.cli.enforce:enforce"
 
 [project.urls]
 Homepage = "https://github.com/Dream-Pixels-Forge/verdity"

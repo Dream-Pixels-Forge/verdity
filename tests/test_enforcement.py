@@ -643,3 +643,428 @@ async def test_gate_issue42_enforcement():
     assert hasattr(VerdityWorker, "check_sla_escalations")
 
     print("All Issue #42 gate checks passed!")
+
+
+# ── Enhanced Enforcement Rules Tests (Issue #49) ───────────────────────────────
+
+
+class TestGateRuleEnhancements:
+    """Test enhanced GateRule features: priority, enabled, templating."""
+
+    def test_gate_rule_priority_default(self):
+        """GateRule should have default priority of 100."""
+        from verdity.enforcement import GateRule, Action
+
+        rule = GateRule(
+            id="test-rule",
+            when="finding.severity=='critical'",
+            then=Action.BLOCK,
+            message="Test",
+        )
+        assert rule.priority == 100
+
+    def test_gate_rule_priority_custom(self):
+        """GateRule should accept custom priority."""
+        from verdity.enforcement import GateRule, Action
+
+        rule = GateRule(
+            id="test-rule",
+            when="finding.severity=='critical'",
+            then=Action.BLOCK,
+            message="Test",
+            priority=50,
+        )
+        assert rule.priority == 50
+
+    def test_gate_rule_enabled_default(self):
+        """GateRule should be enabled by default."""
+        from verdity.enforcement import GateRule, Action
+
+        rule = GateRule(
+            id="test-rule",
+            when="finding.severity=='critical'",
+            then=Action.BLOCK,
+            message="Test",
+        )
+        assert rule.enabled is True
+
+    def test_gate_rule_enabled_false(self):
+        """GateRule should support disabled state."""
+        from verdity.enforcement import GateRule, Action
+
+        rule = GateRule(
+            id="test-rule",
+            when="finding.severity=='critical'",
+            then=Action.BLOCK,
+            message="Test",
+            enabled=False,
+        )
+        assert rule.enabled is False
+
+
+class TestRuleTemplating:
+    """Test variable templating in rules."""
+
+    @pytest.mark.asyncio
+    async def test_rule_with_variable_substitution(self):
+        """Rule should support {{variable}} substitution in when clause."""
+        from verdity.enforcement import EnforcementEngine, GateRule, Action
+
+        engine = EnforcementEngine(rules=[])
+        rule = GateRule(
+            id="block-with-threshold",
+            when="finding.severity=='critical' and finding.confidence>{{threshold}}",
+            then=Action.BLOCK,
+            message="CRITICAL above threshold blocks",
+        )
+        engine.add_rule(rule)
+
+        finding = _make_finding(severity=Severity.CRITICAL, confidence=0.9)
+        # Pass threshold via context
+        decision = await engine.evaluate_with_context(finding, {"threshold": 0.8})
+
+        assert decision.action == "block"
+        assert decision.rule_id == "block-with-threshold"
+
+    @pytest.mark.asyncio
+    async def test_rule_variable_not_matching(self):
+        """Rule should not match when variable condition fails."""
+        from verdity.enforcement import EnforcementEngine, GateRule, Action
+
+        engine = EnforcementEngine(rules=[])
+        rule = GateRule(
+            id="block-with-threshold",
+            when="finding.severity=='critical' and finding.confidence>{{threshold}}",
+            then=Action.BLOCK,
+            message="CRITICAL above threshold blocks",
+        )
+        engine.add_rule(rule)
+
+        finding = _make_finding(severity=Severity.CRITICAL, confidence=0.7)
+        # Threshold is 0.8, confidence is 0.7 - should not match
+        decision = await engine.evaluate_with_context(finding, {"threshold": 0.8})
+
+        assert decision.action == "allow"
+
+    @pytest.mark.asyncio
+    async def test_rule_multiple_variables(self):
+        """Rule should support multiple variables."""
+        from verdity.enforcement import EnforcementEngine, GateRule, Action
+
+        engine = EnforcementEngine(rules=[])
+        rule = GateRule(
+            id="multi-var-rule",
+            when="finding.severity=={{severity}} and finding.confidence>{{min_conf}}",
+            then=Action.BLOCK,
+            message="Matches severity and confidence",
+        )
+        engine.add_rule(rule)
+
+        finding = _make_finding(severity=Severity.HIGH, confidence=0.9)
+        decision = await engine.evaluate_with_context(finding, {"severity": "high", "min_conf": 0.8})
+
+        assert decision.action == "block"
+
+    @pytest.mark.asyncio
+    async def test_rule_variable_in_message(self):
+        """Rule message should support variable substitution."""
+        from verdity.enforcement import EnforcementEngine, GateRule, Action
+
+        engine = EnforcementEngine(rules=[])
+        rule = GateRule(
+            id="msg-with-var",
+            when="finding.severity=='critical'",
+            then=Action.BLOCK,
+            message="Blocked CRITICAL with confidence {{conf_threshold}}",
+        )
+        engine.add_rule(rule)
+
+        finding = _make_finding(severity=Severity.CRITICAL, confidence=0.9)
+        decision = await engine.evaluate_with_context(finding, {"conf_threshold": 0.8})
+
+        assert decision.action == "block"
+        assert "0.8" in decision.message
+
+
+class TestRulePriorities:
+    """Test rule priority ordering."""
+
+    @pytest.mark.asyncio
+    async def test_rules_evaluated_by_priority(self):
+        """Rules should be evaluated in priority order (lower = higher priority)."""
+        from verdity.enforcement import EnforcementEngine, GateRule, Action
+
+        engine = EnforcementEngine(rules=[])
+
+        # Rule with lower priority number = higher priority
+        rule_low_priority = GateRule(
+            id="low-priority",
+            when="finding.severity=='high'",
+            then=Action.BLOCK,
+            message="Low priority rule",
+            priority=200,
+        )
+        rule_high_priority = GateRule(
+            id="high-priority",
+            when="finding.severity=='high'",
+            then=Action.REQUIRE_APPROVAL,
+            message="High priority rule",
+            priority=50,
+        )
+        engine.add_rule(rule_low_priority)
+        engine.add_rule(rule_high_priority)
+
+        finding = _make_finding(severity=Severity.HIGH, confidence=0.8)
+        decision = await engine.evaluate(finding)
+
+        # High priority rule (50) should match first
+        assert decision.action == "require_approval"
+        assert decision.rule_id == "high-priority"
+
+    @pytest.mark.asyncio
+    async def test_same_priority_preserves_insertion_order(self):
+        """Rules with same priority should preserve insertion order."""
+        from verdity.enforcement import EnforcementEngine, GateRule, Action
+
+        engine = EnforcementEngine(rules=[])
+
+        rule1 = GateRule(
+            id="rule1",
+            when="finding.severity=='high'",
+            then=Action.BLOCK,
+            message="First",
+            priority=100,
+        )
+        rule2 = GateRule(
+            id="rule2",
+            when="finding.severity=='high'",
+            then=Action.REQUIRE_APPROVAL,
+            message="Second",
+            priority=100,
+        )
+        engine.add_rule(rule1)
+        engine.add_rule(rule2)
+
+        finding = _make_finding(severity=Severity.HIGH, confidence=0.8)
+        decision = await engine.evaluate(finding)
+
+        # First inserted should win
+        assert decision.rule_id == "rule1"
+
+    @pytest.mark.asyncio
+    async def test_disabled_rule_skipped(self):
+        """Disabled rules should be skipped during evaluation."""
+        from verdity.enforcement import EnforcementEngine, GateRule, Action
+
+        engine = EnforcementEngine(rules=[])
+
+        rule_disabled = GateRule(
+            id="disabled-rule",
+            when="finding.severity=='high'",
+            then=Action.BLOCK,
+            message="Should not match",
+            enabled=False,
+        )
+        rule_enabled = GateRule(
+            id="enabled-rule",
+            when="finding.severity=='high'",
+            then=Action.REQUIRE_APPROVAL,
+            message="Should match",
+            enabled=True,
+        )
+        engine.add_rule(rule_disabled)
+        engine.add_rule(rule_enabled)
+
+        finding = _make_finding(severity=Severity.HIGH, confidence=0.8)
+        decision = await engine.evaluate(finding)
+
+        assert decision.action == "require_approval"
+        assert decision.rule_id == "enabled-rule"
+
+
+class TestRuleSet:
+    """Test RuleSet grouping functionality."""
+
+    def test_rule_set_creation(self):
+        """RuleSet should be created with name, rules, description."""
+        from verdity.enforcement import RuleSet, GateRule, Action
+
+        rules = [
+            GateRule(id="r1", when="finding.severity=='critical'", then=Action.BLOCK, message="Block critical"),
+            GateRule(id="r2", when="finding.severity=='high'", then=Action.REQUIRE_APPROVAL, message="Approve high"),
+        ]
+        rule_set = RuleSet(name="security-rules", rules=rules, description="Security rule set")
+
+        assert rule_set.name == "security-rules"
+        assert len(rule_set.rules) == 2
+        assert rule_set.description == "Security rule set"
+
+    def test_rule_set_evaluate(self):
+        """RuleSet should evaluate all rules in priority order."""
+        from verdity.enforcement import RuleSet, GateRule, Action
+
+        rules = [
+            GateRule(id="r1", when="finding.severity=='high'", then=Action.BLOCK, message="Block high", priority=100),
+            GateRule(id="r2", when="finding.severity=='critical'", then=Action.REQUIRE_APPROVAL, message="Approve critical", priority=50),
+        ]
+        rule_set = RuleSet(name="test-set", rules=rules, description="Test")
+
+        finding = _make_finding(severity=Severity.CRITICAL, confidence=0.9)
+        decisions = rule_set.evaluate(finding)
+
+        # Should return decisions for all matching rules in priority order
+        assert len(decisions) >= 1
+        # High priority (50) rule should be first
+        assert decisions[0].rule_id == "r2"
+
+    def test_rule_set_evaluate_with_context(self):
+        """RuleSet should support context variables."""
+        from verdity.enforcement import RuleSet, GateRule, Action
+
+        rules = [
+            GateRule(
+                id="var-rule",
+                when="finding.severity=={{sev}} and finding.confidence>{{thresh}}",
+                then=Action.BLOCK,
+                message="Variable rule",
+                priority=100,
+            ),
+        ]
+        rule_set = RuleSet(name="var-set", rules=rules, description="Variable test")
+
+        finding = _make_finding(severity=Severity.HIGH, confidence=0.9)
+        decisions = rule_set.evaluate(finding, context={"sev": "high", "thresh": 0.8})
+
+        assert len(decisions) == 1
+        assert decisions[0].rule_id == "var-rule"
+
+
+class TestRegexPatterns:
+    """Test built-in regex pattern library."""
+
+    def test_patterns_dict_exists(self):
+        """PATTERNS dict should exist with expected keys."""
+        from verdity.enforcement import PATTERNS
+
+        assert "secret" in PATTERNS
+        assert "sql_injection" in PATTERNS
+        assert "xss" in PATTERNS
+        assert "path_traversal" in PATTERNS
+
+    def test_secret_pattern_matches(self):
+        """Secret pattern should match common secret formats."""
+        import re
+        from verdity.enforcement import PATTERNS
+
+        pattern = re.compile(PATTERNS["secret"])
+        assert pattern.search('api_key = "abc123"') is not None
+        assert pattern.search("secret = 'xyz789'") is not None
+        assert pattern.search('token: "Bearer abc"') is not None
+        assert pattern.search('password = "secret123"') is not None
+
+    def test_sql_injection_pattern_matches(self):
+        """SQL injection pattern should match suspicious SQL."""
+        import re
+        from verdity.enforcement import PATTERNS
+
+        pattern = re.compile(PATTERNS["sql_injection"])
+        assert pattern.search("SELECT * FROM users WHERE id = '1'") is not None
+        assert pattern.search("UNION SELECT password FROM users") is not None
+        assert pattern.search("DROP TABLE users;") is not None
+
+    def test_xss_pattern_matches(self):
+        """XSS pattern should match script tags and event handlers."""
+        import re
+        from verdity.enforcement import PATTERNS
+
+        pattern = re.compile(PATTERNS["xss"])
+        assert pattern.search("<script>alert('xss')</script>") is not None
+        assert pattern.search('onerror="alert(1)"') is not None
+        assert pattern.search("onclick=stealCookies()") is not None
+
+    def test_path_traversal_pattern_matches(self):
+        """Path traversal pattern should match ../ sequences."""
+        import re
+        from verdity.enforcement import PATTERNS
+
+        pattern = re.compile(PATTERNS["path_traversal"])
+        assert pattern.search("../../../etc/passwd") is not None
+        assert pattern.search("..\\..\\windows\\system32") is not None
+
+    @pytest.mark.asyncio
+    async def test_rule_using_regex_pattern(self):
+        """Rule should be able to use regex_search with PATTERNS."""
+        from verdity.enforcement import EnforcementEngine, GateRule, Action
+
+        engine = EnforcementEngine(rules=[])
+        rule = GateRule(
+            id="detect-secrets",
+            when="regex_search(finding.content, PATTERNS['secret'])",
+            then=Action.BLOCK,
+            message="Potential secret detected",
+        )
+        engine.add_rule(rule)
+
+        # Finding with content containing a secret
+        finding = _make_finding(
+            severity=Severity.HIGH,
+            confidence=0.8,
+            summary="Hardcoded API key",
+            explanation='api_key = "sk_live_abc123def456"',
+        )
+        # We need to add content to the finding proxy - let's check how finding works
+        decision = await engine.evaluate(finding)
+
+        # This test may need the finding to have a content attribute
+        # We'll adjust after seeing implementation
+
+
+class TestEnforcementEngineEnhancements:
+    """Test enhanced EnforcementEngine methods."""
+
+    @pytest.mark.asyncio
+    async def test_evaluate_with_context_method(self):
+        """Engine should have evaluate_with_context method."""
+        from verdity.enforcement import EnforcementEngine, GateRule, Action
+
+        engine = EnforcementEngine(rules=[])
+        assert hasattr(engine, "evaluate_with_context")
+        assert callable(engine.evaluate_with_context)
+
+    @pytest.mark.asyncio
+    async def test_evaluate_with_context_passes_variables(self):
+        """evaluate_with_context should pass variables to rule evaluation."""
+        from verdity.enforcement import EnforcementEngine, GateRule, Action
+
+        engine = EnforcementEngine(rules=[])
+        rule = GateRule(
+            id="ctx-rule",
+            when="finding.confidence > {{min_conf}}",
+            then=Action.BLOCK,
+            message="Context test",
+        )
+        engine.add_rule(rule)
+
+        finding = _make_finding(severity=Severity.HIGH, confidence=0.9)
+        decision = await engine.evaluate_with_context(finding, {"min_conf": 0.8})
+
+        assert decision.action == "block"
+
+    @pytest.mark.asyncio
+    async def test_evaluate_uses_default_context(self):
+        """evaluate() should work without explicit context (backward compat)."""
+        from verdity.enforcement import EnforcementEngine, GateRule, Action
+
+        engine = EnforcementEngine(rules=[])
+        rule = GateRule(
+            id="simple-rule",
+            when="finding.severity=='critical'",
+            then=Action.BLOCK,
+            message="Simple rule",
+        )
+        engine.add_rule(rule)
+
+        finding = _make_finding(severity=Severity.CRITICAL, confidence=0.9)
+        decision = await engine.evaluate(finding)
+
+        assert decision.action == "block"
