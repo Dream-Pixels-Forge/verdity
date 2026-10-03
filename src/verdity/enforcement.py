@@ -56,7 +56,7 @@ def substitute_variables(template: str, variables: dict[str, Any]) -> str:
         if isinstance(value, str):
             str_value = f"'{value}'"
         elif isinstance(value, bool):
-            str_value = str(value).lower()
+            str_value = str(value)
         elif value is None:
             str_value = "None"
         else:

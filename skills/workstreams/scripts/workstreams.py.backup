@@ -1,0 +1,537 @@
+#!/usr/bin/env python3
+"""
+Workstreams CLI - Main entry point for managing parallel development workstreams.
+
+Supports tmux, zellij, and other terminal multiplexers.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+from typing import Optional, List
+from dataclasses import dataclass, field
+from datetime import datetime, UTC, timedelta
+import yaml
+
+
+@dataclass
+class WorkstreamConfig:
+    id: int
+    name: str
+    path: str
+    branch: str
+    command: str
+    env: dict = field(default_factory=dict)
+    multiplexer: str = "tmux"
+    layout: str = "even-horizontal"
+    shared_deps: List[str] = field(default_factory=list)
+    mode: str = "worktree"  # worktree|branch
+
+
+@dataclass
+class WorkstreamsConfig:
+    project: str
+    multiplexer: str = "tmux"
+    layout: str = "even-horizontal"
+    base_branch: str = "master"
+    mode: str = "worktree"
+    workstreams: List[WorkstreamConfig] = field(default_factory=list)
+    shared_deps: List[str] = field(default_factory=list)
+    base_path: str = "."
+
+
+class WorkstreamsManager:
+    def __init__(self, config: WorkstreamsConfig):
+        self.config = config
+        self.base_path = Path(config.base_path).resolve()
+        self.config_file = self.base_path / ".workstreams.yaml"
+
+    def init_project(self, force: bool = False, num_workstreams: int = 4):
+        """Initialize workstreams for a project."""
+        if self.config_file.exists() and not force:
+            print(f"Configuration already exists at {self.config_file}. Use --force to overwrite.")
+            return False
+
+        # If no workstreams defined, create defaults based on --workstreams argument
+        if not self.config.workstreams:
+            for i in range(1, num_workstreams + 1):
+                ws = WorkstreamConfig(
+                    id=i,
+                    name=f"ws{i}",
+                    path=f"ws{i}",
+                    branch=f"ws/{i}",
+                    command="",
+                    env={},
+                )
+                self.config.workstreams.append(ws)
+
+        # Create worktrees/branches
+        for ws in self.config.workstreams:
+            self._create_workstream(ws)
+
+        # Write config
+        self._write_config()
+        print(f"Initialized {len(self.config.workstreams)} workstreams for project '{self.config.project}'")
+        return True
+
+    def _create_workstream(self, ws: WorkstreamConfig):
+        """Create a workstream (worktree or branch)."""
+        ws_path = self.base_path / ws.path
+        ws_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if self.config.mode == "worktree":
+            # Create git worktree
+            branch = ws.branch
+            try:
+                subprocess.run(["git", "worktree", "add", str(ws_path), branch], check=True, capture_output=True)
+            except subprocess.CalledProcessError:
+                # Branch might not exist, create it
+                subprocess.run(["git", "branch", branch, self.config.base_branch], check=True, capture_output=True)
+                subprocess.run(["git", "worktree", "add", str(ws_path), branch], check=True)
+        else:
+            # Branch mode - just checkout in subdirectory
+            ws_path.mkdir(parents=True, exist_ok=True)
+
+    def _write_config(self):
+        """Write configuration to .workstreams.yaml"""
+        config_dict = {
+            "project": self.config.project,
+            "multiplexer": self.config.multiplexer,
+            "layout": self.config.layout,
+            "base_branch": self.config.base_branch,
+            "mode": self.config.workstreams[0].mode if self.config.workstreams else "worktree",
+            "shared_deps": self.config.shared_deps,
+            "workstreams": [
+                {
+                    "id": ws.id,
+                    "name": ws.name,
+                    "path": ws.path,
+                    "branch": ws.branch,
+                    "command": ws.command,
+                    "env": ws.env,
+                }
+                for ws in self.config.workstreams
+            ]
+        }
+        with open(self.config_file, 'w') as f:
+            yaml.dump(config_dict, f, default_flow_style=False)
+
+    def start(self, workstream_id: Optional[int] = None, command: Optional[str] = None):
+        """Start workstreams in multiplexer."""
+        if self.config.multiplexer == "tmux":
+            self._start_tmux(workstream_id, command)
+        elif self.config.multiplexer == "zellij":
+            self._start_zellij(workstream_id, command)
+        else:
+            print(f"Unsupported multiplexer: {self.config.multiplexer}")
+
+    def _start_tmux(self, workstream_id: Optional[int] = None, command: Optional[str] = None):
+        """Start workstreams in tmux."""
+        session_name = f"workstreams-{self.config.project}"
+
+        # Create session if not exists
+        result = subprocess.run(["tmux", "has-session", "-t", session_name], capture_output=True)
+        if result.returncode != 0:
+            tmux_cmd = [
+                "tmux", "new-session", "-d", "-s", session_name,
+                "-c", str(self.base_path)
+            ]
+            subprocess.run(tmux_cmd, check=True)
+
+        # Determine which workstreams to start
+        workstreams = self.config.workstreams
+        if workstream_id:
+            workstreams = [ws for ws in workstreams if ws.id == workstream_id]
+
+        # Create panes based on layout
+        layout = self.config.layout
+        if layout == "even-horizontal":
+            self._setup_even_horizontal_tmux(workstreams)
+        elif layout == "even-vertical":
+            self._setup_even_vertical_tmux(workstreams)
+        elif layout == "main-horizontal":
+            self._setup_main_horizontal_tmux(workstreams)
+        elif layout == "tiled":
+            self._setup_tiled_tmux(workstreams)
+
+        # Send commands to each pane
+        for i, ws in enumerate(workstreams):
+            pane = f"workstreams-{self.config.project}:{i}"
+            cmd = command or ws.command
+            if cmd:
+                tmux_cmd = ["tmux", "send-keys", "-t", pane, cmd, "Enter"]
+                subprocess.run(tmux_cmd)
+
+        print(f"Started {len(workstreams)} workstream(s) in tmux session '{session_name}'")
+
+    def _setup_even_horizontal_tmux(self, workstreams):
+        """Setup even-horizontal layout."""
+        session_name = f"workstreams-{self.config.project}"
+        for i, ws in enumerate(workstreams):
+            if i == 0:
+                # First pane already exists
+                subprocess.run(["tmux", "rename-window", "-t", f"workstreams-{self.config.project}", ws.name])
+            else:
+                # Split horizontally
+                subprocess.run(["tmux", "split-window", "-h", "-t", f"workstreams-{self.config.project}", "-c", str(self.base_path / ws.path)])
+            # Rename pane
+            subprocess.run(["tmux", "select-pane", "-t", f"workstreams-{self.config.project}.{i}", "-T", ws.name])
+
+    def _setup_even_vertical_tmux(self, workstreams):
+        session_name = f"workstreams-{self.config.project}"
+        for i, ws in enumerate(workstreams):
+            if i == 0:
+                subprocess.run(["tmux", "rename-window", "-t", f"workstreams-{self.config.project}", ws.name])
+            else:
+                subprocess.run(["tmux", "split-window", "-v", "-t", f"workstreams-{self.config.project}", "-c", str(self.base_path / ws.path)])
+            subprocess.run(["tmux", "select-pane", "-t", f"workstreams-{self.config.project}.{i}", "-T", ws.name])
+
+    def _setup_main_horizontal_tmux(self, workstreams):
+        session_name = f"workstreams-{self.config.project}"
+        for i, ws in enumerate(workstreams):
+            if i == 0:
+                subprocess.run(["tmux", "rename-window", "-t", f"workstreams-{self.config.project}", ws.name])
+            elif i == 1:
+                subprocess.run(["tmux", "split-window", "-h", "-t", f"workstreams-{self.config.project}", "-c", str(self.base_path / ws.path)])
+            else:
+                # Split the second pane vertically
+                subprocess.run(["tmux", "split-window", "-v", "-t", f"workstreams-{self.config.project}.1", "-c", str(self.base_path / ws.path)])
+            subprocess.run(["tmux", "select-pane", "-t", f"workstreams-{self.config.project}.{i}", "-T", ws.name])
+
+    def _setup_tiled_tmux(self, workstreams):
+        session_name = f"workstreams-{self.config.project}"
+        for i, ws in enumerate(workstreams):
+            if i == 0:
+                subprocess.run(["tmux", "rename-window", "-t", f"workstreams-{self.config.project}", ws.name])
+            elif i == 1:
+                subprocess.run(["tmux", "split-window", "-h", "-t", f"workstreams-{self.config.project}", "-c", str(self.base_path / ws.path)])
+            elif i == 2:
+                subprocess.run(["tmux", "split-window", "-v", "-t", f"workstreams-{self.config.project}.0", "-c", str(self.base_path / ws.path)])
+            else:
+                subprocess.run(["tmux", "split-window", "-v", "-t", f"workstreams-{self.config.project}.1", "-c", str(self.base_path / ws.path)])
+            subprocess.run(["tmux", "select-pane", "-t", f"workstreams-{self.config.project}.{i}", "-T", ws.name])
+
+    def _start_zellij(self, workstream_id: Optional[int] = None, command: Optional[str] = None):
+        """Start workstreams in zellij."""
+        # Zellij uses tabs and panes
+        session_name = f"workstreams-{self.config.project}"
+
+        # Create or attach to session
+        subprocess.run(["zellij", "attach", session_name, "--create"], check=False)
+
+        for ws in self.config.workstreams:
+            if workstream_id and ws.id != workstream_id:
+                continue
+
+            # Create tab for workstream
+            tab_name = ws.name
+            subprocess.run(["zellij", "action", "new-tab", "--name", tab_name])
+
+            # Run command in tab
+            if ws.command:
+                # Send command to zellij
+                subprocess.run(["zellij", "run", "--", "bash", "-c", f"cd {ws.path} && {ws.command}"])
+
+    def status(self, workstream_id: Optional[int] = None, verbose: bool = False, live: bool = False):
+        """Show status of workstreams."""
+        workstreams = self.config.workstreams
+        if workstream_id:
+            workstreams = [ws for ws in workstreams if ws.id == workstream_id]
+
+        if live:
+            # Live updating
+            import time
+            try:
+                while True:
+                    os.system("clear" if os.name == "posix" else "cls")
+                    self._print_status(workstreams, verbose)
+                    time.sleep(2)
+            except KeyboardInterrupt:
+                print("\nStopped live view")
+        else:
+            self._print_status(workstreams, verbose)
+
+    def _print_status(self, workstreams, verbose: bool):
+        for ws in self.config.workstreams:
+            print(f"\n=== Workstream {ws.id}: {ws.name} ===")
+            print(f"  Path: {ws.path}")
+            print(f"  Branch: {ws.branch}")
+            print(f"  Command: {ws.command}")
+
+            # Check git status
+            ws_path = self.base_path / ws.path
+            if ws_path.exists():
+                result = subprocess.run(["git", "status", "--short"], cwd=ws_path, capture_output=True, text=True)
+                if result.stdout.strip():
+                    print(f"  Git status: {result.stdout.strip()}")
+                else:
+                    print("  Git status: clean")
+
+    def assign(self, workstream_id: int, issue_numbers: List[int]):
+        """Assign issues to a workstream."""
+        ws = next((ws for ws in self.config.workstreams if ws.id == workstream_id), None)
+        if not ws:
+            print(f"Workstream {workstream_id} not found")
+            return
+
+        print(f"Assigned issues {issue_numbers} to workstream {ws.name}")
+
+    def sync(self, workstream_id: Optional[int] = None, rebase: bool = False):
+        """Sync workstream with base branch."""
+        workstreams = self.config.workstreams
+        if workstream_id:
+            workstreams = [ws for ws in self.config.workstreams if ws.id == workstream_id]
+
+        for ws in workstreams:
+            ws_path = self.base_path / ws.path
+            if ws_path.exists():
+                print(f"Syncing {ws.name}...")
+                if rebase:
+                    subprocess.run(["git", "fetch", "origin"], cwd=ws_path, check=True)
+                    subprocess.run(["git", "rebase", f"origin/{self.config.base_branch}"], cwd=ws_path, check=True)
+                else:
+                    subprocess.run(["git", "fetch", "origin"], cwd=ws_path, check=True)
+                    subprocess.run(["git", "merge", f"origin/{self.config.base_branch}"], cwd=ws_path, check=True)
+                print(f"  Synced {ws.name}")
+
+    def pr(self, workstream_id: int, title: str, body: str = "", base: str = "main", draft: bool = False):
+        """Create PR for workstream."""
+        ws = next((ws for ws in self.config.workstreams if ws.id == workstream_id), None)
+        if not ws:
+            print(f"Workstream {workstream_id} not found")
+            return
+
+        ws_path = self.base_path / ws.path
+        # Push branch
+        subprocess.run(["git", "push", "origin", ws.branch], cwd=ws_path, check=True)
+
+        # Create PR
+        cmd = ["gh", "pr", "create", "--title", title, "--body", body, "--base", base, "--head", ws.branch]
+        if draft:
+            cmd.append("--draft")
+        result = subprocess.run(cmd, cwd=ws_path, capture_output=True, text=True)
+        if result.returncode == 0:
+            print(f"Created PR: {result.stdout.strip()}")
+        else:
+            print(f"Failed to create PR: {result.stderr}")
+
+    def merge(self, workstream_id: int, method: str = "squash", delete_branch: bool = False, auto: bool = False):
+        """Merge workstream PR."""
+        ws = next((ws for ws in self.config.workstreams if ws.id == workstream_id), None)
+        if not ws:
+            print(f"Workstream {workstream_id} not found")
+            return
+
+        cmd = ["gh", "pr", "merge", ws.branch, "--method", method]
+        if delete_branch:
+            cmd.append("--delete-branch")
+        if auto:
+            cmd.append("--auto")
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            print(f"Merged {ws.name}")
+            if delete_branch:
+                # Clean up worktree
+                ws_path = self.base_path / ws.path
+                subprocess.run(["git", "worktree", "remove", str(ws_path)], check=False)
+        else:
+            print(f"Failed to merge: {result.stderr}")
+
+    def logs(self, workstream_id: int, follow: bool = False, lines: int = 100):
+        """Show workstream logs."""
+        ws = next((ws for ws in self.config.workstreams if ws.id == workstream_id), None)
+        if not ws:
+            print(f"Workstream {workstream_id} not found")
+            return
+
+        ws_path = self.base_path / ws.path
+        if not ws_path.exists():
+            print(f"Workstream path {ws_path} does not exist")
+            return
+
+        if follow:
+            subprocess.run(["tail", "-f", "-n", str(lines), "logs/worker.log"], cwd=ws_path)
+        else:
+            subprocess.run(["tail", "-n", str(lines), "logs/worker.log"], cwd=ws_path)
+
+    def dispatch(self, workstream_id: int, subagent: str, issue: int, prompt: Optional[str] = None):
+        """Dispatch a subagent to work on an issue."""
+        ws = next((ws for ws in self.config.workstreams if ws.id == workstream_id), None)
+        if not ws:
+            print(f"Workstream {workstream_id} not found")
+            return
+
+        print(f"Dispatching {subagent} to workstream {ws.name} for issue {issue}")
+
+    def run(self, workstream_id: int, command: str):
+        """Run a command in a workstream."""
+        ws = next((ws for ws in self.config.workstreams if ws.id == workstream_id), None)
+        if not ws:
+            print(f"Workstream {workstream_id} not found")
+            return
+
+        ws_path = self.base_path / ws.path
+        result = subprocess.run(command, shell=True, cwd=ws_path, capture_output=True, text=True)
+        if result.stdout:
+            print(result.stdout)
+        if result.stderr:
+            print(result.stderr, file=sys.stderr)
+        return result.returncode == 0
+
+
+def load_config(config_path: Path) -> WorkstreamsConfig:
+    """Load workstreams configuration from YAML file."""
+    if not config_path.exists():
+        # Create default config
+        return WorkstreamsConfig(project="myproject")
+
+    with open(config_path) as f:
+        data = yaml.safe_load(f)
+
+    workstreams = [
+        WorkstreamConfig(
+            id=ws["id"],
+            name=ws["name"],
+            path=ws["path"],
+            branch=ws["branch"],
+            command=ws["command"],
+            env=ws.get("env", {}),
+        )
+        for ws in data.get("workstreams", [])
+    ]
+
+    return WorkstreamsConfig(
+        project=data.get("project", "myproject"),
+        multiplexer=data.get("multiplexer", "tmux"),
+        layout=data.get("layout", "even-horizontal"),
+        base_branch=data.get("base_branch", "master"),
+        mode=data.get("mode", "worktree"),
+        workstreams=workstreams,
+        shared_deps=data.get("shared_deps", []),
+    )
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Workstreams - Parallel development workstreams")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # init
+    init_parser = subparsers.add_parser("init", help="Initialize workstreams")
+    init_parser.add_argument("--project", required=True, help="Project name")
+    init_parser.add_argument("--workstreams", type=int, default=4, help="Number of workstreams")
+    init_parser.add_argument("--multiplexer", choices=["tmux", "zellij", "tmuxp", "wezterm", "kitty"], default="tmux")
+    init_parser.add_argument("--layout", choices=["even-horizontal", "even-vertical", "main-horizontal", "tiled", "tabs"], default="even-horizontal")
+    init_parser.add_argument("--base-branch", default="master")
+    init_parser.add_argument("--mode", choices=["worktree", "branch"], default="worktree")
+    init_parser.add_argument("--shared-deps", nargs="+", default=[])
+    init_parser.add_argument("--force", action="store_true")
+
+    # start
+    start_parser = subparsers.add_parser("start", help="Start workstreams")
+    start_parser.add_argument("--workstream", type=int, help="Specific workstream to start")
+    start_parser.add_argument("--command", help="Override command")
+
+    # status
+    status_parser = subparsers.add_parser("status", help="Show workstream status")
+    status_parser.add_argument("--workstream", type=int)
+    status_parser.add_argument("--verbose", action="store_true")
+    status_parser.add_argument("--live", action="store_true")
+
+    # assign
+    assign_parser = subparsers.add_parser("assign", help="Assign issues to workstream")
+    assign_parser.add_argument("--workstream", type=int, required=True)
+    assign_parser.add_argument("--issue", type=int, action="append", help="Issue number(s)")
+
+    # sync
+    sync_parser = subparsers.add_parser("sync", help="Sync workstream with base branch")
+    sync_parser.add_argument("--workstream", type=int)
+    sync_parser.add_argument("--rebase", action="store_true")
+
+    # pr
+    pr_parser = subparsers.add_parser("pr", help="Create PR from workstream")
+    pr_parser.add_argument("--workstream", type=int, required=True)
+    pr_parser.add_argument("--title", required=True)
+    pr_parser.add_argument("--body", default="")
+    pr_parser.add_argument("--base", default="main")
+    pr_parser.add_argument("--draft", action="store_true")
+
+    # merge
+    merge_parser = subparsers.add_parser("merge", help="Merge workstream PR")
+    merge_parser.add_argument("--workstream", type=int, required=True)
+    merge_parser.add_argument("--method", choices=["merge", "squash", "rebase"], default="squash")
+    merge_parser.add_argument("--delete-branch", action="store_true")
+    merge_parser.add_argument("--auto", action="store_true")
+
+    # dispatch
+    dispatch_parser = subparsers.add_parser("dispatch", help="Dispatch subagent to workstream")
+    dispatch_parser.add_argument("--workstream", type=int, required=True)
+    dispatch_parser.add_argument("--subagent", choices=["backend-api", "frontend-ui", "database-schema", "testing", "documentation", "security", "code-quality", "devops"])
+    dispatch_parser.add_argument("--issue", type=int, required=True)
+    dispatch_parser.add_argument("--prompt", help="Custom prompt")
+
+    # logs
+    logs_parser = subparsers.add_parser("logs", help="View workstream logs")
+    logs_parser.add_argument("--workstream", type=int, required=True)
+    logs_parser.add_argument("--follow", action="store_true")
+    logs_parser.add_argument("--lines", type=int, default=100)
+
+    # run
+    run_parser = subparsers.add_parser("run", help="Run command in workstream")
+    run_parser.add_argument("--workstream", type=int, required=True)
+    run_parser.add_argument("--command", required=True)
+
+    args = parser.parse_args()
+
+    # Load config
+    config_path = Path.cwd() / ".workstreams.yaml"
+    config = load_config(config_path)
+
+    # Update config with CLI args
+    if hasattr(args, "project"):
+        config.project = args.project
+    if hasattr(args, "multiplexer"):
+        config.multiplexer = args.multiplexer
+    if hasattr(args, "layout"):
+        config.layout = args.layout
+    if hasattr(args, "base_branch"):
+        config.base_branch = args.base_branch
+
+    manager = WorkstreamsManager(config)
+
+    # Execute command
+    if args.command == "init":
+        manager.init_project(force=args.force, num_workstreams=args.workstreams)
+    elif args.command == "start":
+        manager.start(workstream_id=args.workstream, command=args.command)
+    elif args.command == "status":
+        manager.status(workstream_id=args.workstream, verbose=args.verbose)
+    elif args.command == "assign":
+        manager.assign(args.workstream, args.issue)
+    elif args.command == "sync":
+        manager.sync(workstream_id=args.workstream, rebase=args.rebase)
+    elif args.command == "pr":
+        manager.pr(args.workstream, args.title, args.body, args.base, args.draft)
+    elif args.command == "merge":
+        manager.merge(args.workstream, args.method, args.delete_branch, args.auto)
+    elif args.command == "dispatch":
+        manager.dispatch(args.workstream, args.subagent, args.issue, args.prompt)
+    elif args.command == "logs":
+        manager.logs(args.workstream, args.follow, args.lines)
+    print("DEBUG: run command"); elif args.command == "run":
+        manager.run(args.workstream, args.command)
+    elif args.command == "status":
+        manager.status(workstream_id=args.workstream, verbose=args.verbose)
+    elif args.command == "cleanup":
+        pass  # TODO
+
+
+if __name__ == "__main__":
+    main()

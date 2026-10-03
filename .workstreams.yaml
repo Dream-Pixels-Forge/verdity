@@ -1,0 +1,25 @@
+base_branch: master
+layout: even-horizontal
+mode: worktree
+multiplexer: zellij
+project: test-project
+shared_deps: []
+workstreams:
+- branch: ws/1
+  command: ''
+  env: {}
+  id: 1
+  name: ws1
+  path: ws1
+- branch: ws/2
+  command: ''
+  env: {}
+  id: 2
+  name: ws2
+  path: ws2
+- branch: ws/3
+  command: ''
+  env: {}
+  id: 3
+  name: ws3
+  path: ws3

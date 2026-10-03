@@ -1068,3 +1068,467 @@ class TestEnforcementEngineEnhancements:
         decision = await engine.evaluate(finding)
 
         assert decision.action == "block"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Phase 1: Enforcement Engine - Missing Coverage Tests
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestGateRuleEdgeCases:
+    """Test GateRule edge cases for missing coverage."""
+
+    def test_gate_rule_evaluate_empty_finding_dict(self):
+        """GateRule.evaluate should handle empty finding dict gracefully."""
+        from verdity.enforcement import GateRule, Action
+
+        rule = GateRule(
+            id="test-rule",
+            when="finding.severity == 'critical'",
+            then=Action.BLOCK,
+            message="Test",
+        )
+
+        # Empty context - finding will be empty dict
+        context = {"finding": {}}
+        result = rule.evaluate(context)
+        assert result is False  # Should not crash, return False
+
+    def test_gate_rule_evaluate_exception_handling(self):
+        """GateRule.evaluate should catch exceptions and return False."""
+        from verdity.enforcement import GateRule, Action
+
+        rule = GateRule(
+            id="test-rule",
+            when="finding.severity ==='critical'",  # Invalid syntax - triple equals
+            then=Action.BLOCK,
+            message="Test",
+        )
+
+        finding = _make_finding(severity=Severity.CRITICAL, confidence=0.9)
+        context = {"finding": finding}
+        result = rule.evaluate(context)
+        assert result is False  # Should not crash, return False
+
+    def test_gate_rule_evaluate_finding_none(self):
+        """GateRule.evaluate should handle None finding gracefully."""
+        from verdity.enforcement import GateRule, Action
+
+        rule = GateRule(
+            id="test-rule",
+            when="finding.severity == 'critical'",
+            then=Action.BLOCK,
+            message="Test",
+        )
+
+        # Context with finding set to None
+        context = {"finding": None}
+        result = rule.evaluate(context)
+        assert result is False
+
+
+class TestSubstituteVariablesEdgeCases:
+    """Test substitute_variables edge cases for missing coverage."""
+
+    def test_substitute_variables_empty_dict(self):
+        """substitute_variables should return template unchanged with empty variables."""
+        from verdity.enforcement import substitute_variables
+
+        template = "Hello {{name}}"
+        result = substitute_variables(template, {})
+        assert result == "Hello {{name}}"
+
+    def test_substitute_variables_none_variables(self):
+        """substitute_variables should return template unchanged with None variables."""
+        from verdity.enforcement import substitute_variables
+
+        template = "Hello {{name}}"
+        result = substitute_variables(template, None)
+        assert result == "Hello {{name}}"
+
+    def test_substitute_variables_boolean_values(self):
+        """substitute_variables should handle boolean values correctly."""
+        from verdity.enforcement import substitute_variables
+
+        template = "Flag: {{flag}}, Enabled: {{enabled}}"
+        result = substitute_variables(template, {"flag": True, "enabled": False})
+        assert "true" in result.lower()
+        assert "false" in result.lower()
+
+    def test_substitute_variables_none_value(self):
+        """substitute_variables should handle None values correctly."""
+        from verdity.enforcement import substitute_variables
+
+        template = "Value: {{value}}"
+        result = substitute_variables(template, {"value": None})
+        assert "none" in result.lower()
+
+    def test_substitute_variables_numeric_values(self):
+        """substitute_variables should handle numeric values correctly."""
+        from verdity.enforcement import substitute_variables
+
+        template = "Int: {{int_val}}, Float: {{float_val}}"
+        result = substitute_variables(template, {"int_val": 42, "float_val": 3.14})
+        assert "42" in result
+        assert "3.14" in result
+
+
+class TestRuleSetEdgeCases:
+    """Test RuleSet edge cases for missing coverage."""
+
+    def test_rule_set_evaluate_missing_optional_attributes(self):
+        """RuleSet.evaluate should handle findings without explanation/content."""
+        from verdity.enforcement import RuleSet, GateRule, Action
+        from verdity.schemas import Finding, ConcernType, Severity
+
+        # Create a minimal finding without explanation attribute
+        finding = Finding(
+            concern=ConcernType.SECURITY,
+            severity=Severity.HIGH,
+            file="test.py",
+            line_start=1,
+            line_end=1,
+            summary="Test finding",
+            explanation="",  # Empty explanation
+            confidence=0.8,
+            agent_version="test",
+            prompt_hash="sha256:abc",
+        )
+        # Remove explanation attribute to test getattr fallback
+        del finding.explanation
+
+        rules = [
+            GateRule(
+                id="test-rule",
+                when="finding.severity == 'high'",
+                then=Action.BLOCK,
+                message="Block high",
+                priority=100,
+            ),
+        ]
+        rule_set = RuleSet(name="test", rules=rules)
+        decisions = rule_set.evaluate(finding)
+
+        assert len(decisions) == 1
+        assert decisions[0].action == "block"
+
+    def test_rule_set_evaluate_disabled_rule_skipped(self):
+        """RuleSet.evaluate should skip disabled rules."""
+        from verdity.enforcement import RuleSet, GateRule, Action
+        from verdity.schemas import Finding, ConcernType, Severity
+
+        finding = _make_finding(severity=Severity.HIGH, confidence=0.8)
+
+        rules = [
+            GateRule(
+                id="disabled-rule",
+                when="finding.severity == 'high'",
+                then=Action.BLOCK,
+                message="Should not match",
+                enabled=False,
+                priority=100,
+            ),
+            GateRule(
+                id="enabled-rule",
+                when="finding.severity == 'high'",
+                then=Action.REQUIRE_APPROVAL,
+                message="Should match",
+                enabled=True,
+                priority=100,
+            ),
+        ]
+        rule_set = RuleSet(name="test", rules=rules)
+        decisions = rule_set.evaluate(finding)
+
+        assert len(decisions) == 1
+        assert decisions[0].rule_id == "enabled-rule"
+        assert decisions[0].action == "require_approval"
+
+
+class TestEnforcementEngineEdgeCases:
+    """Test EnforcementEngine edge cases for missing coverage."""
+
+    @pytest.mark.asyncio
+    async def test_evaluate_with_context_empty_variables(self):
+        """EnforcementEngine.evaluate_with_context should handle empty variables dict."""
+        from verdity.enforcement import EnforcementEngine, GateRule, Action
+
+        engine = EnforcementEngine(rules=[])
+        rule = GateRule(
+            id="simple-rule",
+            when="finding.severity == 'critical'",
+            then=Action.BLOCK,
+            message="Test",
+        )
+        engine.add_rule(rule)
+
+        finding = _make_finding(severity=Severity.CRITICAL, confidence=0.9)
+        decision = await engine.evaluate_with_context(finding, {})
+
+        assert decision.action == "block"
+
+    @pytest.mark.asyncio
+    async def test_evaluate_with_context_none_variables(self):
+        """EnforcementEngine.evaluate_with_context should handle None variables."""
+        from verdity.enforcement import EnforcementEngine, GateRule, Action
+
+        engine = EnforcementEngine(rules=[])
+        rule = GateRule(
+            id="simple-rule",
+            when="finding.severity == 'critical'",
+            then=Action.BLOCK,
+            message="Test",
+        )
+        engine.add_rule(rule)
+
+        finding = _make_finding(severity=Severity.CRITICAL, confidence=0.9)
+        decision = await engine.evaluate_with_context(finding, None)
+
+        assert decision.action == "block"
+
+    @pytest.mark.asyncio
+    async def test_evaluate_with_context_multiple_variables(self):
+        """EnforcementEngine.evaluate_with_context should handle multiple variable types."""
+        from verdity.enforcement import EnforcementEngine, GateRule, Action
+
+        engine = EnforcementEngine(rules=[])
+        rule = GateRule(
+            id="multi-var-rule",
+            when="finding.severity == {{sev}} and finding.confidence > {{min_conf}} and {{flag}} == True",
+            then=Action.BLOCK,
+            message="Severity: {{sev}}, MinConf: {{min_conf}}, Flag: {{flag}}",
+            priority=100,
+        )
+        engine.add_rule(rule)
+
+        finding = _make_finding(severity=Severity.HIGH, confidence=0.9)
+        decision = await engine.evaluate_with_context(finding, {
+            "sev": "high",
+            "min_conf": 0.8,
+            "flag": True,
+        })
+
+        assert decision.action == "block"
+        assert "high" in decision.message
+        assert "0.8" in decision.message
+        assert "true" in decision.message.lower()
+
+    @pytest.mark.asyncio
+    async def test_evaluate_with_context_no_matching_rules(self):
+        """EnforcementEngine.evaluate_with_context should return allow when no rules match."""
+        from verdity.enforcement import EnforcementEngine, GateRule, Action
+
+        engine = EnforcementEngine(rules=[])
+        rule = GateRule(
+            id="high-sev-rule",
+            when="finding.severity == 'critical'",
+            then=Action.BLOCK,
+            message="Block critical",
+        )
+        engine.add_rule(rule)
+
+        # HIGH severity, not CRITICAL - should not match
+        finding = _make_finding(severity=Severity.HIGH, confidence=0.9)
+        decision = await engine.evaluate_with_context(finding, {})
+
+        assert decision.action == "allow"
+        assert decision.rule_id is None
+
+    @pytest.mark.asyncio
+    async def test_evaluate_with_context_variable_in_when_and_message(self):
+        """Variables should work in both when clause and message."""
+        from verdity.enforcement import EnforcementEngine, GateRule, Action
+
+        engine = EnforcementEngine(rules=[])
+        rule = GateRule(
+            id="var-in-both",
+            when="finding.confidence > {{threshold}}",
+            then=Action.BLOCK,
+            message="Confidence {{threshold}} exceeded: actual {{actual}}",
+            priority=100,
+        )
+        engine.add_rule(rule)
+
+        finding = _make_finding(severity=Severity.HIGH, confidence=0.95)
+        decision = await engine.evaluate_with_context(finding, {
+            "threshold": 0.9,
+            "actual": 0.95,
+        })
+
+        assert decision.action == "block"
+        assert "0.9" in decision.message
+        assert "0.95" in decision.message
+
+
+# Additional tests for approval_queue get_item
+@pytest.mark.asyncio
+async def test_approval_queue_get_item_not_found():
+    """Test get_item returns None for non-existent item."""
+    from verdity.approval_queue import ApprovalQueue
+    db = ApprovalQueue(":memory:")
+    await db.connect()
+    try:
+        result = await db.get_item("non-existent-id")
+        assert result is None
+    finally:
+        await db.close()
+
+# Additional tests for budget_enforcer
+@pytest.mark.asyncio
+@pytest.mark.asyncio
+async def test_budget_enforcer_same_specialist_twice():
+    """BudgetEnforcer should allow same specialist ID twice."""
+    from verdity.budget_enforcer import BudgetEnforcer, SpecialistBudget, TokenEconomicsService
+    
+    te_service = TokenEconomicsService()
+    be = BudgetEnforcer(te_service=te_service)
+    be.set_budget("security", SpecialistBudget(max_concurrent=2))
+    
+    # Same specialist twice should be allowed
+    allowed1, dropped1 = await be.check_specialist_budget("security", "spec-1")
+    allowed2, dropped2 = await be.check_specialist_budget("security", "spec-1")
+    
+    assert allowed1 is True
+    assert allowed2 is True
+    assert dropped1 == []
+    assert dropped2 == []
+
+# Additional tests for enforcement engine edge cases (ISS-001)
+
+class TestRegexSearchEdgeCases:
+    def test_regex_search_none_text(self):
+        """regex_search should return False for None text."""
+        from verdity.enforcement import regex_search
+        assert regex_search(None, "pattern") is False
+
+    def test_regex_search_empty_text(self):
+        """regex_search should return False for empty text."""
+        from verdity.enforcement import regex_search
+        assert regex_search("", "pattern") is False
+
+    def test_regex_search_match(self):
+        """regex_search should return True for matching pattern."""
+        from verdity.enforcement import regex_search
+        assert regex_search("hello world", "world") is True
+
+    def test_regex_search_no_match(self):
+        """regex_search should return False for non-matching pattern."""
+        from verdity.enforcement import regex_search
+        assert regex_search("hello", "world") is False
+
+
+class TestEnforcementEngineRemoveRule:
+    def test_remove_rule_not_found(self):
+        """remove_rule should return False when rule not found."""
+        from verdity.enforcement import EnforcementEngine, GateRule, Action
+        
+        engine = EnforcementEngine(rules=[])
+        rule = GateRule(
+            id="test-rule",
+            when="finding.severity == 'high'",
+            then=Action.BLOCK,
+            message="Test",
+        )
+        engine.add_rule(rule)
+        
+        result = engine.remove_rule("non-existent")
+        assert result is False
+        
+        # Original rule should still be there
+        result = engine.remove_rule("test-rule")
+        assert result is True
+
+
+class TestLoadRulesFromYaml:
+    def test_load_rules_from_yaml_success(self, tmp_path):
+        """load_rules_from_yaml should parse valid YAML."""
+        from verdity.enforcement import load_rules_from_yaml, GateRule, Action
+        
+        rules_file = tmp_path / "rules.yml"
+        rules_file.write_text("""
+rules:
+  - id: "test-rule"
+    when: "finding.severity == 'high'"
+    then: "BLOCK"
+    message: "High severity"
+    priority: 50
+    enabled: true
+""")
+        
+        rules = load_rules_from_yaml(str(rules_file))
+        assert len(rules) == 1
+        assert rules[0].id == "test-rule"
+        assert rules[0].then == Action.BLOCK
+        assert rules[0].priority == 50
+
+    def test_load_rules_from_yaml_empty_rules(self, tmp_path):
+        """load_rules_from_yaml should handle empty rules list."""
+        from verdity.enforcement import load_rules_from_yaml
+        
+        rules_file = tmp_path / "rules.yml"
+        rules_file.write_text("rules: []")
+        
+        rules = load_rules_from_yaml(str(rules_file))
+        assert rules == []
+
+    def test_load_rules_from_yaml_missing_rules_key(self, tmp_path):
+        """load_rules_from_yaml should handle missing rules key."""
+        from verdity.enforcement import load_rules_from_yaml
+        
+        rules_file = tmp_path / "rules.yml"
+        rules_file.write_text("other_key: value")
+        
+        rules = load_rules_from_yaml(str(rules_file))
+        assert rules == []
+
+    def test_load_rules_from_yaml_invalid_action(self, tmp_path):
+        """load_rules_from_yaml should handle invalid action."""
+        from verdity.enforcement import load_rules_from_yaml
+        
+        rules_file = tmp_path / "rules.yml"
+        rules_file.write_text("""
+rules:
+  - id: "test-rule"
+    when: "finding.severity == 'high'"
+    then: "INVALID_ACTION"
+    message: "Test"
+""")
+        
+        import pytest
+        with pytest.raises(KeyError):
+            load_rules_from_yaml(str(rules_file))
+
+    def test_load_rules_from_yaml_disabled_rule(self, tmp_path):
+        """load_rules_from_yaml should handle disabled rules."""
+        from verdity.enforcement import load_rules_from_yaml, GateRule, Action
+        
+        rules_file = tmp_path / "rules.yml"
+        rules_file.write_text("""
+rules:
+  - id: "test-rule"
+    when: "finding.severity == 'high'"
+    then: "BLOCK"
+    message: "Test"
+    enabled: false
+""")
+        
+        rules = load_rules_from_yaml(str(rules_file))
+        assert len(rules) == 1
+        assert rules[0].enabled is False
+
+    def test_load_rules_from_yaml_default_priority(self, tmp_path):
+        """load_rules_from_yaml should use default priority."""
+        from verdity.enforcement import load_rules_from_yaml, GateRule, Action
+        
+        rules_file = tmp_path / "rules.yml"
+        rules_file.write_text("""
+rules:
+  - id: "test-rule"
+    when: "finding.severity == 'high'"
+    then: "BLOCK"
+    message: "Test"
+""")
+        
+        rules = load_rules_from_yaml(str(rules_file))
+        assert len(rules) == 1
+        assert rules[0].priority == 100

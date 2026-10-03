@@ -1075,3 +1075,279 @@ class TestClientManagement:
 
             # After exit, client should be closed
             assert client._client is None
+
+
+# ── Get PR Diff ──────────────────────────────────────────────────────────
+
+
+class TestGetPRDiff:
+    """Tests for get_pr_diff method error paths and success."""
+
+    @pytest.mark.asyncio
+    async def test_get_pr_diff_success(self):
+        """Should return diff data on successful PR and files fetch."""
+        client = _make_client()
+
+        mock_token_resp = MagicMock()
+        mock_token_resp.status_code = 201
+        mock_token_resp.json.return_value = {
+            "token": "ghs_inst123",
+            "expires_at": "2099-01-01T00:00:00Z",
+        }
+
+        mock_pr_resp = MagicMock()
+        mock_pr_resp.status_code = 200
+        mock_pr_resp.json.return_value = {
+            "base": {"sha": "base_sha_123"},
+            "head": {"sha": "head_sha_456"},
+        }
+
+        mock_files_resp = MagicMock()
+        mock_files_resp.status_code = 200
+        mock_files_resp.json.return_value = [
+            {
+                "filename": "src/main.py",
+                "patch": "@@ -1,3 +1,4 @@\n+import os\n def main():\n     pass",
+                "additions": 1,
+                "deletions": 0,
+                "status": "modified",
+            },
+            {
+                "filename": "src/utils.py",
+                "patch": "@@ -10,7 +10,7 @@\n-def old():\n+def new():\n     pass",
+                "additions": 1,
+                "deletions": 1,
+                "status": "modified",
+            },
+        ]
+
+        with patch("verdity.github_client.httpx.AsyncClient") as MockClient:
+            mock_http = AsyncMock()
+            mock_http.get = AsyncMock(side_effect=[mock_token_resp, mock_pr_resp, mock_files_resp])
+            mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+            mock_http.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = mock_http
+
+            result = await client.get_pr_diff("org", "repo", 42)
+
+            assert result is not None
+            assert result["base_sha"] == "base_sha_123"
+            assert result["head_sha"] == "head_sha_456"
+            assert len(result["files"]) == 2
+            assert result["files"][0]["filename"] == "src/main.py"
+            assert result["files"][0]["additions"] == 1
+            assert result["files"][1]["filename"] == "src/utils.py"
+
+    @pytest.mark.asyncio
+    async def test_get_pr_diff_pr_not_found(self):
+        """Should return None when PR is not found (404)."""
+        client = _make_client()
+
+        mock_token_resp = MagicMock()
+        mock_token_resp.status_code = 201
+        mock_token_resp.json.return_value = {
+            "token": "ghs_inst123",
+            "expires_at": "2099-01-01T00:00:00Z",
+        }
+
+        mock_pr_resp = MagicMock()
+        mock_pr_resp.status_code = 404
+        mock_pr_resp.text = "Not Found"
+
+        with patch("verdity.github_client.httpx.AsyncClient") as MockClient:
+            mock_http = AsyncMock()
+            mock_http.get = AsyncMock(side_effect=[mock_token_resp, mock_pr_resp])
+            mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+            mock_http.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = mock_http
+
+            result = await client.get_pr_diff("org", "repo", 999)
+            assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_pr_diff_auth_failure(self):
+        """Should return None when authentication fails (401) on PR fetch."""
+        client = _make_client()
+
+        mock_token_resp = MagicMock()
+        mock_token_resp.status_code = 201
+        mock_token_resp.json.return_value = {
+            "token": "ghs_inst123",
+            "expires_at": "2099-01-01T00:00:00Z",
+        }
+
+        mock_pr_resp = MagicMock()
+        mock_pr_resp.status_code = 401
+        mock_pr_resp.text = "Unauthorized"
+
+        with patch("verdity.github_client.httpx.AsyncClient") as MockClient:
+            mock_http = AsyncMock()
+            mock_http.get = AsyncMock(side_effect=[mock_token_resp, mock_pr_resp])
+            mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+            mock_http.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = mock_http
+
+            result = await client.get_pr_diff("org", "repo", 42)
+            assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_pr_diff_rate_limited(self):
+        """Should return None when rate limited (403) on PR fetch."""
+        client = _make_client()
+
+        mock_token_resp = MagicMock()
+        mock_token_resp.status_code = 201
+        mock_token_resp.json.return_value = {
+            "token": "ghs_inst123",
+            "expires_at": "2099-01-01T00:00:00Z",
+        }
+
+        mock_pr_resp = MagicMock()
+        mock_pr_resp.status_code = 403
+        mock_pr_resp.text = "Rate limit exceeded"
+
+        with patch("verdity.github_client.httpx.AsyncClient") as MockClient:
+            mock_http = AsyncMock()
+            mock_http.get = AsyncMock(side_effect=[mock_token_resp, mock_pr_resp])
+            mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+            mock_http.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = mock_http
+
+            result = await client.get_pr_diff("org", "repo", 42)
+            assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_pr_diff_files_api_failure(self):
+        """Should return None when files API fails (404)."""
+        client = _make_client()
+
+        mock_token_resp = MagicMock()
+        mock_token_resp.status_code = 201
+        mock_token_resp.json.return_value = {
+            "token": "ghs_inst123",
+            "expires_at": "2099-01-01T00:00:00Z",
+        }
+
+        mock_pr_resp = MagicMock()
+        mock_pr_resp.status_code = 200
+        mock_pr_resp.json.return_value = {
+            "base": {"sha": "base_sha_123"},
+            "head": {"sha": "head_sha_456"},
+        }
+
+        mock_files_resp = MagicMock()
+        mock_files_resp.status_code = 404
+        mock_files_resp.text = "Not Found"
+
+        with patch("verdity.github_client.httpx.AsyncClient") as MockClient:
+            mock_http = AsyncMock()
+            mock_http.get = AsyncMock(side_effect=[mock_token_resp, mock_pr_resp, mock_files_resp])
+            mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+            mock_http.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = mock_http
+
+            result = await client.get_pr_diff("org", "repo", 42)
+            assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_pr_diff_files_auth_failure(self):
+        """Should return None when authentication fails (401) on files fetch."""
+        client = _make_client()
+
+        mock_token_resp = MagicMock()
+        mock_token_resp.status_code = 201
+        mock_token_resp.json.return_value = {
+            "token": "ghs_inst123",
+            "expires_at": "2099-01-01T00:00:00Z",
+        }
+
+        mock_pr_resp = MagicMock()
+        mock_pr_resp.status_code = 200
+        mock_pr_resp.json.return_value = {
+            "base": {"sha": "base_sha_123"},
+            "head": {"sha": "head_sha_456"},
+        }
+
+        mock_files_resp = MagicMock()
+        mock_files_resp.status_code = 401
+        mock_files_resp.text = "Unauthorized"
+
+        with patch("verdity.github_client.httpx.AsyncClient") as MockClient:
+            mock_http = AsyncMock()
+            mock_http.get = AsyncMock(side_effect=[mock_token_resp, mock_pr_resp, mock_files_resp])
+            mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+            mock_http.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = mock_http
+
+            result = await client.get_pr_diff("org", "repo", 42)
+            assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_pr_diff_files_rate_limited(self):
+        """Should return None when rate limited (403) on files fetch."""
+        client = _make_client()
+
+        mock_token_resp = MagicMock()
+        mock_token_resp.status_code = 201
+        mock_token_resp.json.return_value = {
+            "token": "ghs_inst123",
+            "expires_at": "2099-01-01T00:00:00Z",
+        }
+
+        mock_pr_resp = MagicMock()
+        mock_pr_resp.status_code = 200
+        mock_pr_resp.json.return_value = {
+            "base": {"sha": "base_sha_123"},
+            "head": {"sha": "head_sha_456"},
+        }
+
+        mock_files_resp = MagicMock()
+        mock_files_resp.status_code = 403
+        mock_files_resp.text = "Rate limit exceeded"
+
+        with patch("verdity.github_client.httpx.AsyncClient") as MockClient:
+            mock_http = AsyncMock()
+            mock_http.get = AsyncMock(side_effect=[mock_token_resp, mock_pr_resp, mock_files_resp])
+            mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+            mock_http.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = mock_http
+
+            result = await client.get_pr_diff("org", "repo", 42)
+            assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_pr_diff_empty_files(self):
+        """Should return empty files list when PR has no file changes."""
+        client = _make_client()
+
+        mock_token_resp = MagicMock()
+        mock_token_resp.status_code = 201
+        mock_token_resp.json.return_value = {
+            "token": "ghs_inst123",
+            "expires_at": "2099-01-01T00:00:00Z",
+        }
+
+        mock_pr_resp = MagicMock()
+        mock_pr_resp.status_code = 200
+        mock_pr_resp.json.return_value = {
+            "base": {"sha": "base_sha_123"},
+            "head": {"sha": "head_sha_456"},
+        }
+
+        mock_files_resp = MagicMock()
+        mock_files_resp.status_code = 200
+        mock_files_resp.json.return_value = []
+
+        with patch("verdity.github_client.httpx.AsyncClient") as MockClient:
+            mock_http = AsyncMock()
+            mock_http.get = AsyncMock(side_effect=[mock_token_resp, mock_pr_resp, mock_files_resp])
+            mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+            mock_http.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = mock_http
+
+            result = await client.get_pr_diff("org", "repo", 42)
+
+            assert result is not None
+            assert result["base_sha"] == "base_sha_123"
+            assert result["head_sha"] == "head_sha_456"
+            assert result["files"] == []

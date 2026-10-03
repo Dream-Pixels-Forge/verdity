@@ -1,0 +1,142 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "verdity"
+version = "0.4.14"
+description = "Verdity — AI-Powered Pull Request Review System with MCP integration, full-codebase context, agentic fix mode, multi-platform webhooks, and adversarial review"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+authors = [{name = "Verdity Contributors"}]
+keywords = [
+    "pr-review",
+    "code-review",
+    "security",
+    "ai-agent",
+    "github",
+    "webhook",
+    "llm",
+    "static-analysis",
+    "secrets-detection",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Web Environment",
+    "Framework :: FastAPI",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+dependencies = [
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.29.0",
+    "pydantic>=2.6.0",
+    "pydantic-settings>=2.2.0",
+    "httpx>=0.27.0",
+    "PyJWT>=2.8.0",
+    "cryptography>=42.0.0",
+    "pyyaml>=6.0.0",
+    "redis>=5.0.0",
+    "celpy>=0.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.1.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "coverage>=7.16.0",
+    "ruff>=0.6,<0.17",
+    "pre-commit>=4.0.0",
+]
+
+[project.scripts]
+verdity = "verdity.worker:main"
+verdity-worker = "verdity.worker:run_entrypoint"
+verdity-enforce = "verdity.cli.enforce:enforce"
+verdity-review = "verdity.cli.review:review"
+
+[project.urls]
+Homepage = "https://github.com/Dream-Pixels-Forge/verdity"
+Documentation = "https://github.com/Dream-Pixels-Forge/verdity#readme"
+Repository = "https://github.com/Dream-Pixels-Forge/verdity"
+Issues = "https://github.com/Dream-Pixels-Forge/verdity/issues"
+Changelog = "https://github.com/Dream-Pixels-Forge/verdity/blob/master/CHANGELOG.md"
+Security = "https://github.com/Dream-Pixels-Forge/verdity/blob/master/SECURITY.md"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+addopts = "-v --cov=src/verdity --cov-report=term-missing --cov-fail-under=100"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+# Rule sets we enforce.
+# E/W: pycodestyle (PEP 8)
+# F: pyflakes (unused, undefined names)
+# I: isort (import order)
+# B: bugbear (likely bugs)
+# UP: pyupgrade (modernize syntax for our target py311)
+# SIM: simplify (idomatic replacements)
+# C4: flake8-comprehensions
+# DTZ: flake8-datetimez (always use tz-aware datetimes)
+# RET: flake8-return (return-statement hygiene)
+# PERF: perflint (perf hints)
+# RUF: ruff-specific rules
+select = [
+    "E", "W", "F", "I", "B", "UP", "SIM", "C4", "DTZ", "RET", "PERF", "RUF",
+]
+ignore = [
+    # E501: line too long — handled by formatter (line-length setting).
+    "E501",
+    # SIM102: collapsible if — readability suffers in async tests.
+    "SIM102",
+    # SIM108: ternary to if — readability preference.
+    "SIM108",
+    # PERF401: manual list comprehension — often hurts readability in tests.
+    "PERF401",
+    # RET504: unnecessary assignment before return — preference.
+    "RET504",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Intentional defensive exception handling in agent/orchestrator/MCP/worker code
+"src/verdity/agents/*.py" = ["BLE001"]
+"src/verdity/orchestrator.py" = ["BLE001"]
+"src/verdity/model_fallback.py" = ["BLE001"]
+"src/verdity/rate_limiter.py" = ["BLE001"]
+"src/verdity/review_rules.py" = ["BLE001"]
+"src/verdity/mcp_server.py" = ["BLE001"]
+"src/verdity/worker.py" = ["BLE001"]
+"src/verdity/coding_agent.py" = ["BLE001", "ASYNC230"]
+# Tests: scaffolding often uses class-level mutable defaults to mimic
+# the real object under test, and asserts on broad Exception.
+"tests/**/*.py" = [
+    "RUF012",  # mutable class attr default — common in mock scaffolding
+    "B017",    # pytest.raises(Exception) — pydantic ValidationError is broad
+    "DTZ005",  # datetime.now() without tz — tests, not production
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
