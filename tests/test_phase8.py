@@ -7,6 +7,8 @@ STRIDE threat model from Security doc §3 against the actual implementation.
 
 from __future__ import annotations
 
+import importlib.metadata
+
 import asyncio
 import json
 import os
@@ -578,7 +580,7 @@ async def test_all_tests_pass_at_least_90_coverage():
     import verdity.webhook_normalizer
 
     # All imports succeed - structure is intact for full coverage
-    assert verdity.__version__ in ("0.2.1", "0.3.0", "0.4.6", "0.4.7", "0.4.12", "0.4.13", "0.4.14")
+    assert importlib.metadata.version('verdity') in ("0.2.1", "0.3.0", "0.4.6", "0.4.7", "0.4.12", "0.4.13", "0.4.16")
 
 
 # ── Phase 13 Gate Test ──────────────────────────────────────────────

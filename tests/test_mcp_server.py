@@ -13,7 +13,7 @@ class TestMCPServer:
         server = MCPServer()
         assert server.PROTOCOL_VERSION == "2024-11-05"
         assert server.SERVER_INFO["name"] == "verdity"
-        assert server.SERVER_INFO["version"] == "0.4.14"
+        assert server.SERVER_INFO["version"] == "0.4.16"
         assert len(server._tools) == 12
 
     def test_get_tools(self):
@@ -40,7 +40,7 @@ class TestMCPServer:
         server = MCPServer()
         info = server.get_server_info()
         assert info["name"] == "verdity"
-        assert info["version"] == "0.4.14"
+        assert info["version"] == "0.4.16"
         assert info["protocolVersion"] == "2024-11-05"
         assert "tools" in info
 
