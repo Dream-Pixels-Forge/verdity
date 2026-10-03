@@ -580,7 +580,7 @@ async def test_all_tests_pass_at_least_90_coverage():
     import verdity.webhook_normalizer
 
     # All imports succeed - structure is intact for full coverage
-    assert importlib.metadata.version('verdity') in ("0.2.1", "0.3.0", "0.4.6", "0.4.7", "0.4.12", "0.4.13", "0.4.16")
+    assert importlib.metadata.version('verdity') in ("0.2.1", "0.3.0", "0.4.6", "0.4.7", "0.4.12", "0.4.13", "0.4.16", "0.4.17")
 
 
 # ── Phase 13 Gate Test ──────────────────────────────────────────────
