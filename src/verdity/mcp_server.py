@@ -79,7 +79,7 @@ class MCPServer:
     PROTOCOL_VERSION: ClassVar[str] = "2024-11-05"
     SERVER_INFO: ClassVar[dict[str, str]] = {
         "name": "verdity",
-        "version": "0.4.13",
+        "version": "0.4.14",
     }
 
     def __init__(
