@@ -1,31 +1,44 @@
----
-# Pre-commit hooks — runs on `git commit` and in CI.
-# Install with: pip install pre-commit && pre-commit install
-# Run on demand: pre-commit run --all-files
-#
-# Keeping lint+format enforced at commit time prevents the CI from
-# turning red on style-only changes.
-
 repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    # Keep in sync with the dev-dep pin in pyproject.toml
-    # (ruff>=0.6,<0.17). CI and local must produce identical output.
-    rev: v0.16.5
+  - repo: https://github.com/psf/black
+    rev: 24.8.0
     hooks:
-      # Run the formatter first — fix what's auto-fixable, then complain
-      # about what isn't.
-      - id: ruff-format
-        args: [src/, tests/]
+      - id: black
+        language_version: python3.11
+
+  - repo: https://github.com/charliermarsh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
       - id: ruff
-        args: [--fix, src/, tests/]
+        args: [--fix, --exit-non-zero-on-fix]
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
-      - id: check-merge-conflict
-      - id: check-yaml
-      - id: end-of-file-fixer
       - id: trailing-whitespace
-        args: [--markdown-linebreak-ext=md]
-      - id: mixed-line-ending
-        args: [--fix=lf]
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+      - id: check-merge-conflict
+      - id: debug-logger
+
+  - repo: local
+    hooks:
+      - id: silent-failure-hunter
+        name: Silent Failure Hunter
+        entry: python -m silent_failure_hunter scan
+        language: system
+        types: [python]
+        args: [--project, .]
+        pass_filenames: false
+        require_serial: true
+
+  - repo: local
+    hooks:
+      - id: coverage-check
+        name: Coverage Check
+        entry: python -m pytest --cov=src/verdity --cov-fail-under=95 -q
+        language: system
+        types: [python]
+        pass_filenames: false
+        require_serial: true
+        stages: [pre-push]

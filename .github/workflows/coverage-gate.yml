@@ -1,0 +1,161 @@
+name: Coverage Quality Gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [master, main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  coverage-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      
+      - name: Install dependencies
+        run: |
+          pip install -e . --break-system-packages
+          pip install pytest pytest-cov pytest-asyncio --break-system-packages
+          pip install pyyaml --break-system-packages
+      
+      - name: Install silent-failure-hunter
+        run: |
+          pip install -e /home/dimona/.config/opencode/skills/silent-failure-hunter --break-system-packages
+      
+      - name: Run tests with coverage
+        run: |
+          python -m pytest tests/ --cov=src/verdity --cov-report=json --cov-report=term-missing --cov-fail-under=95 -q
+      
+      - name: Run silent failure hunter
+        run: |
+          python -m silent_failure_hunter scan --project src/verdity --output silent_failure_report.json
+      
+      - name: Upload silent failure report
+        uses: actions/upload-artifact@v4
+        with:
+          name: silent-failure-report
+          path: silent_failure_report.json
+          retention-days: 7
+      
+      - name: Check for critical silent failures
+        run: |
+          python3 -c "
+import json
+with open('silent_failure_report.json') as f:
+    report = json.load(f)
+errors = [i for i in report['details'] if i['severity'] == 'error']
+if errors:
+    print(f'Found {len(errors)} critical silent failures:')
+    for e in errors:
+        print(f'  {e[\"file\"]}:{e[\"line\"]} - {e[\"message\"]}')
+    exit(1)
+else:
+    print('No critical silent failures found')
+"
+
+  coverage-authenticity:
+    runs-on: ubuntu-latest
+    needs: coverage-gate
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      
+      - name: Install dependencies
+        run: |
+          pip install -e . --break-system-packages
+          pip install pytest pytest-cov --break-system-packages
+      
+      - name: Run full test suite with coverage
+        run: |
+          python -m pytest tests/ --cov=src/verdity --cov-report=json --cov-report=term-missing --cov-fail-under=95 -q
+      
+      - name: Validate coverage authenticity
+        run: |
+          python3 -c "
+import json
+import subprocess
+
+# Get coverage report
+result = subprocess.run([
+    'python', '-m', 'pytest', 'tests/', 
+    '--cov=src/verdity', '--cov-report=json',
+    '-q'
+], capture_output=True, text=True)
+
+with open('coverage.json') as f:
+    coverage = json.load(f)
+
+total_coverage = coverage['totals']['percent_covered']
+print(f'Total coverage: {total_coverage}%')
+
+# Check for modules with low coverage
+low_coverage = []
+for file, data in coverage['files'].items():
+    if data['summary']['percent_covered'] < 80:
+        low_coverage.append((file, data['summary']['percent_covered']))
+
+if low_coverage:
+    print('Modules with <80% coverage:')
+    for f, c in low_coverage:
+        print(f'  {f}: {c}%')
+else:
+    print('All modules have >=80% coverage')
+"
+
+  fake-implementation-check:
+    runs-on: ubuntu-latest
+    needs: coverage-gate
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      
+      - name: Install dependencies
+        run: |
+          pip install -e . --break-system-packages
+          pip install pyyaml --break-system-packages
+      
+      - name: Check for fake implementations
+        run: |
+          python -m silent_failure_hunter find-fakes --module src/verdity > fake_impl_report.json
+          
+      - name: Check for critical fakes
+        run: |
+          python3 -c "
+import json
+with open('fake_impl_report.json') as f:
+    fakes = json.load(f)
+
+critical = [f for f in fakes if f['severity'] == 'critical']
+high = [f for f in fakes if f['severity'] == 'high']
+
+if critical:
+    print(f'Found {len(critical)} CRITICAL fake implementations:')
+    for f in critical:
+        print(f'  {f[\"file\"]}:{f[\"line\"]} - {f[\"type\"]}: {f[\"code\"]}')
+    exit(1)
+
+if high:
+    print(f'Found {len(high)} HIGH severity fake implementations:')
+    for f in high:
+        print(f'  {f[\"file\"]}:{f[\"line\"]} - {f[\"type\"]}: {f[\"code\"]}')
+    # Warning only, don't fail
+    print('WARNING: High severity fakes found but not blocking')
+
+print('No critical fake implementations found')
+"
