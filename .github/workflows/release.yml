@@ -16,14 +16,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install build wheel
-      # Force clean build by disabling cache for this step
-      - run: python -m build --no-isolation
+      # Install build dependencies and build in same step to ensure they're available with --no-isolation
+      - name: Build package
+        run: |
+          pip install build wheel
+          python -m build --no-isolation
       - uses: actions/upload-artifact@v4
         with:
           name: dist
           path: dist/
-          # Prevent cache reuse - include version in artifact name
           retention-days: 1
 
   publish:
