@@ -46,6 +46,30 @@ def _diff_to_files(diff: str, file_path: str = "") -> list[dict[str, Any]]:
     return [{"path": "unknown", "content": diff, "additions": diff, "deletions": ""}]
 
 
+def _create_finding_proxy(finding_data: dict) -> object:
+    """Create a finding proxy object from dict data for evaluation."""
+    finding_obj = {
+        "severity": finding_data.get("severity", "medium"),
+        "confidence": float(finding_data.get("confidence", 0.5)),
+        "concern": finding_data.get("concern", "code_quality"),
+        "file": finding_data.get("file", ""),
+        "line_start": finding_data.get("line_start", 0),
+        "line_end": finding_data.get("line_end", 0),
+        "summary": finding_data.get("summary", ""),
+        "explanation": finding_data.get("explanation", ""),
+        "content": finding_data.get("explanation", "") or finding_data.get("summary", "") or finding_data.get("content", ""),
+    }
+
+    class FindingProxy:
+        def __init__(self, data: dict):
+            self._data = data
+
+        def __getattr__(self, name):
+            return self._data.get(name)
+
+    return FindingProxy(finding_obj)
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -55,7 +79,7 @@ class MCPServer:
     PROTOCOL_VERSION: ClassVar[str] = "2024-11-05"
     SERVER_INFO: ClassVar[dict[str, str]] = {
         "name": "verdity",
-        "version": "0.3.0",
+        "version": "0.4.13",
     }
 
     def __init__(
@@ -206,6 +230,105 @@ class MCPServer:
                     "required": ["diff"],
                 },
             },
+            # NEW: High-level PR review tools
+            {
+                "name": "verdity_review",
+                "description": "Trigger a full Verdity PR review on a GitHub pull request. Fetches the PR diff and runs all specialist agents.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "owner": {
+                            "type": "string",
+                            "description": "Repository owner (user or org)",
+                        },
+                        "repo": {
+                            "type": "string",
+                            "description": "Repository name",
+                        },
+                        "pr_number": {
+                            "type": "integer",
+                            "description": "Pull request number",
+                        },
+                        "tier": {
+                            "type": "string",
+                            "enum": ["lite", "balanced", "deep"],
+                            "description": "Review tier: lite (fast), balanced (default), deep (full context)",
+                            "default": "balanced",
+                        },
+                        "post_to_github": {
+                            "type": "boolean",
+                            "description": "Post results as GitHub PR review comments",
+                            "default": False,
+                        },
+                    },
+                    "required": ["owner", "repo", "pr_number"],
+                },
+            },
+            {
+                "name": "verdity_enforce",
+                "description": "Test a finding against Verdity's enforcement engine. Returns the enforcement action (ALLOW/BLOCK/REQUIRE_APPROVAL/ESCALATE).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "finding": {
+                            "type": "object",
+                            "description": "The finding to test against enforcement rules",
+                            "properties": {
+                                "rule_id": {"type": "string"},
+                                "message": {"type": "string"},
+                                "file_path": {"type": "string"},
+                                "file": {"type": "string"},
+                                "line": {"type": "integer"},
+                                "line_start": {"type": "integer"},
+                                "line_end": {"type": "integer"},
+                                "severity": {"type": "string", "enum": ["critical", "high", "medium", "low", "info"]},
+                                "confidence": {"type": "number"},
+                                "concern": {"type": "string", "enum": ["security", "code_quality", "testing", "documentation", "performance", "dependencies"]},
+                                "summary": {"type": "string"},
+                                "explanation": {"type": "string"},
+                            },
+                            "required": ["file_path", "line_start", "severity", "confidence", "concern"],
+                        },
+                        "rules_file": {
+                            "type": "string",
+                            "description": "Optional path to custom rules YAML file (uses .verdity/rules.yml if not specified)",
+                        },
+                        "variables": {
+                            "type": "object",
+                            "description": "Additional context variables for rule evaluation",
+                        },
+                    },
+                    "required": ["finding"],
+                },
+            },
+            {
+                "name": "verdity_rules_list",
+                "description": "List all enforcement rules from a repository's .verdity/rules.yml file.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "repo_path": {
+                            "type": "string",
+                            "description": "Path to the repository root",
+                        },
+                    },
+                    "required": ["repo_path"],
+                },
+            },
+            {
+                "name": "verdity_review_status",
+                "description": "Check the status of a Verdity review run by review_run_id.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "review_run_id": {
+                            "type": "string",
+                            "description": "The review run UUID to check",
+                        },
+                    },
+                    "required": ["review_run_id"],
+                },
+            },
             {
                 "name": "generate_fix",
                 "description": "Generate a fix for a specific finding. Returns the fix as a code patch.",
@@ -325,6 +448,15 @@ class MCPServer:
                 return await self._review_documentation(arguments)
             if name == "review_full":
                 return await self._review_full(arguments)
+            # NEW tools
+            if name == "verdity_review":
+                return await self._verdity_review(arguments)
+            if name == "verdity_enforce":
+                return await self._verdity_enforce(arguments)
+            if name == "verdity_rules_list":
+                return await self._verdity_rules_list(arguments)
+            if name == "verdity_review_status":
+                return await self._verdity_review_status(arguments)
             if name == "generate_fix":
                 return await self._generate_fix(arguments)
             if name == "apply_fix":
@@ -554,6 +686,197 @@ class MCPServer:
             return {"findings": findings, "summary": result.summary, "agent": "full"}
         except Exception as e:
             return {"findings": [], "summary": str(e), "agent": "full", "error": str(e)}
+
+    # NEW: High-level PR review tools
+
+    async def _verdity_review(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Trigger a full Verdity PR review on a GitHub PR."""
+        from .github_client import GitHubClient
+        from .schemas import SpecialistContext, ReviewPolicy
+        from verdity.config import get_settings
+
+        owner = args["owner"]
+        repo = args["repo"]
+        pr_number = args["pr_number"]
+        tier = args.get("tier", "balanced")
+        post_to_github = args.get("post_to_github", False)
+
+        if not self._orchestrator:
+            await self.initialize()
+
+        # Get GitHub client from settings
+        settings = get_settings()
+        client = GitHubClient(
+            app_id=settings.github_app_id,
+            private_key_pem=settings.github_private_key,
+            installation_id=settings.github_installation_id,
+        )
+
+        try:
+            # Fetch PR diff
+            pr_diff = await client.get_pr_diff(owner, repo, pr_number)
+            if not pr_diff:
+                return {"error": "Failed to fetch PR diff", "pr_number": pr_number}
+
+            # Convert diff to diff_files format
+            diff_files = []
+            for file_change in pr_diff.get("files", []):
+                diff_files.append({
+                    "path": file_change.get("filename", "unknown"),
+                    "content": file_change.get("patch", ""),
+                    "additions": file_change.get("additions", 0),
+                    "deletions": file_change.get("deletions", 0),
+                })
+
+            # Determine policy based on tier
+            policy = ReviewPolicy(
+                tier=tier,
+                timeout_seconds={"lite": 30, "balanced": 120, "deep": 300}[tier],
+                budget_tokens={"lite": 5000, "balanced": 40000, "deep": 200000}[tier],
+            )
+
+            ctx = SpecialistContext(
+                review_run_id=uuid.uuid4(),
+                repo_owner=owner,
+                repo_name=repo,
+                base_sha=pr_diff.get("base_sha", ""),
+                head_sha=pr_diff.get("head_sha", ""),
+                diff_files=diff_files,
+                policy=policy,
+            )
+
+            # Run review
+            result = await self._orchestrator.review(ctx)
+
+            findings = [
+                {
+                    "rule_id": f"review-{i}",
+                    "message": f.summary,
+                    "file_path": f.file,
+                    "line": f.line_start,
+                    "severity": f.severity.value
+                    if hasattr(f.severity, "value")
+                    else str(f.severity),
+                    "confidence": f.confidence,
+                }
+                for i, f in enumerate(result.findings)
+            ]
+
+            response = {
+                "review_run_id": str(ctx.review_run_id),
+                "pr_number": pr_number,
+                "tier": tier,
+                "findings": findings,
+                "summary": result.summary,
+                "total_findings": len(findings),
+            }
+
+            # Optionally post to GitHub
+            if post_to_github:
+                from verdity.github_client import create_check_output
+                check_output = create_check_output(result.findings)
+                check_result = await client.post_check_run(
+                    owner=owner,
+                    repo=repo,
+                    head_sha=ctx.head_sha,
+                    name="Verdity Code Review",
+                    output=check_output,
+                )
+                response["github_check"] = check_result
+
+            return response
+
+        except Exception as e:
+            logger.exception("Error in verdity_review")
+            return {"error": str(e), "pr_number": pr_number}
+
+    async def _verdity_enforce(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Test a finding against Verdity's enforcement engine."""
+        from .enforcement import EnforcementEngine, GateRule, Action, load_rules_from_yaml
+
+        finding_data = args["finding"]
+        rules_file = args.get("rules_file")
+        variables = args.get("variables", {})
+
+        try:
+            # Load rules
+            if rules_file:
+                import yaml
+                with open(rules_file) as f:
+                    data = yaml.safe_load(f)
+                rules = []
+                for rule_data in data.get("rules", []):
+                    action_str = rule_data["then"].upper()
+                    action = Action[action_str]
+                    rule = GateRule(
+                        id=rule_data["id"],
+                        when=rule_data["when"],
+                        then=action,
+                        message=rule_data.get("message", ""),
+                        priority=rule_data.get("priority", 100),
+                        enabled=rule_data.get("enabled", True),
+                    )
+                    rules.append(rule)
+            else:
+                # Try to load from .verdity/rules.yml
+                try:
+                    rules = load_rules_from_yaml(".verdity/rules.yml")
+                except Exception:
+                    rules = []
+
+            engine = EnforcementEngine(rules=rules)
+
+            # Create finding proxy
+            finding_proxy = _create_finding_proxy(finding_data)
+
+            # Evaluate
+            decision = await engine.evaluate_with_context(finding_proxy, variables)
+
+            return {
+                "action": decision.action.upper(),
+                "blocked": decision.blocked,
+                "rule_id": decision.rule_id,
+                "message": decision.message,
+                "finding": finding_data,
+            }
+        except Exception as e:
+            logger.exception("Error in verdity_enforce")
+            return {"error": str(e), "finding": finding_data}
+
+    async def _verdity_rules_list(self, args: dict[str, Any]) -> dict[str, Any]:
+        """List all enforcement rules from a repository's .verdity/rules.yml file."""
+        from .enforcement import load_rules_from_yaml
+        import yaml
+
+        repo_path = args["repo_path"]
+        rules_file = f"{repo_path}/.verdity/rules.yml"
+
+        try:
+            with open(rules_file) as f:
+                data = yaml.safe_load(f)
+
+            rules = data.get("rules", [])
+            return {
+                "repo_path": repo_path,
+                "rules_file": rules_file,
+                "rules": rules,
+            }
+        except FileNotFoundError:
+            return {"error": "Rules file not found", "repo_path": repo_path, "rules_file": rules_file}
+        except Exception as e:
+            return {"error": str(e), "repo_path": repo_path}
+
+    async def _verdity_review_status(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Check the status of a Verdity review run."""
+        # This would require the orchestrator to expose review run state
+        # For now, return a placeholder
+        review_run_id = args["review_run_id"]
+
+        return {
+            "review_run_id": review_run_id,
+            "status": "unknown",
+            "message": "Review run status tracking not yet implemented in orchestrator",
+        }
 
     async def _generate_fix(self, args: dict[str, Any]) -> dict[str, Any]:
         """Generate a fix for a finding."""

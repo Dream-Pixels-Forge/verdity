@@ -1,0 +1,106 @@
+name: "Verdity Code Review"
+description: "AI-powered pull request review with security, quality, testing, and documentation analysis"
+author: "Dream-Pixels-Forge"
+branding:
+  icon: "shield"
+  color: "blue"
+
+inputs:
+  github-token:
+    description: "GitHub token for API access (usually ${{ secrets.GITHUB_TOKEN }})"
+    required: true
+  verdity-config:
+    description: "Path to verdity config file (optional, defaults to .verdity.yml)"
+    required: false
+    default: ".verdity.yml"
+  tier:
+    description: "Review tier: lite, balanced, or deep"
+    required: false
+    default: "balanced"
+  post-comment:
+    description: "Post review as PR comment"
+    required: false
+    default: "true"
+  post-check:
+    description: "Post review as GitHub Check Run"
+    required: false
+    default: "true"
+  fail-on-critical:
+    description: "Fail the action if critical findings are found"
+    required: false
+    default: "false"
+  only-changed-files:
+    description: "Only review changed files (faster)"
+    required: false
+    default: "true"
+
+outputs:
+  findings-count:
+    description: "Total number of findings"
+  critical-count:
+    description: "Number of critical findings"
+  review-url:
+    description: "URL to the review results"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install Verdity
+      shell: bash
+      run: |
+        pip install verdity@git+https://github.com/Dream-Pixels-Forge/verdity.git
+
+    - name: Configure Verdity
+      shell: bash
+      env:
+        VERDITY_GITHUB_TOKEN: ${{ inputs.github-token }}
+        VERDITY_TIER: ${{ inputs.tier }}
+      run: |
+        verdity configure --token ${{ inputs.github-token }} --tier ${{ inputs.tier }}
+
+    - name: Run Verdity Review
+      id: verdity-review
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        VERDITY_TIER: ${{ inputs.tier }}
+      run: |
+        echo "Running Verdity review on PR ${{ github.event.pull_request.number }}..."
+        verdity review \
+          --owner ${{ github.repository_owner }} \
+          --repo ${{ github.event.repository.name }} \
+          --pr ${{ github.event.pull_request.number }} \
+          --tier ${{ inputs.tier }} \
+          --post-comment ${{ inputs.post-comment }} \
+          --post-check ${{ inputs.post-check }} \
+          --only-changed-files ${{ inputs.only-changed-files }} \
+          --output json > verdity-results.json
+
+        # Extract counts for outputs
+        TOTAL=$(jq '.findings | length' verdity-results.json)
+        CRITICAL=$(jq '[.findings[] | select(.severity == "critical")] | length' verdity-results.json)
+        
+        echo "findings-count=$TOTAL" >> $GITHUB_OUTPUT
+        echo "critical-count=$CRITICAL" >> $GITHUB_OUTPUT
+
+    - name: Fail on Critical (if enabled)
+      if: inputs.fail-on-critical == 'true'
+      shell: bash
+      run: |
+        CRITICAL=$(jq '[.findings[] | select(.severity == "critical")] | length' verdity-results.json)
+        if [ "$CRITICAL" -gt 0 ]; then
+          echo "::error::Found $CRITICAL critical findings - failing build"
+          exit 1
+        fi
+
+    - name: Upload Results as Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: verdity-review-results
+        path: verdity-results.json
+        retention-days: 7

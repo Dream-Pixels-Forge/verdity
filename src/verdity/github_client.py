@@ -563,3 +563,57 @@ class GitHubClient:
     async def __aexit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
         """Async context manager exit - ensures client is closed."""
         await self.close()
+
+
+    # ── PR Diff Fetching ──────────────────────────────────────────────
+
+    async def get_pr_diff(self, owner: str, repo: str, pr_number: int) -> dict[str, Any] | None:
+        """
+        Fetch PR diff and file changes from GitHub.
+
+        Returns a dict with:
+        - base_sha: base commit SHA
+        - head_sha: head commit SHA
+        - files: list of file changes with filename, patch, additions, deletions
+        """
+        client = self._get_client()
+        headers = await self._auth_headers(client)
+
+        # Get PR metadata
+        pr_resp = await client.get(
+            f"{self._base_url}/repos/{owner}/{repo}/pulls/{pr_number}",
+            headers=headers,
+        )
+        if pr_resp.status_code != 200:
+            logger.error("Failed to get PR %s/%s#%d: %s", owner, repo, pr_number, pr_resp.text)
+            return None
+
+        pr_data = pr_resp.json()
+        base_sha = pr_data.get("base", {}).get("sha", "")
+        head_sha = pr_data.get("head", {}).get("sha", "")
+
+        # Get PR files (diff)
+        files_resp = await client.get(
+            f"{self._base_url}/repos/{owner}/{repo}/pulls/{pr_number}/files",
+            headers=headers,
+        )
+        if files_resp.status_code != 200:
+            logger.error("Failed to get PR files: %s", files_resp.text)
+            return None
+
+        files_data = files_resp.json()
+
+        return {
+            "base_sha": base_sha,
+            "head_sha": head_sha,
+            "files": [
+                {
+                    "filename": f.get("filename", ""),
+                    "patch": f.get("patch", ""),
+                    "additions": f.get("additions", 0),
+                    "deletions": f.get("deletions", 0),
+                    "status": f.get("status", ""),
+                }
+                for f in files_data
+            ],
+        }

@@ -1,5 +1,8 @@
-"""CLI modules for Verdity."""
+"""
+Verdity CLI - Command line interface for Verdity.
+"""
 
-from verdity.cli.enforce import enforce
+from .enforce import enforce
+from .review import review
 
-__all__ = ["enforce"]
+__all__ = ["enforce", "review"]

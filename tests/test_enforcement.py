@@ -946,17 +946,17 @@ class TestRegexPatterns:
         """PATTERNS dict should exist with expected keys."""
         from verdity.enforcement import PATTERNS
 
-        assert "secret" in PATTERNS
-        assert "sql_injection" in PATTERNS
-        assert "xss" in PATTERNS
-        assert "path_traversal" in PATTERNS
+        assert hasattr(PATTERNS, "secret")
+        assert hasattr(PATTERNS, "sql_injection")
+        assert hasattr(PATTERNS, "xss")
+        assert hasattr(PATTERNS, "path_traversal")
 
     def test_secret_pattern_matches(self):
         """Secret pattern should match common secret formats."""
         import re
         from verdity.enforcement import PATTERNS
 
-        pattern = re.compile(PATTERNS["secret"])
+        pattern = re.compile(PATTERNS.secret)
         assert pattern.search('api_key = "abc123"') is not None
         assert pattern.search("secret = 'xyz789'") is not None
         assert pattern.search('token: "Bearer abc"') is not None
@@ -967,7 +967,7 @@ class TestRegexPatterns:
         import re
         from verdity.enforcement import PATTERNS
 
-        pattern = re.compile(PATTERNS["sql_injection"])
+        pattern = re.compile(PATTERNS.sql_injection)
         assert pattern.search("SELECT * FROM users WHERE id = '1'") is not None
         assert pattern.search("UNION SELECT password FROM users") is not None
         assert pattern.search("DROP TABLE users;") is not None
@@ -977,7 +977,7 @@ class TestRegexPatterns:
         import re
         from verdity.enforcement import PATTERNS
 
-        pattern = re.compile(PATTERNS["xss"])
+        pattern = re.compile(PATTERNS.xss)
         assert pattern.search("<script>alert('xss')</script>") is not None
         assert pattern.search('onerror="alert(1)"') is not None
         assert pattern.search("onclick=stealCookies()") is not None
@@ -987,7 +987,7 @@ class TestRegexPatterns:
         import re
         from verdity.enforcement import PATTERNS
 
-        pattern = re.compile(PATTERNS["path_traversal"])
+        pattern = re.compile(PATTERNS.path_traversal)
         assert pattern.search("../../../etc/passwd") is not None
         assert pattern.search("..\\..\\windows\\system32") is not None
 

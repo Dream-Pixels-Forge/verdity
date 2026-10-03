@@ -12,14 +12,15 @@ class TestMCPServer:
         server = MCPServer()
         assert server.PROTOCOL_VERSION == "2024-11-05"
         assert server.SERVER_INFO["name"] == "verdity"
-        assert server.SERVER_INFO["version"] == "0.3.0"
-        assert len(server._tools) == 8
+        assert server.SERVER_INFO["version"] == "0.4.13"
+        assert len(server._tools) == 12
 
     def test_get_tools(self):
         server = MCPServer()
         tools = server.get_tools()
-        assert len(tools) == 8
+        assert len(tools) == 12
         tool_names = [t["name"] for t in tools]
+        # Original tools
         assert "review_security" in tool_names
         assert "review_quality" in tool_names
         assert "review_testing" in tool_names
@@ -28,12 +29,17 @@ class TestMCPServer:
         assert "generate_fix" in tool_names
         assert "apply_fix" in tool_names
         assert "get_review_rules" in tool_names
+        # New tools
+        assert "verdity_review" in tool_names
+        assert "verdity_enforce" in tool_names
+        assert "verdity_rules_list" in tool_names
+        assert "verdity_review_status" in tool_names
 
     def test_get_server_info(self):
         server = MCPServer()
         info = server.get_server_info()
         assert info["name"] == "verdity"
-        assert info["version"] == "0.3.0"
+        assert info["version"] == "0.4.13"
         assert info["protocolVersion"] == "2024-11-05"
         assert "tools" in info
 

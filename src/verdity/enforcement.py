@@ -24,13 +24,17 @@ class Action(Enum):
     ESCALATE = "escalate"
 
 
-# Built-in regex pattern library
-PATTERNS = {
-    "secret": r"(api[_-]?key|secret|token|password)\s*[=:]\s*['\"][^'\"]+['\"]",
-    "sql_injection": r"(?i)(union|select|insert|update|delete|drop)\b",
-    "xss": r"(?i)(<script|onerror=|onclick=|onload=)",
-    "path_traversal": r"\.\.[/\\]",
-}
+# Built-in regex pattern library - use a class for attribute access
+class _Patterns:
+    """Wrapper to allow attribute-style access to patterns."""
+
+    secret = r"(api[_-]?key|secret|token|password)\s*[=:]\s*['\"][^'\"]+['\"]"
+    sql_injection = r"(?i)(union|select|insert|update|delete|drop)\b"
+    xss = r"(?i)(<script|onerror=|onclick=|onload=)"
+    path_traversal = r"\.\.[/\\]"
+
+
+PATTERNS = _Patterns()
 
 
 def regex_search(text: str | None, pattern: str) -> bool:
@@ -158,7 +162,7 @@ class RuleSet:
                     EnforcementDecision(
                         action=rule.then.value,
                         rule_id=rule.id,
-                        message=rule.substitute_message(variables),
+                        message=rule.substitute_message({**variables, **finding_obj}),
                     )
                 )
 
@@ -251,7 +255,31 @@ class EnforcementEngine:
                 return EnforcementDecision(
                     action=rule.then.value,
                     rule_id=rule.id,
-                    message=rule.substitute_message(variables),
+                    message=rule.substitute_message({**variables, **finding_obj}),
                 )
 
         return EnforcementDecision(action="allow")
+
+
+def load_rules_from_yaml(rules_file: str) -> list[GateRule]:
+    """Load rules from YAML file."""
+    import yaml
+
+    with open(rules_file) as f:
+        data = yaml.safe_load(f)
+
+    rules = []
+    for rule_data in data.get("rules", []):
+        action_str = rule_data["then"].upper()
+        action = Action[action_str]
+        rule = GateRule(
+            id=rule_data["id"],
+            when=rule_data["when"],
+            then=action,
+            message=rule_data.get("message", ""),
+            priority=rule_data.get("priority", 100),
+            enabled=rule_data.get("enabled", True),
+        )
+        rules.append(rule)
+
+    return rules
