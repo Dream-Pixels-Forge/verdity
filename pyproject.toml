@@ -62,6 +62,7 @@ dev = [
 ]
 
 [project.scripts]
+verdity = "verdity.worker:main"
 verdity-worker = "verdity.worker:run_entrypoint"
 verdity-enforce = "verdity.cli.enforce:enforce"
 
