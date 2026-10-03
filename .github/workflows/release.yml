@@ -16,11 +16,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      # Install build dependencies and build in same step to ensure they're available with --no-isolation
       - name: Build package
         run: |
           pip install build wheel
-          python -m build --no-isolation
+          python -m build
       - uses: actions/upload-artifact@v4
         with:
           name: dist
