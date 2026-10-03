@@ -16,7 +16,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install build
+      - run: pip install build wheel
       # Force clean build by disabling cache for this step
       - run: python -m build --no-isolation
       - uses: actions/upload-artifact@v4
