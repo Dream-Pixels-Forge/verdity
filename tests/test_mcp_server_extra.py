@@ -10,7 +10,6 @@ import pytest
 from verdity.mcp_server import MCPServer, _diff_to_files
 
 
-
 def _mock_orchestrator_review(mock_orchestrator, mock_result):
     """Mock the real entry point: process_event() + get_run() (no review())."""
     import uuid as _uuid
