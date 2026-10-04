@@ -143,8 +143,11 @@ def diff(owner: str, repo: str, pr_number: int, tier: str, output: str):
         settings = get_settings()
         client = GitHubClient(
             app_id=settings.github_app_id,
-            private_key_pem=settings.github_private_key,
-            installation_id=settings.github_installation_id,
+            private_key_pem=settings.github_app_private_key.get_secret_value(),
+            installation_id=settings.github_app_installation_id,
+            token=settings.github_token.get_secret_value()
+            if settings.github_token
+            else None,
         )
 
         diff = await client.get_pr_diff(owner, repo, pr_number)
