@@ -362,10 +362,16 @@ class SecurityAgent(BaseSpecialistAgent):
         findings: list[Finding] = []
         for file_info in diff_files:
             path = file_info.get("path", "")
-            content = file_info.get("content", "")
+            content = file_info.get("content", "") or ""
+            # See _scan_diff_for_vulnerabilities(): `additions` may be an int
+            # line count or a string of added lines depending on the producer.
             additions = file_info.get("additions", "")
-
-            scan_text = additions if additions else content
+            if isinstance(additions, str) and additions.strip():
+                scan_text = additions
+            else:
+                scan_text = content
+            if not scan_text:
+                continue
 
             for pattern_name, pattern_str, severity_str in _SECRET_PATTERNS:
                 if pattern_str.lower() in scan_text.lower():
@@ -406,9 +412,20 @@ class SecurityAgent(BaseSpecialistAgent):
 
         for file_info in diff_files:
             path = file_info.get("path", "")
-            content = file_info.get("content", "")
+            content = file_info.get("content", "") or ""
+            # `additions` is a LINE COUNT (int) when the diff came from the
+            # GitHub API, but _diff_to_files() puts the added-lines STRING
+            # there. Selecting it blindly meant a truthy int (e.g. 42) was
+            # scanned instead of the code, so every vulnerability pattern
+            # missed. Prefer the patch text; only fall back to additions when
+            # it is actually a string carrying content.
             additions = file_info.get("additions", "")
-            scan_text = additions if additions else content
+            if isinstance(additions, str) and additions.strip():
+                scan_text = additions
+            else:
+                scan_text = content
+            if not scan_text:
+                continue
 
             for name, pattern_str, compiled_re, severity, explanation in _VULN_PATTERNS:
                 match = compiled_re.search(scan_text)
@@ -513,12 +530,13 @@ class SecurityAgent(BaseSpecialistAgent):
 
         for file_info in diff_files:
             path = file_info.get("path", "")
-            content = file_info.get("content", "")
+            content = file_info.get("content", "") or ""
             additions = file_info.get("additions", "")
 
-            # Scan both additions and full content
+            # Scan both additions and full content. Only str additions carry
+            # text; an int line count would break .strip() below.
             scan_texts = []
-            if additions:
+            if isinstance(additions, str) and additions.strip():
                 scan_texts.append(("additions", additions))
             if content:
                 scan_texts.append(("content", content))

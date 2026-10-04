@@ -59,9 +59,12 @@ class BaseSpecialistAgent(ABC):
         """
         findings = await self._scan(ctx, semantic_index, use_llm=use_llm)
 
-        # Estimate input tokens from diff content (chars ÷ 4 ≈ tokens)
+        # Estimate input tokens from diff content (chars ÷ 4 ≈ tokens).
+        # `additions` may be an int line count or a string depending on the
+        # producer, so coerce before concatenating.
         total_chars = sum(
-            len(f.get("content", "") + f.get("additions", "")) for f in ctx.diff_files
+            len(str(f.get("content", "") or "")) + len(str(f.get("additions", "") or ""))
+            for f in ctx.diff_files
         )
         input_tokens = max(total_chars // 4, len(findings) * self._input_tokens_per_finding)
         output_tokens = len(findings) * self._output_tokens_per_finding

@@ -72,6 +72,38 @@ class TestDiffFilesReachSpecialists:
             assert envelope.diff_files, "diff_files never reached the orchestrator"
             assert any("main.c" in str(d) for d in envelope.diff_files)
 
+    @pytest.mark.asyncio
+    async def test_run_orchestrator_accepts_prebuilt_diff_files(self):
+        """_verdity_review already builds diff_files from the GitHub API.
+
+        Those entries must be usable directly; rebuilding them from a raw diff
+        string is lossy for per-file patches, so the prebuilt list is passed
+        through instead of being dropped on the floor.
+        """
+        from verdity.mcp_server import MCPServer
+
+        server = MCPServer()
+        with patch.object(server, "_orchestrator") as mock_orch:
+            import uuid as _uuid
+
+            mock_orch.process_event = AsyncMock(return_value=_uuid.uuid4())
+            mock_orch.get_run = MagicMock(
+                return_value=MagicMock(specialist_results={}, status="completed")
+            )
+
+            await server._run_orchestrator(
+                owner="o",
+                repo="r",
+                pr_number=1,
+                diff_files=[
+                    {"path": "gui/updater.py", "content": "+ os.system(x)", "additions": 1, "deletions": 0}
+                ],
+            )
+
+            envelope = mock_orch.process_event.call_args[0][0]
+            assert envelope.diff_files, "prebuilt diff_files were dropped"
+            assert envelope.diff_files[0]["path"] == "gui/updater.py"
+
 
 class TestOrchestratorWiring:
     """initialize() must build a real, usable Orchestrator.

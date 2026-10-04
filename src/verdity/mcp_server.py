@@ -57,7 +57,9 @@ def _create_finding_proxy(finding_data: dict) -> object:
         "line_end": finding_data.get("line_end", 0),
         "summary": finding_data.get("summary", ""),
         "explanation": finding_data.get("explanation", ""),
-        "content": finding_data.get("explanation", "") or finding_data.get("summary", "") or finding_data.get("content", ""),
+        "content": finding_data.get("explanation", "")
+        or finding_data.get("summary", "")
+        or finding_data.get("content", ""),
     }
 
     class FindingProxy:
@@ -84,6 +86,7 @@ class MCPServer:
         base_sha: str = "",
         diff: str = "",
         file_path: str = "",
+        diff_files: list[dict[str, Any]] | None = None,
         tier: str = "balanced",
     ) -> dict[str, Any]:
         """Drive a review through Orchestrator.process_event().
@@ -114,10 +117,15 @@ class MCPServer:
             ),
         )
 
+        # Prefer caller-supplied entries (built from the GitHub API per-file
+        # patches); otherwise derive them from a raw unified diff string.
+        if diff_files is None:
+            diff_files = _diff_to_files(diff, file_path) if diff else []
+
         run_id = await self._orchestrator.process_event(
             QueueEnvelope(
                 event=event,
-                diff_files=_diff_to_files(diff, file_path) if diff else [],
+                diff_files=diff_files,
                 tier=tier,
             )
         )
@@ -134,7 +142,9 @@ class MCPServer:
                             "file_path": f.file,
                             "line": f.line_start,
                             "severity": getattr(
-                                getattr(f, "severity", "info"), "value", str(getattr(f, "severity", "info"))
+                                getattr(f, "severity", "info"),
+                                "value",
+                                str(getattr(f, "severity", "info")),
                             ),
                             "confidence": f.confidence,
                         }
@@ -357,13 +367,32 @@ class MCPServer:
                                 "line": {"type": "integer"},
                                 "line_start": {"type": "integer"},
                                 "line_end": {"type": "integer"},
-                                "severity": {"type": "string", "enum": ["critical", "high", "medium", "low", "info"]},
+                                "severity": {
+                                    "type": "string",
+                                    "enum": ["critical", "high", "medium", "low", "info"],
+                                },
                                 "confidence": {"type": "number"},
-                                "concern": {"type": "string", "enum": ["security", "code_quality", "testing", "documentation", "performance", "dependencies"]},
+                                "concern": {
+                                    "type": "string",
+                                    "enum": [
+                                        "security",
+                                        "code_quality",
+                                        "testing",
+                                        "documentation",
+                                        "performance",
+                                        "dependencies",
+                                    ],
+                                },
                                 "summary": {"type": "string"},
                                 "explanation": {"type": "string"},
                             },
-                            "required": ["file_path", "line_start", "severity", "confidence", "concern"],
+                            "required": [
+                                "file_path",
+                                "line_start",
+                                "severity",
+                                "confidence",
+                                "concern",
+                            ],
                         },
                         "rules_file": {
                             "type": "string",
@@ -527,15 +556,11 @@ class MCPServer:
         )
 
         fallback = self.multi_model
-        self._orchestrator.register_specialist(
-            "security", SecurityAgent(fallback=fallback).run
-        )
+        self._orchestrator.register_specialist("security", SecurityAgent(fallback=fallback).run)
         self._orchestrator.register_specialist(
             "code_quality", CodeQualityAgent(fallback=fallback).run
         )
-        self._orchestrator.register_specialist(
-            "testing", TestingAgent(fallback=fallback).run
-        )
+        self._orchestrator.register_specialist("testing", TestingAgent(fallback=fallback).run)
         self._orchestrator.register_specialist(
             "documentation", DocumentationAgent(fallback=fallback).run
         )
@@ -843,9 +868,7 @@ class MCPServer:
             app_id=settings.github_app_id,
             private_key_pem=settings.github_app_private_key.get_secret_value(),
             installation_id=settings.github_app_installation_id,
-            token=settings.github_token.get_secret_value()
-            if settings.github_token
-            else None,
+            token=settings.github_token.get_secret_value() if settings.github_token else None,
         )
 
         try:
@@ -857,12 +880,14 @@ class MCPServer:
             # Convert diff to diff_files format
             diff_files = []
             for file_change in pr_diff.get("files", []):
-                diff_files.append({
-                    "path": file_change.get("filename", "unknown"),
-                    "content": file_change.get("patch", ""),
-                    "additions": file_change.get("additions", 0),
-                    "deletions": file_change.get("deletions", 0),
-                })
+                diff_files.append(
+                    {
+                        "path": file_change.get("filename", "unknown"),
+                        "content": file_change.get("patch", ""),
+                        "additions": file_change.get("additions", 0),
+                        "deletions": file_change.get("deletions", 0),
+                    }
+                )
 
             # Determine policy based on tier
             policy = ReviewPolicy(
@@ -888,6 +913,7 @@ class MCPServer:
                 pr_number=pr_number,
                 head_sha=pr_diff.get("head_sha", ""),
                 base_sha=pr_diff.get("base_sha", ""),
+                diff_files=diff_files,
                 tier=tier,
             )
 
@@ -943,6 +969,7 @@ class MCPServer:
             # Load rules
             if rules_file:
                 import yaml
+
                 with open(rules_file) as f:
                     data = yaml.safe_load(f)
                 rules = []
@@ -1003,7 +1030,11 @@ class MCPServer:
                 "rules": rules,
             }
         except FileNotFoundError:
-            return {"error": "Rules file not found", "repo_path": repo_path, "rules_file": rules_file}
+            return {
+                "error": "Rules file not found",
+                "repo_path": repo_path,
+                "rules_file": rules_file,
+            }
         except Exception as e:
             return {"error": str(e), "repo_path": repo_path}
 

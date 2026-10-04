@@ -58,9 +58,14 @@ class DocumentationAgent(BaseSpecialistAgent):
 
         for file_info in ctx.diff_files:
             path = file_info.get("path", "")
-            content = file_info.get("content", "")
+            content = file_info.get("content", "") or ""
+            # `additions` may be an int line count (GitHub API path) or the
+            # added-lines string (_diff_to_files path). Only the latter is
+            # scannable text; a truthy int made these agents scan "42".
             additions = file_info.get("additions", "")
-            scan_text = additions if additions else content
+            scan_text = additions if isinstance(additions, str) and additions.strip() else content
+            if not scan_text:
+                continue
 
             for name, pattern, severity, explanation in DOC_PATTERNS:
                 is_regex = pattern.startswith("re:")
