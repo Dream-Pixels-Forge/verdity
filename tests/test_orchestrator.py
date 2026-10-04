@@ -64,6 +64,83 @@ def sample_pr_event():
     )
 
 
+class TestRequestedTier:
+    """A caller-supplied tier must win over the diff-size heuristic.
+
+    resolve_policy() derives its tier from PR size alone, so a CLI `--tier
+    deep` was silently ignored — the reviewer reported a tier it never ran.
+    An explicit tier must be honoured, while the heuristic remains the
+    default when no tier is requested.
+    """
+
+    def test_explicit_tier_is_honoured(self):
+        import sys
+        from pathlib import Path
+
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+        from verdity.orchestrator import resolve_policy
+        from verdity.schemas._models import RepoRef, TriggerType, VerdityEvent
+
+        event = VerdityEvent(
+            delivery_id="del-tier-1",
+            trigger_type=TriggerType.PR_SYNCHRONIZE,
+            repo=RepoRef(owner="acme", name="widgets", id=1),
+        )
+        policy = resolve_policy(event, requested_tier="deep")
+        assert policy.tier == "deep"
+
+    def test_tier_controls_timeout_and_budget(self):
+        import sys
+        from pathlib import Path
+
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+        from verdity.orchestrator import resolve_policy
+        from verdity.schemas._models import RepoRef, TriggerType, VerdityEvent
+
+        event = VerdityEvent(
+            delivery_id="del-tier-2",
+            trigger_type=TriggerType.PR_SYNCHRONIZE,
+            repo=RepoRef(owner="acme", name="widgets", id=1),
+        )
+        lite = resolve_policy(event, requested_tier="lite")
+        deep = resolve_policy(event, requested_tier="deep")
+        assert lite.budget_tokens < deep.budget_tokens
+        assert lite.timeout_seconds <= deep.timeout_seconds
+
+    def test_no_requested_tier_keeps_size_heuristic(self):
+        """Backwards compatible: absent a request, behaviour is unchanged."""
+        import sys
+        from pathlib import Path
+
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+        from verdity.orchestrator import resolve_policy
+        from verdity.schemas._models import RepoRef, TriggerType, VerdityEvent
+
+        event = VerdityEvent(
+            delivery_id="del-tier-3",
+            trigger_type=TriggerType.PR_SYNCHRONIZE,
+            repo=RepoRef(owner="acme", name="widgets", id=1),
+        )
+        assert resolve_policy(event).tier == resolve_policy(event, requested_tier=None).tier
+
+    def test_unknown_tier_is_ignored(self):
+        """A bogus tier must not crash or silently corrupt the policy."""
+        import sys
+        from pathlib import Path
+
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+        from verdity.orchestrator import resolve_policy
+        from verdity.schemas._models import RepoRef, TriggerType, VerdityEvent
+
+        event = VerdityEvent(
+            delivery_id="del-tier-4",
+            trigger_type=TriggerType.PR_SYNCHRONIZE,
+            repo=RepoRef(owner="acme", name="widgets", id=1),
+        )
+        policy = resolve_policy(event, requested_tier="nonsense")
+        assert policy.tier in ("lite", "balanced", "deep")
+
+
 class TestResolvePolicy:
     def test_pr_opened_standard(self, sample_pr_event):
         policy = resolve_policy(sample_pr_event)

@@ -84,6 +84,9 @@ class QueueEnvelope(BaseModel):
     # SpecialistContext(diff_files=...) from this; without it every specialist
     # scanned an empty diff and every review returned zero findings.
     diff_files: list[dict[str, Any]] = Field(default_factory=list)
+    # Explicit review tier from the caller (CLI --tier). When set it overrides
+    # the orchestrator's diff-size heuristic in resolve_policy().
+    tier: str | None = None
 
 
 # ── Specialist Invocation Payload ─────────────────────────────────────

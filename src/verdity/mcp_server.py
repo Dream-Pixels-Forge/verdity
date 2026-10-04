@@ -118,6 +118,7 @@ class MCPServer:
             QueueEnvelope(
                 event=event,
                 diff_files=_diff_to_files(diff, file_path) if diff else [],
+                tier=tier,
             )
         )
 
