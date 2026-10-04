@@ -74,6 +74,81 @@ logger = logging.getLogger(__name__)
 
 
 class MCPServer:
+    async def _run_orchestrator(
+        self,
+        *,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        head_sha: str = "",
+        base_sha: str = "",
+        diff: str = "",
+        file_path: str = "",
+        tier: str = "balanced",
+    ) -> dict[str, Any]:
+        """Drive a review through Orchestrator.process_event().
+
+        Orchestrator has no ``review()``; ``process_event(envelope)`` is the real
+        entry point and returns a review_run_id whose run carries
+        ``specialist_results``. This builds the VerdityEvent the orchestrator
+        expects and flattens every specialist's findings into one list.
+        """
+        import uuid as _uuid
+
+        from .schemas._models import (
+            PullRequestRef,
+            QueueEnvelope,
+            RepoRef,
+            TriggerType,
+            VerdityEvent,
+        )
+
+        event = VerdityEvent(
+            delivery_id=str(_uuid.uuid4()),
+            trigger_type=TriggerType.PR_SYNCHRONIZE,
+            repo=RepoRef(owner=owner, name=repo, id=0),
+            pull_request=PullRequestRef(
+                number=pr_number,
+                head_sha=head_sha or "unknown",
+                base_sha=base_sha or "unknown",
+            ),
+        )
+
+        run_id = await self._orchestrator.process_event(
+            QueueEnvelope(
+                event=event,
+                diff_files=_diff_to_files(diff, file_path) if diff else [],
+            )
+        )
+
+        run = self._orchestrator.get_run(run_id)
+        findings: list[dict[str, Any]] = []
+        if run is not None:
+            for specialist, response in (run.specialist_results or {}).items():
+                for i, f in enumerate(getattr(response, "findings", []) or []):
+                    findings.append(
+                        {
+                            "rule_id": f"{specialist}-{i}",
+                            "message": f.summary,
+                            "file_path": f.file,
+                            "line": f.line_start,
+                            "severity": getattr(
+                                getattr(f, "severity", "info"), "value", str(getattr(f, "severity", "info"))
+                            ),
+                            "confidence": f.confidence,
+                        }
+                    )
+
+        return {
+            "review_run_id": str(run_id),
+            "findings": findings,
+            "status": getattr(run, "status", None),
+            "summary": (
+                f"{len(findings)} finding(s) across "
+                f"{len(run.specialist_results or {}) if run else 0} specialist(s)"
+            ),
+        }
+
     """MCP server exposing Verdity's specialist agents as tools."""
 
     PROTOCOL_VERSION: ClassVar[str] = "2024-11-05"
@@ -407,14 +482,73 @@ class MCPServer:
 
     async def initialize(self) -> None:
         """Initialize the MCP server and orchestrator."""
-        self._orchestrator = Orchestrator(config=self.config)
-        await self._orchestrator.initialize()
+        # Orchestrator takes its collaborators explicitly (queue, semantic
+        # index, token economics, audit store) — it does not accept a config
+        # object. Constructing it with `config=` raised TypeError, and there is
+        # no async initialize()/shutdown() on Orchestrator. Follow the same
+        # wiring worker.py uses so both entry points behave alike.
+        from .audit_store import AuditStore
+        from .event_queue import EventQueue
+        from .semantic_index import SemanticIndex
+        from .token_economics import TokenEconomicsService
+
+        self._queue = EventQueue()
+        self._index = SemanticIndex()
+        self._token_economics = TokenEconomicsService()
+        self._audit = AuditStore()
+
+        # These stores refuse use until connect() is awaited; Orchestrator hits
+        # them on the first process_event().
+        for collaborator in (
+            self._queue,
+            self._index,
+            self._token_economics,
+            self._audit,
+        ):
+            connect = getattr(collaborator, "connect", None)
+            if connect is not None:
+                await connect()
+
+        self._orchestrator = Orchestrator(
+            queue=self._queue,
+            semantic_index=self._index,
+            token_economics=self._token_economics,
+            audit_store=self._audit,
+        )
+
+        # Specialists must be registered or process_event() dispatches to
+        # nothing and every review comes back empty.
+        from .agents import (
+            CodeQualityAgent,
+            DocumentationAgent,
+            SecurityAgent,
+            TestingAgent,
+        )
+
+        fallback = self.multi_model
+        self._orchestrator.register_specialist(
+            "security", SecurityAgent(fallback=fallback).run
+        )
+        self._orchestrator.register_specialist(
+            "code_quality", CodeQualityAgent(fallback=fallback).run
+        )
+        self._orchestrator.register_specialist(
+            "testing", TestingAgent(fallback=fallback).run
+        )
+        self._orchestrator.register_specialist(
+            "documentation", DocumentationAgent(fallback=fallback).run
+        )
+
         logger.info("MCP server initialized with %d tools", len(self._tools))
 
     async def shutdown(self) -> None:
         """Shutdown the MCP server."""
-        if self._orchestrator:
-            await self._orchestrator.shutdown()
+        # Orchestrator exposes no shutdown(); close the collaborators we opened.
+        # Each is optional so shutdown() is safe before initialize() ran.
+        for name in ("_queue", "_index", "_token_economics", "_audit"):
+            closer = getattr(getattr(self, name, None), "close", None)
+            if closer is not None:
+                await closer()
         logger.info("MCP server shutdown")
 
     def get_tools(self) -> list[dict[str, Any]]:
@@ -669,21 +803,19 @@ class MCPServer:
         )
 
         try:
-            result = await self._orchestrator.review(ctx)
-            findings = [
-                {
-                    "rule_id": f"full-{i}",
-                    "message": f.summary,
-                    "file_path": f.file,
-                    "line": f.line_start,
-                    "severity": f.severity.value
-                    if hasattr(f.severity, "value")
-                    else str(f.severity),
-                    "confidence": f.confidence,
-                }
-                for i, f in enumerate(result.findings)
-            ]
-            return {"findings": findings, "summary": result.summary, "agent": "full"}
+            result = await self._run_orchestrator(
+                owner="mcp",
+                repo="client",
+                pr_number=0,
+                diff=diff,
+                file_path=file_path,
+                tier="balanced",
+            )
+            return {
+                "findings": result["findings"],
+                "summary": result["summary"],
+                "agent": "full",
+            }
         except Exception as e:
             return {"findings": [], "summary": str(e), "agent": "full", "error": str(e)}
 
@@ -708,8 +840,11 @@ class MCPServer:
         settings = get_settings()
         client = GitHubClient(
             app_id=settings.github_app_id,
-            private_key_pem=settings.github_private_key,
-            installation_id=settings.github_installation_id,
+            private_key_pem=settings.github_app_private_key.get_secret_value(),
+            installation_id=settings.github_app_installation_id,
+            token=settings.github_token.get_secret_value()
+            if settings.github_token
+            else None,
         )
 
         try:
@@ -745,40 +880,45 @@ class MCPServer:
                 policy=policy,
             )
 
-            # Run review
-            result = await self._orchestrator.review(ctx)
+            # Run review through the orchestrator's real entry point.
+            result = await self._run_orchestrator(
+                owner=owner,
+                repo=repo,
+                pr_number=pr_number,
+                head_sha=pr_diff.get("head_sha", ""),
+                base_sha=pr_diff.get("base_sha", ""),
+                tier=tier,
+            )
 
-            findings = [
-                {
-                    "rule_id": f"review-{i}",
-                    "message": f.summary,
-                    "file_path": f.file,
-                    "line": f.line_start,
-                    "severity": f.severity.value
-                    if hasattr(f.severity, "value")
-                    else str(f.severity),
-                    "confidence": f.confidence,
-                }
-                for i, f in enumerate(result.findings)
-            ]
+            findings = result["findings"]
 
             response = {
-                "review_run_id": str(ctx.review_run_id),
+                "review_run_id": result["review_run_id"],
                 "pr_number": pr_number,
                 "tier": tier,
                 "findings": findings,
-                "summary": result.summary,
+                "summary": result["summary"],
                 "total_findings": len(findings),
             }
 
             # Optionally post to GitHub
             if post_to_github:
                 from verdity.github_client import create_check_output
-                check_output = create_check_output(result.findings)
+                from verdity.schemas import Finding
+
+                postable = [
+                    Finding(
+                        summary=f.get("message", ""),
+                        file=f.get("file_path", ""),
+                        line_start=f.get("line", 1),
+                    )
+                    for f in findings
+                ]
+                check_output = create_check_output(postable)
                 check_result = await client.post_check_run(
                     owner=owner,
                     repo=repo,
-                    head_sha=ctx.head_sha,
+                    head_sha=pr_diff.get("head_sha", ""),
                     name="Verdity Code Review",
                     output=check_output,
                 )

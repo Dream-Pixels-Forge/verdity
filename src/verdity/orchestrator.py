@@ -205,6 +205,8 @@ class Orchestrator:
         review_run_id = uuid.uuid4()
 
         run = ReviewRun(review_run_id=review_run_id, event=event, status=RunStatus.RUNNING)
+        # Carry the caller's diff through to the specialists.
+        run.diff_files = list(getattr(envelope, "diff_files", []) or [])
         self._runs[review_run_id] = run
 
         # Audit: run started
@@ -397,7 +399,7 @@ class Orchestrator:
             repo_name=event.repo.name,
             base_sha=pr.base_sha if pr else "",
             head_sha=pr.head_sha if pr else "",
-            diff_files=[],  # populated by caller or extracted from event
+            diff_files=list(getattr(run, "diff_files", []) or []),
             policy=policy,
         )
         try:
