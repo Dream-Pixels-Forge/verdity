@@ -80,6 +80,79 @@ class TestSlaEscalationAndShutdown:
         assert aq.check_sla_escalations.called
 
     @pytest.mark.asyncio
+    async def test_sla_escalation_loop_survives_check_failure(self):
+        """A raising SLA check must be logged, not kill the background loop."""
+        aq = MagicMock()
+        aq.check_sla_escalations = AsyncMock(side_effect=RuntimeError("queue exploded"))
+        worker = self._worker(approval_queue=aq, sla_check_interval=0)
+
+        worker._running = True
+        task = asyncio.create_task(worker._sla_escalation_loop())
+        await asyncio.sleep(0.02)
+        worker._running = False
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+        assert aq.check_sla_escalations.called
+
+    @pytest.mark.asyncio
+    async def test_run_forever_survives_sla_check_failure(self):
+        """The loop keeps running after an SLA check raises."""
+        aq = MagicMock()
+        aq.check_sla_escalations = AsyncMock(side_effect=RuntimeError("boom"))
+        worker = self._worker(approval_queue=aq, sla_check_interval=0)
+
+        worker._running = True
+        task = asyncio.create_task(worker._sla_escalation_loop())
+        await asyncio.sleep(0.02)
+        worker._running = False
+        await asyncio.sleep(0.02)
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+        assert aq.check_sla_escalations.call_count >= 1
+
+    @pytest.mark.asyncio
+    async def test_background_task_failure_is_logged_not_raised(self):
+        """A failing in-flight task must be logged and must not propagate.
+
+        The concurrency gate calls t.result() on reaped tasks; without the
+        try/except a single failed task would abort the whole drain loop and
+        the worker would stop processing.
+        """
+        queue = MagicMock()
+        queue.consume = AsyncMock(return_value=_make_envelope("acme/widgets"))
+        orch = MagicMock()
+        worker = Worker(queue, orch, max_concurrent=1)
+
+        async def _boom():
+            raise RuntimeError("task blew up")
+
+        failing = asyncio.create_task(_boom())
+        # Let the failure actually happen before the gate reaps it.
+        await asyncio.sleep(0)
+        worker._tasks = {failing}
+
+        processed = []
+
+        async def _record(envelope):
+            processed.append(envelope)
+
+        worker._process_one = _record
+
+        # A new envelope arrives while max_concurrent is already reached, so
+        # the gate reaps the failed task first.
+        await worker._drain_one()
+
+        assert failing.done()
+        # Let the dispatched task actually run; the drain only schedules it.
+        if worker._tasks:
+            await asyncio.gather(*list(worker._tasks), return_exceptions=True)
+        assert len(processed) == 1
+
+    @pytest.mark.asyncio
     async def test_sla_escalation_loop_exits_on_cancellation(self):
         """Cancelling the loop while it sleeps must break out via CancelledError.
 

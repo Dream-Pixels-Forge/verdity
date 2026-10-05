@@ -5,11 +5,15 @@ Comprehensive coverage tests — fills all remaining uncovered branches.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
+import os
 import time
 import uuid
 from datetime import UTC, datetime
 
 import pytest
+from fastapi import HTTPException
 
 from verdity.agents.documentation import DocumentationAgent
 from verdity.agents.security import SecurityAgent
@@ -19,6 +23,7 @@ from verdity.approval_queue import ApprovalQueueStore
 from verdity.async_sqlite import AsyncConnection
 from verdity.coding_agent import CodingAgent
 from verdity.event_queue import EventQueue
+from verdity.hmac_verify import compute_signature
 from verdity.orchestrator import Orchestrator, RunStatus, resolve_policy, resolve_specialists
 from verdity.schemas import (
     ConcernType,
@@ -3708,3 +3713,634 @@ class TestSecurityAgentExceptions:
         assert isinstance(result, SpecialistResponse)
         # Even if semantic search fails internally, rule-based findings should remain
         assert result.status == "complete"
+
+
+class TestGatewayLifespanRateLimiterWiring:
+    """Lifespan picks the rate limiter and closes it on shutdown.
+
+    These lines previously carried `# pragma: no cover`. The existing
+    TestGatewayLifespan only exercised the non-Redis path, so the Redis
+    branch and the shutdown close() were never run.
+
+    The real lifespan mutates module-global app.state, so every attribute it
+    touches is saved and restored around each test; otherwise a later test
+    inherits a closed queue or a mock limiter.
+    """
+
+    @staticmethod
+    def _app_module():
+        import importlib
+
+        return importlib.import_module("verdity.gateway.app")
+
+    @contextlib.contextmanager
+    def _preserve_app_state(self):
+        gateway_module = self._app_module()
+        state = gateway_module.app.state
+        saved = {
+            name: getattr(state, name, None)
+            for name in (
+                "queue",
+                "audit",
+                "metrics",
+                "_delivery_cache",
+                "_rate_limiter",
+                "_github_ip_allowlist",
+                "delivery_ids",
+                "_delivery_cache_ts",
+                "_last_eviction",
+            )
+        }
+        try:
+            yield gateway_module
+        finally:
+            for name, value in saved.items():
+                setattr(state, name, value)
+
+    @pytest.mark.asyncio
+    async def test_redis_limiter_constructed_and_closed(self, tmp_path):
+        """With Redis enabled the lifespan must build and close a RedisRateLimiter."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        fake_redis = MagicMock()
+        fake_redis.connect = AsyncMock()
+        fake_redis.close = AsyncMock()
+
+        settings = MagicMock()
+        settings.redis_rate_limiter_enabled = True
+        settings.redis_url = "redis://example:6379/1"
+        settings.queue_sqlite_path = str(tmp_path / "queue.db")
+        settings.audit_sqlite_path = str(tmp_path / "audit.db")
+        settings.metrics_sqlite_path = str(tmp_path / "metrics.db")
+        settings.delivery_cache_sqlite_path = str(tmp_path / "delivery_cache.db")
+
+        with self._preserve_app_state() as gateway_module:
+            with patch.object(gateway_module, "get_settings", return_value=settings):
+                with patch.object(
+                    gateway_module, "RedisRateLimiter", return_value=fake_redis
+                ) as mock_cls:
+                    async with gateway_module.app.router.lifespan_context(gateway_module.app):
+                        pass
+
+            mock_cls.assert_called_once()
+            assert mock_cls.call_args.kwargs["redis_url"] == "redis://example:6379/1"
+            assert (
+                mock_cls.call_args.kwargs["max_requests"] == gateway_module.RATE_LIMIT_MAX_REQUESTS
+            )
+            fake_redis.connect.assert_awaited_once()
+            fake_redis.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_in_memory_limiter_is_not_closed(self, tmp_path):
+        """The in-memory limiter has no close(); shutdown must not call one."""
+        from unittest.mock import MagicMock, patch
+
+        settings = MagicMock()
+        settings.redis_rate_limiter_enabled = False
+        settings.queue_sqlite_path = str(tmp_path / "queue.db")
+        settings.audit_sqlite_path = str(tmp_path / "audit.db")
+        settings.metrics_sqlite_path = str(tmp_path / "metrics.db")
+        settings.delivery_cache_sqlite_path = str(tmp_path / "delivery_cache.db")
+        settings.github_webhook_ips = ""
+
+        with self._preserve_app_state() as gateway_module:
+            with patch.object(gateway_module, "get_settings", return_value=settings):
+                async with gateway_module.app.router.lifespan_context(gateway_module.app):
+                    limiter = gateway_module.app.state._rate_limiter
+                    assert not hasattr(limiter, "close")
+
+
+def _make_asgi_request(body: bytes, *, app, headers: dict[str, str] | None = None):
+    """Build a real Starlette Request with a replayable body.
+
+    Used to call route handlers directly. Going through ASGITransport routes
+    the call through BaseHTTPMiddleware, and on Python 3.11 the coverage tracer
+    loses execution across the handler's first ``await`` (coveragepy#1082 /
+    #1911), so the handler body reads as uncovered there even though it runs.
+    Calling it directly records the same lines on every Python version.
+    """
+    from fastapi import Request
+
+    hdrs = [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()]
+
+    async def receive():
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/verdity/webhooks/github",
+            "headers": hdrs,
+            "app": app,
+            "scheme": "http",
+            "server": ("test", 80),
+            "query_string": b"",
+        },
+        receive=receive,
+    )
+
+
+class TestWebhookHandlersCalledDirectly:
+    """Exercise both webhook handlers without BaseHTTPMiddleware in the way.
+
+    Behaviour is identical to the route tests; the difference is only in how
+    coverage observes them. Every line here is real: the handlers return 202 on
+    3.11, 3.12 and 3.13.
+    """
+
+    @pytest.mark.asyncio
+    async def test_github_handler_accepts_valid_payload(self, gateway_client):
+        """A correctly signed payload must be normalized and enqueued."""
+        from verdity.gateway.app import app, handle_github_webhook
+
+        secret = app.state.__dict__.get("_test_secret") or "test-hmac-secret-key-for-dev-only"
+        payload = {
+            "action": "opened",
+            "pull_request": {
+                "number": 7,
+                "title": "T",
+                "head": {"sha": "abc"},
+                "base": {"sha": "def"},
+                "user": {"login": "u"},
+            },
+            "repository": {"name": "p", "owner": {"name": "ns"}},
+        }
+        body = json.dumps(payload, separators=(",", ":")).encode()
+        sig = compute_signature(secret.encode(), body)
+        delivery = str(uuid.uuid4())
+
+        request = _make_asgi_request(
+            body,
+            app=app,
+            headers={
+                "x-github-event": "pull_request",
+                "x-hub-signature-256": sig,
+                "x-github-delivery": delivery,
+                "content-type": "application/json",
+            },
+        )
+
+        response = await handle_github_webhook(
+            request,
+            x_github_event="pull_request",
+            x_hub_signature_256=sig,
+            x_github_delivery=delivery,
+        )
+
+        assert response.status_code == 202
+
+    @pytest.mark.asyncio
+    async def test_github_handler_rejects_bad_signature(self, gateway_client):
+        """An invalid HMAC must 401 before normalization."""
+        from verdity.gateway.app import app, handle_github_webhook
+
+        body = b'{"action":"opened"}'
+        delivery = str(uuid.uuid4())
+        request = _make_asgi_request(
+            body,
+            app=app,
+            headers={
+                "x-github-event": "pull_request",
+                "x-hub-signature-256": "sha256=deadbeef",
+                "x-github-delivery": delivery,
+                "content-type": "application/json",
+            },
+        )
+
+        with pytest.raises(HTTPException) as exc:
+            await handle_github_webhook(
+                request,
+                x_github_event="pull_request",
+                x_hub_signature_256="sha256=deadbeef",
+                x_github_delivery=delivery,
+            )
+
+        assert exc.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_github_handler_rejects_oversized_body(self, gateway_client):
+        """The route's own body-size cap must fire before parsing."""
+        # verdity.gateway.__init__ re-exports the FastAPI instance as `app`,
+        # which shadows the submodule of the same name. Import by module.
+        import importlib
+
+        gateway_module = importlib.import_module("verdity.gateway.app")
+
+        secret = "test-hmac-secret-key-for-dev-only"
+        big = b"x" * (gateway_module.MAX_WEBHOOK_BODY_BYTES + 1)
+        sig = compute_signature(secret.encode(), big)
+        delivery = str(uuid.uuid4())
+
+        request = _make_asgi_request(
+            big,
+            app=gateway_module.app,
+            headers={
+                "x-github-event": "pull_request",
+                "x-hub-signature-256": sig,
+                "x-github-delivery": delivery,
+                "content-type": "application/json",
+            },
+        )
+
+        with pytest.raises(HTTPException) as exc:
+            await gateway_module.handle_github_webhook(
+                request,
+                x_github_event="pull_request",
+                x_hub_signature_256=sig,
+                x_github_delivery=delivery,
+            )
+
+        assert exc.value.status_code == 413
+
+    @pytest.mark.asyncio
+    async def test_github_handler_returns_409_on_replay(self, gateway_client):
+        """A delivery ID already in the cache must be rejected as a replay."""
+        import importlib
+
+        gateway_module = importlib.import_module("verdity.gateway.app")
+        app = gateway_module.app
+
+        secret = "test-hmac-secret-key-for-dev-only"
+        payload = {
+            "action": "opened",
+            "pull_request": {
+                "number": 8,
+                "title": "T",
+                "head": {"sha": "abc"},
+                "base": {"sha": "def"},
+                "user": {"login": "u"},
+            },
+            "repository": {"name": "p", "owner": {"name": "ns"}},
+        }
+        body = json.dumps(payload, separators=(",", ":")).encode()
+        sig = compute_signature(secret.encode(), body)
+        delivery = str(uuid.uuid4())
+
+        def _headers():
+            return {
+                "x-github-event": "pull_request",
+                "x-hub-signature-256": sig,
+                "x-github-delivery": delivery,
+                "content-type": "application/json",
+            }
+
+        first = _make_asgi_request(body, app=app, headers=_headers())
+        resp = await gateway_module.handle_github_webhook(
+            first,
+            x_github_event="pull_request",
+            x_hub_signature_256=sig,
+            x_github_delivery=delivery,
+        )
+        assert resp.status_code == 202
+
+        # Same delivery ID again must be refused.
+        second = _make_asgi_request(body, app=app, headers=_headers())
+        with pytest.raises(HTTPException) as exc:
+            await gateway_module.handle_github_webhook(
+                second,
+                x_github_event="pull_request",
+                x_hub_signature_256=sig,
+                x_github_delivery=delivery,
+            )
+
+        assert exc.value.status_code == 409
+
+
+@contextlib.contextmanager
+def _forgiving_repo_ref():
+    """Allow RepoRef without an id, the way the gateway fixtures do.
+
+    The gateway builds RepoRef from webhook payloads that carry no numeric id.
+    Restored on exit so the patch cannot leak into other tests.
+    """
+    from verdity.schemas import RepoRef
+
+    original_init = RepoRef.__init__
+
+    def patched_init(self, owner, name, **kwargs):
+        kwargs.setdefault("id", 0)
+        original_init(self, owner=owner, name=name, **kwargs)
+
+    RepoRef.__init__ = patched_init
+    try:
+        yield
+    finally:
+        RepoRef.__init__ = original_init
+
+
+class TestPlatformWebhookHandlerCalledDirectly:
+    """Same direct-call approach for the multi-platform handler."""
+
+    @pytest.mark.asyncio
+    async def test_platform_handler_accepts_valid_gitlab(self, gateway_client):
+        """A valid GitLab token must be verified, normalized and enqueued."""
+        import importlib
+
+        from verdity.config import get_settings
+
+        # The unified handler reads the per-platform secret from settings.
+        os.environ["GITLAB_WEBHOOK_SECRET"] = "gitlab-secret"
+        get_settings.cache_clear()
+
+        gateway_module = importlib.import_module("verdity.gateway.app")
+        app = gateway_module.app
+
+        payload = {
+            "object_kind": "merge_request",
+            "object_attributes": {
+                "action": "open",
+                "iid": 3,
+                "title": "T",
+                "description": "",
+                "head_commit_sha": "abc",
+                "target_commit_sha": "def",
+                "author": {"username": "u"},
+            },
+            "project": {"namespace": "ns", "name": "p"},
+        }
+        body = json.dumps(payload, separators=(",", ":")).encode()
+
+        request = _make_asgi_request(
+            body,
+            app=app,
+            headers={
+                "x-gitlab-token": "gitlab-secret",
+                "x-gitlab-event-uuid": str(uuid.uuid4()),
+                "content-type": "application/json",
+            },
+        )
+
+        with _forgiving_repo_ref():
+            response = await gateway_module.handle_platform_webhook("gitlab", request)
+
+        assert response.status_code == 202
+
+    @pytest.mark.asyncio
+    async def test_platform_handler_rejects_bad_token(self, gateway_client):
+        """An invalid shared-secret token must 401."""
+        import importlib
+
+        gateway_module = importlib.import_module("verdity.gateway.app")
+
+        request = _make_asgi_request(
+            b'{"object_kind":"merge_request"}',
+            app=gateway_module.app,
+            headers={
+                "x-gitlab-token": "wrong",
+                "x-gitlab-event-uuid": str(uuid.uuid4()),
+                "content-type": "application/json",
+            },
+        )
+
+        with pytest.raises(HTTPException) as exc:
+            await gateway_module.handle_platform_webhook("gitlab", request)
+
+        assert exc.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_platform_handler_rejects_oversized_body(self, gateway_client):
+        """The unified route enforces the same body-size cap as the dedicated one."""
+        import importlib
+
+        gateway_module = importlib.import_module("verdity.gateway.app")
+
+        big = b"x" * (gateway_module.MAX_WEBHOOK_BODY_BYTES + 1)
+        request = _make_asgi_request(
+            big,
+            app=gateway_module.app,
+            headers={
+                "x-gitlab-token": "gitlab-secret",
+                "content-type": "application/json",
+            },
+        )
+
+        with pytest.raises(HTTPException) as exc:
+            await gateway_module.handle_platform_webhook("gitlab", request)
+
+        assert exc.value.status_code == 413
+
+    @pytest.mark.asyncio
+    async def test_platform_handler_rejects_unknown_platform(self, gateway_client):
+        """An unsupported platform must 400 before anything else runs."""
+        import importlib
+
+        gateway_module = importlib.import_module("verdity.gateway.app")
+
+        request = _make_asgi_request(b"{}", app=gateway_module.app, headers={})
+
+        with pytest.raises(HTTPException) as exc:
+            await gateway_module.handle_platform_webhook("nope", request)
+
+        assert exc.value.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_platform_handler_401_when_secret_unset(self, gateway_client):
+        """An unconfigured platform secret must fail closed with 401."""
+        import importlib
+
+        from verdity.config import get_settings
+
+        os.environ["BITBUCKET_WEBHOOK_SECRET"] = ""
+        get_settings.cache_clear()
+
+        gateway_module = importlib.import_module("verdity.gateway.app")
+        request = _make_asgi_request(
+            b'{"push":{}}',
+            app=gateway_module.app,
+            headers={"content-type": "application/json"},
+        )
+
+        with pytest.raises(HTTPException) as exc:
+            await gateway_module.handle_platform_webhook("bitbucket", request)
+
+        assert exc.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_platform_handler_selects_bitbucket_secret(self, gateway_client):
+        """The bitbucket branch must read its own secret."""
+        import importlib
+
+        from verdity.config import get_settings
+
+        os.environ["BITBUCKET_WEBHOOK_SECRET"] = "bitbucket-secret"
+        get_settings.cache_clear()
+
+        gateway_module = importlib.import_module("verdity.gateway.app")
+        payload = {
+            "pullrequest": {
+                "id": 11,
+                "title": "T",
+                "source": {"commit": {"hash": "abc"}},
+                "destination": {"commit": {"hash": "def"}},
+                "author": {"nickname": "u"},
+            },
+            "repository": {"name": "p", "owner": {"nickname": "ns"}},
+        }
+        body = json.dumps(payload, separators=(",", ":")).encode()
+        sig = compute_signature(b"bitbucket-secret", body)
+
+        request = _make_asgi_request(
+            body,
+            app=gateway_module.app,
+            headers={
+                "x-hub-signature": sig,
+                "x-hook-uuid": str(uuid.uuid4()),
+                "x-event-key": "pullrequest:created",
+                "content-type": "application/json",
+            },
+        )
+
+        with _forgiving_repo_ref():
+            response = await gateway_module.handle_platform_webhook("bitbucket", request)
+
+        assert response.status_code == 202
+
+    @pytest.mark.asyncio
+    async def test_platform_handler_400_on_invalid_json(self, gateway_client):
+        """Malformed JSON must be a 400, not a 500."""
+        import importlib
+
+        from verdity.config import get_settings
+
+        os.environ["GITLAB_WEBHOOK_SECRET"] = "gitlab-secret"
+        get_settings.cache_clear()
+
+        gateway_module = importlib.import_module("verdity.gateway.app")
+        request = _make_asgi_request(
+            b"not json at all",
+            app=gateway_module.app,
+            headers={
+                "x-gitlab-token": "gitlab-secret",
+                "x-gitlab-event-uuid": str(uuid.uuid4()),
+                "content-type": "application/json",
+            },
+        )
+
+        with pytest.raises(HTTPException) as exc:
+            await gateway_module.handle_platform_webhook("gitlab", request)
+
+        assert exc.value.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_platform_handler_400_when_normalization_fails(self, gateway_client):
+        """A payload the normalizer rejects must be a 400."""
+        import importlib
+        from unittest.mock import patch
+
+        from verdity.config import get_settings
+        from verdity.platforms.gitlab import GitLabPlatform
+
+        os.environ["GITLAB_WEBHOOK_SECRET"] = "gitlab-secret"
+        get_settings.cache_clear()
+
+        gateway_module = importlib.import_module("verdity.gateway.app")
+        body = b'{"object_kind":"merge_request"}'
+        request = _make_asgi_request(
+            body,
+            app=gateway_module.app,
+            headers={
+                "x-gitlab-token": "gitlab-secret",
+                "x-gitlab-event-uuid": str(uuid.uuid4()),
+                "content-type": "application/json",
+            },
+        )
+
+        with patch.object(
+            GitLabPlatform,
+            "normalize_event",
+            side_effect=ValueError("cannot normalize"),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await gateway_module.handle_platform_webhook("gitlab", request)
+
+        assert exc.value.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_platform_handler_derives_delivery_id_when_absent(self, gateway_client):
+        """Without an event UUID the handler must synthesise a delivery ID."""
+        import importlib
+
+        from verdity.config import get_settings
+
+        os.environ["GITLAB_WEBHOOK_SECRET"] = "gitlab-secret"
+        get_settings.cache_clear()
+
+        gateway_module = importlib.import_module("verdity.gateway.app")
+        payload = {
+            "object_kind": "merge_request",
+            "object_attributes": {
+                "action": "open",
+                "iid": 4,
+                "title": "T",
+                "description": "",
+                "head_commit_sha": "abc",
+                "target_commit_sha": "def",
+                "author": {"username": "u"},
+            },
+            "project": {"namespace": "ns", "name": "p"},
+        }
+        body = json.dumps(payload, separators=(",", ":")).encode()
+
+        request = _make_asgi_request(
+            body,
+            app=gateway_module.app,
+            headers={
+                "x-gitlab-token": "gitlab-secret",
+                "content-type": "application/json",
+            },
+        )
+
+        with _forgiving_repo_ref():
+            response = await gateway_module.handle_platform_webhook("gitlab", request)
+
+        assert response.status_code == 202
+        assert response.body and b"gitlab-" in response.body
+
+    @pytest.mark.asyncio
+    async def test_platform_handler_409_on_replay(self, gateway_client):
+        """A repeated delivery ID must be refused as a replay."""
+        import importlib
+
+        from verdity.config import get_settings
+
+        os.environ["GITLAB_WEBHOOK_SECRET"] = "gitlab-secret"
+        get_settings.cache_clear()
+
+        gateway_module = importlib.import_module("verdity.gateway.app")
+        app = gateway_module.app
+        payload = {
+            "object_kind": "merge_request",
+            "object_attributes": {
+                "action": "open",
+                "iid": 5,
+                "title": "T",
+                "description": "",
+                "head_commit_sha": "abc",
+                "target_commit_sha": "def",
+                "author": {"username": "u"},
+            },
+            "project": {"namespace": "ns", "name": "p"},
+        }
+        body = json.dumps(payload, separators=(",", ":")).encode()
+        delivery = str(uuid.uuid4())
+
+        def _headers():
+            return {
+                "x-gitlab-token": "gitlab-secret",
+                "x-gitlab-event-uuid": delivery,
+                "content-type": "application/json",
+            }
+
+        with _forgiving_repo_ref():
+            first = await gateway_module.handle_platform_webhook(
+                "gitlab", _make_asgi_request(body, app=app, headers=_headers())
+            )
+            assert first.status_code == 202
+
+            with pytest.raises(HTTPException) as exc:
+                await gateway_module.handle_platform_webhook(
+                    "gitlab", _make_asgi_request(body, app=app, headers=_headers())
+                )
+
+        assert exc.value.status_code == 409

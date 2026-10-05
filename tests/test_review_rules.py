@@ -256,3 +256,45 @@ class TestYAMLErrorBranch:
             rules = ReviewRules(tmpdir)
             # Falls back to DEFAULT_RULES
             assert rules._rules == DEFAULT_RULES
+
+
+class TestRulesFileFailureModes:
+    """A broken rules file must degrade to defaults, never crash startup.
+
+    Both handlers below were unreachable: every existing test used either a
+    valid file or no file at all.
+    """
+
+    def test_malformed_yaml_falls_back_to_defaults(self, tmp_path):
+        """Invalid YAML must not prevent the reviewer from starting."""
+        from verdity.review_rules import DEFAULT_RULES, ReviewRules
+
+        repo = tmp_path / "repo"
+        (repo / ".verdity").mkdir(parents=True)
+        (repo / ".verdity" / "rules.yml").write_text("rules: [unclosed\n  bad: :")
+
+        rules = ReviewRules(str(repo))
+
+        assert rules._rules == DEFAULT_RULES
+
+    def test_unreadable_file_falls_back_to_defaults(self, tmp_path):
+        """An IO error (e.g. permissions) must also fall back to defaults."""
+        from unittest.mock import patch
+
+        from verdity.review_rules import DEFAULT_RULES, ReviewRules
+
+        repo = tmp_path / "repo"
+        (repo / ".verdity").mkdir(parents=True)
+        rules_file = repo / ".verdity" / "rules.yml"
+        rules_file.write_text("rules: []\n")
+
+        real_open = open
+
+        def _boom(*args, **kwargs):
+            raise PermissionError("nope")
+
+        with patch("builtins.open", _boom):
+            rules = ReviewRules(str(repo))
+
+        assert rules._rules == DEFAULT_RULES
+        assert real_open is open

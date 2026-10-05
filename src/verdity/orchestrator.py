@@ -549,13 +549,13 @@ class Orchestrator:
         Returns:
             CalibrationResult if recalibration ran, None if insufficient data
         """
-        if self._metrics is None:  # pragma: no cover
+        if self._metrics is None:
             logger.warning("No metrics store configured, skipping trust recalibration")
             return None
 
         # Get all outcomes from metrics store
         outcomes = await self._metrics.get_all_outcomes()
-        if len(outcomes) < min_samples:  # pragma: no cover
+        if len(outcomes) < min_samples:
             logger.info(
                 "Insufficient data for recalibration: %d outcomes (need %d)",
                 len(outcomes),
@@ -573,15 +573,15 @@ class Orchestrator:
                 # Map metrics store outcome to calibrator outcome
                 final_outcome = outcome["final_outcome"]
                 if final_outcome == "auto_fixed":
-                    calibrator_outcome = "confirmed"  # pragma: no cover
+                    calibrator_outcome = "confirmed"
                 elif final_outcome == "false_positive":
                     calibrator_outcome = "false_positive"
                 elif final_outcome == "wont_fix":
-                    calibrator_outcome = "wont_fix"  # pragma: no cover
+                    calibrator_outcome = "wont_fix"
                 elif final_outcome == "confirmed":
                     calibrator_outcome = "confirmed"
                 else:
-                    continue  # pragma: no cover  # Skip unknown outcomes
+                    continue  # Skip unknown outcomes
 
                 await calibrator.record_outcome(
                     finding_type=f"{outcome.get('concern', 'unknown')}-{outcome.get('severity', 'unknown')}",
@@ -628,7 +628,7 @@ class Orchestrator:
                 except asyncio.CancelledError:
                     logger.info("Nightly recalibration task cancelled")
                     break
-                except Exception:  # pragma: no cover
+                except Exception:
                     logger.exception("Nightly recalibration failed (will retry next interval)")
 
         task = asyncio.create_task(nightly_task(), name="nightly-trust-recalibration")
