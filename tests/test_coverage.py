@@ -5,6 +5,7 @@ Comprehensive coverage tests — fills all remaining uncovered branches.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 import uuid
 from datetime import UTC, datetime
@@ -3708,3 +3709,98 @@ class TestSecurityAgentExceptions:
         assert isinstance(result, SpecialistResponse)
         # Even if semantic search fails internally, rule-based findings should remain
         assert result.status == "complete"
+
+
+class TestGatewayLifespanRateLimiterWiring:
+    """Lifespan picks the rate limiter and closes it on shutdown.
+
+    These lines previously carried `# pragma: no cover`. The existing
+    TestGatewayLifespan only exercised the non-Redis path, so the Redis
+    branch and the shutdown close() were never run.
+
+    The real lifespan mutates module-global app.state, so every attribute it
+    touches is saved and restored around each test; otherwise a later test
+    inherits a closed queue or a mock limiter.
+    """
+
+    @staticmethod
+    def _app_module():
+        import importlib
+
+        return importlib.import_module("verdity.gateway.app")
+
+    @contextlib.contextmanager
+    def _preserve_app_state(self):
+        gateway_module = self._app_module()
+        state = gateway_module.app.state
+        saved = {
+            name: getattr(state, name, None)
+            for name in (
+                "queue",
+                "audit",
+                "metrics",
+                "_delivery_cache",
+                "_rate_limiter",
+                "_github_ip_allowlist",
+                "delivery_ids",
+                "_delivery_cache_ts",
+                "_last_eviction",
+            )
+        }
+        try:
+            yield gateway_module
+        finally:
+            for name, value in saved.items():
+                setattr(state, name, value)
+
+    @pytest.mark.asyncio
+    async def test_redis_limiter_constructed_and_closed(self, tmp_path):
+        """With Redis enabled the lifespan must build and close a RedisRateLimiter."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        fake_redis = MagicMock()
+        fake_redis.connect = AsyncMock()
+        fake_redis.close = AsyncMock()
+
+        settings = MagicMock()
+        settings.redis_rate_limiter_enabled = True
+        settings.redis_url = "redis://example:6379/1"
+        settings.queue_sqlite_path = str(tmp_path / "queue.db")
+        settings.audit_sqlite_path = str(tmp_path / "audit.db")
+        settings.metrics_sqlite_path = str(tmp_path / "metrics.db")
+        settings.delivery_cache_sqlite_path = str(tmp_path / "delivery_cache.db")
+
+        with self._preserve_app_state() as gateway_module:
+            with patch.object(gateway_module, "get_settings", return_value=settings):
+                with patch.object(
+                    gateway_module, "RedisRateLimiter", return_value=fake_redis
+                ) as mock_cls:
+                    async with gateway_module.app.router.lifespan_context(gateway_module.app):
+                        pass
+
+            mock_cls.assert_called_once()
+            assert mock_cls.call_args.kwargs["redis_url"] == "redis://example:6379/1"
+            assert (
+                mock_cls.call_args.kwargs["max_requests"] == gateway_module.RATE_LIMIT_MAX_REQUESTS
+            )
+            fake_redis.connect.assert_awaited_once()
+            fake_redis.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_in_memory_limiter_is_not_closed(self, tmp_path):
+        """The in-memory limiter has no close(); shutdown must not call one."""
+        from unittest.mock import MagicMock, patch
+
+        settings = MagicMock()
+        settings.redis_rate_limiter_enabled = False
+        settings.queue_sqlite_path = str(tmp_path / "queue.db")
+        settings.audit_sqlite_path = str(tmp_path / "audit.db")
+        settings.metrics_sqlite_path = str(tmp_path / "metrics.db")
+        settings.delivery_cache_sqlite_path = str(tmp_path / "delivery_cache.db")
+        settings.github_webhook_ips = ""
+
+        with self._preserve_app_state() as gateway_module:
+            with patch.object(gateway_module, "get_settings", return_value=settings):
+                async with gateway_module.app.router.lifespan_context(gateway_module.app):
+                    limiter = gateway_module.app.state._rate_limiter
+                    assert not hasattr(limiter, "close")
