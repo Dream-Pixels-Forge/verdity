@@ -83,6 +83,14 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 addopts = "-v --cov=src/verdity --cov-report=term-missing --cov-fail-under=100"
+# Treat warning classes that signal real defects as failures rather than
+# letting them scroll past in the summary. Un-awaited coroutines and
+# DeprecationWarnings have each hidden actual bugs here before.
+filterwarnings = [
+    "error::RuntimeWarning",
+    "error::DeprecationWarning",
+    "error::PendingDeprecationWarning",
+]
 
 [tool.ruff]
 target-version = "py311"
@@ -133,6 +141,10 @@ ignore = [
     "RUF012",  # mutable class attr default — common in mock scaffolding
     "B017",    # pytest.raises(Exception) — pydantic ValidationError is broad
     "DTZ005",  # datetime.now() without tz — tests, not production
+    "SIM117",  # nested `with patch(...)` — nesting keeps each mock's scope explicit
+    "F841",    # unused local bindings from tuple/multi-target scaffolding
+    "RUF059",  # unused unpacked bindings from multi-target scaffolding
+    "RUF005",  # explicit list concatenation is clearer than unpacking in tests
 ]
 
 [tool.ruff.format]

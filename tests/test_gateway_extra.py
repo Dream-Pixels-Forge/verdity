@@ -978,3 +978,14 @@ async def test_dashboard_endpoint_metrics_none_direct_call(gw_client):
         result = await get_metrics_dashboard(repo_id="test-repo", days=30)
         # Returns JSONResponse with 503 status
         assert result.status_code == 503
+
+
+class TestIpAllowlist:
+    """_is_ip_allowed(): empty allowlist means allow-all."""
+
+    def test_empty_allowlist_allows_every_client(self):
+        """No configured networks = allow all clients (documented behavior)."""
+        from verdity.gateway.app import _is_ip_allowed
+
+        assert _is_ip_allowed("203.0.113.5", []) is True
+        assert _is_ip_allowed("not-an-ip", []) is True

@@ -129,7 +129,9 @@ def create_check_output(findings: list[Finding]) -> dict[str, Any]:
         text_parts.append(
             f"#### {i}. {severity_emoji} {finding.concern.value.title()}: {finding.summary}"
         )
-        text_parts.append(f"**File:** `{finding.file}` (lines {finding.line_start}-{finding.line_end})")
+        text_parts.append(
+            f"**File:** `{finding.file}` (lines {finding.line_start}-{finding.line_end})"
+        )
         text_parts.append(f"**Severity:** {finding.severity.value.upper()}")
         text_parts.append(f"**Confidence:** {finding.confidence:.0%}")
         text_parts.append(f"**Explanation:** {finding.explanation}")
@@ -182,6 +184,7 @@ class GitHubClient:
         private_key_pem: str | bytes,
         installation_id: str,
         *,
+        token: str | None = None,
         base_url: str = GITHUB_API_BASE,
         token_lifetime_seconds: int = 600,
         timeout_total: float | None = None,
@@ -192,6 +195,10 @@ class GitHubClient:
             private_key_pem if isinstance(private_key_pem, bytes) else private_key_pem.encode()
         )
         self._installation_id = installation_id
+        # A static token (PAT / gh auth token) bypasses the App JWT exchange.
+        # App credentials can only be minted by the org owner, so this keeps
+        # one-off and contributor review runs possible without App access.
+        self._token = token or None
         self._base_url = base_url.rstrip("/")
         self._token_lifetime = token_lifetime_seconds
         self._timeout_total = timeout_total or _get_default_timeout_total()
@@ -308,7 +315,18 @@ class GitHubClient:
         return self._installationToken
 
     async def _auth_headers(self, client: httpx.AsyncClient) -> dict[str, str]:
-        """Return headers with a valid installation token."""
+        """Return headers with a valid installation token, or a static token.
+
+        When a static token was supplied it is used verbatim and no App JWT
+        exchange is performed. App auth remains the default so existing
+        deployments behave identically.
+        """
+        if self._token:
+            return {
+                "Authorization": f"Bearer {self._token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            }
         token = await self._get_installation_token(client)
         return {
             "Authorization": f"Bearer {token}",
@@ -563,7 +581,6 @@ class GitHubClient:
     async def __aexit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
         """Async context manager exit - ensures client is closed."""
         await self.close()
-
 
     # ── PR Diff Fetching ──────────────────────────────────────────────
 

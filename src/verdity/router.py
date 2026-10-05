@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from verdity.enforcement import EnforcementEngine, EnforcementDecision
+from verdity.enforcement import EnforcementEngine
 from verdity.metrics_store import MetricsStore
 from verdity.schemas import (
     ConcernType,
@@ -165,7 +165,9 @@ async def route(
                 "ESCALATE": RouteAction.MANUAL_REVIEW,
             }
             return RoutingDecision(
-                action=action_map.get(enforcement_decision.action.upper(), RouteAction.MANUAL_REVIEW),
+                action=action_map.get(
+                    enforcement_decision.action.upper(), RouteAction.MANUAL_REVIEW
+                ),
                 confidence=finding.confidence,
                 reason=f"Enforcement: {enforcement_decision.message}",
             )

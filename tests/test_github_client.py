@@ -4,6 +4,7 @@ Tests for GitHub API client — App auth, PR comment posting, review posting.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -45,6 +46,66 @@ def _make_client(**kwargs) -> GitHubClient:
     }
     defaults.update(kwargs)
     return GitHubClient(**defaults)
+
+
+class TestTokenAuth:
+    """A personal access token may be used instead of a GitHub App.
+
+    App auth requires an app_id, an installation_id and an RSA private key,
+    which only the org owner can mint.  That makes local/one-off review runs
+    impossible for contributors without App access, even though they already
+    hold a perfectly good `gh auth token`.  When a token is supplied it is used
+    directly and no App credentials are needed.
+    """
+
+    def test_static_token_is_used_verbatim(self):
+        client = _make_client(
+            app_id=0,
+            private_key_pem="",
+            installation_id="",
+            token="ghs_exampletokenvalue",
+        )
+        headers = asyncio.run(client._auth_headers(client._get_client()))
+        assert headers["Authorization"] == "Bearer ghs_exampletokenvalue"
+
+    def test_token_auth_does_not_request_an_installation_token(self):
+        """With a token there is nothing to mint, so no network call."""
+        client = _make_client(app_id=0, private_key_pem="", installation_id="", token="ghp_x")
+        with patch.object(GitHubClient, "_get_installation_token", new=AsyncMock()) as mock_token:
+            asyncio.run(client._auth_headers(client._get_client()))
+        mock_token.assert_not_called()
+
+    def test_token_wins_even_when_app_credentials_are_present(self):
+        """An explicit token takes precedence over App auth.
+
+        Without this, a client holding both a stale App key and a valid token
+        would silently attempt the App JWT exchange and fail confusingly.
+        """
+        client = _make_client(
+            app_id=12345,
+            private_key_pem=SAMPLE_PRIVATE_KEY,
+            installation_id="67890",
+            token="ghp_static",
+        )
+        headers = asyncio.run(client._auth_headers(client._get_client()))
+        assert headers["Authorization"] == "Bearer ghp_static"
+
+    def test_app_auth_still_used_when_no_token_given(self):
+        """Regression guard: existing App-auth behaviour is unchanged."""
+        client = _make_client()
+        with patch.object(
+            GitHubClient,
+            "_get_installation_token",
+            new=AsyncMock(return_value="installation-token-xyz"),
+        ):
+            headers = asyncio.run(client._auth_headers(client._get_client()))
+        assert headers["Authorization"] == "Bearer installation-token-xyz"
+
+    def test_standard_headers_present_with_token(self):
+        client = _make_client(app_id=0, private_key_pem="", installation_id="", token="ghp_x")
+        headers = asyncio.run(client._auth_headers(client._get_client()))
+        assert headers["Accept"] == "application/vnd.github+json"
+        assert headers["X-GitHub-Api-Version"] == "2022-11-28"
 
 
 # ── JWT Generation ────────────────────────────────────────────────────
@@ -676,7 +737,9 @@ class TestCheckRunActions:
         client = _make_client()
 
         with (
-            patch.object(client, "_get_installation_token", new_callable=AsyncMock, return_value="fake-token"),
+            patch.object(
+                client, "_get_installation_token", new_callable=AsyncMock, return_value="fake-token"
+            ),
             patch("httpx.AsyncClient.request", new_callable=AsyncMock) as mock_request,
         ):
             mock_request.return_value = httpx.Response(
@@ -684,8 +747,16 @@ class TestCheckRunActions:
             )
 
             actions = [
-                {"label": "Re-run Verdity", "description": "Re-run review", "identifier": "rerun-verdity"},
-                {"label": "Dismiss Findings", "description": "Dismiss all", "identifier": "dismiss-findings"},
+                {
+                    "label": "Re-run Verdity",
+                    "description": "Re-run review",
+                    "identifier": "rerun-verdity",
+                },
+                {
+                    "label": "Dismiss Findings",
+                    "description": "Dismiss all",
+                    "identifier": "dismiss-findings",
+                },
             ]
 
             result = await client.create_check_run(
@@ -709,7 +780,9 @@ class TestCheckRunActions:
         client = _make_client()
 
         with (
-            patch.object(client, "_get_installation_token", new_callable=AsyncMock, return_value="fake-token"),
+            patch.object(
+                client, "_get_installation_token", new_callable=AsyncMock, return_value="fake-token"
+            ),
             patch("httpx.AsyncClient.request", new_callable=AsyncMock) as mock_request,
         ):
             mock_request.return_value = httpx.Response(
@@ -717,7 +790,11 @@ class TestCheckRunActions:
             )
 
             actions = [
-                {"label": "Re-run Verdity", "description": "Re-run review", "identifier": "rerun-verdity"},
+                {
+                    "label": "Re-run Verdity",
+                    "description": "Re-run review",
+                    "identifier": "rerun-verdity",
+                },
             ]
 
             result = await client.update_check_run(
@@ -776,7 +853,9 @@ class TestCheckRunIntegration:
         output = create_check_output(findings)
 
         with (
-            patch.object(client, "_get_installation_token", new_callable=AsyncMock, return_value="fake-token"),
+            patch.object(
+                client, "_get_installation_token", new_callable=AsyncMock, return_value="fake-token"
+            ),
             patch("httpx.AsyncClient.request", new_callable=AsyncMock) as mock_request,
         ):
             mock_request.return_value = httpx.Response(
@@ -816,7 +895,9 @@ class TestCheckRunIntegration:
         output = create_check_output(findings)
 
         with (
-            patch.object(client, "_get_installation_token", new_callable=AsyncMock, return_value="fake-token"),
+            patch.object(
+                client, "_get_installation_token", new_callable=AsyncMock, return_value="fake-token"
+            ),
             patch("httpx.AsyncClient.request", new_callable=AsyncMock) as mock_request,
         ):
             mock_request.return_value = httpx.Response(
@@ -862,12 +943,22 @@ class TestCheckRunIntegration:
 
         output = create_check_output(findings)
         actions = [
-            {"label": "Re-run Verdity", "description": "Re-run review", "identifier": "rerun-verdity"},
-            {"label": "Dismiss Findings", "description": "Dismiss all", "identifier": "dismiss-findings"},
+            {
+                "label": "Re-run Verdity",
+                "description": "Re-run review",
+                "identifier": "rerun-verdity",
+            },
+            {
+                "label": "Dismiss Findings",
+                "description": "Dismiss all",
+                "identifier": "dismiss-findings",
+            },
         ]
 
         with (
-            patch.object(client, "_get_installation_token", new_callable=AsyncMock, return_value="fake-token"),
+            patch.object(
+                client, "_get_installation_token", new_callable=AsyncMock, return_value="fake-token"
+            ),
             patch("httpx.AsyncClient.request", new_callable=AsyncMock) as mock_request,
         ):
             # First call: create check run
@@ -914,7 +1005,9 @@ class TestCheckRunAdditionalParams:
         client = _make_client()
 
         with (
-            patch.object(client, "_get_installation_token", new_callable=AsyncMock, return_value="fake-token"),
+            patch.object(
+                client, "_get_installation_token", new_callable=AsyncMock, return_value="fake-token"
+            ),
             patch("httpx.AsyncClient.request", new_callable=AsyncMock) as mock_request,
         ):
             mock_request.return_value = httpx.Response(
@@ -948,7 +1041,9 @@ class TestCheckRunAdditionalParams:
         client = _make_client()
 
         with (
-            patch.object(client, "_get_installation_token", new_callable=AsyncMock, return_value="fake-token"),
+            patch.object(
+                client, "_get_installation_token", new_callable=AsyncMock, return_value="fake-token"
+            ),
             patch("httpx.AsyncClient.request", new_callable=AsyncMock) as mock_request,
         ):
             mock_request.return_value = httpx.Response(400, text="Bad Request")
@@ -967,7 +1062,9 @@ class TestCheckRunAdditionalParams:
         client = _make_client()
 
         with (
-            patch.object(client, "_get_installation_token", new_callable=AsyncMock, return_value="fake-token"),
+            patch.object(
+                client, "_get_installation_token", new_callable=AsyncMock, return_value="fake-token"
+            ),
             patch("httpx.AsyncClient.request", new_callable=AsyncMock) as mock_request,
         ):
             mock_request.return_value = httpx.Response(
@@ -998,7 +1095,9 @@ class TestCheckRunAdditionalParams:
         client = _make_client()
 
         with (
-            patch.object(client, "_get_installation_token", new_callable=AsyncMock, return_value="fake-token"),
+            patch.object(
+                client, "_get_installation_token", new_callable=AsyncMock, return_value="fake-token"
+            ),
             patch("httpx.AsyncClient.request", new_callable=AsyncMock) as mock_request,
         ):
             mock_request.return_value = httpx.Response(404, text="Not Found")
@@ -1023,7 +1122,9 @@ class TestClientManagement:
         client = _make_client()
 
         with (
-            patch.object(client, "_get_installation_token", new_callable=AsyncMock, return_value="fake-token"),
+            patch.object(
+                client, "_get_installation_token", new_callable=AsyncMock, return_value="fake-token"
+            ),
             patch("httpx.AsyncClient.request", new_callable=AsyncMock) as mock_request,
         ):
             mock_request.return_value = httpx.Response(200, json={"data": "test"})
@@ -1058,7 +1159,9 @@ class TestClientManagement:
         client = _make_client()
 
         with (
-            patch.object(client, "_get_installation_token", new_callable=AsyncMock, return_value="fake-token"),
+            patch.object(
+                client, "_get_installation_token", new_callable=AsyncMock, return_value="fake-token"
+            ),
             patch("httpx.AsyncClient.request", new_callable=AsyncMock) as mock_request,
         ):
             mock_request.return_value = httpx.Response(200, json={"id": 1})

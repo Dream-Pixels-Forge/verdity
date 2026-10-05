@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
@@ -122,7 +122,9 @@ class RuleSet:
     rules: list[GateRule]
     description: str = ""
 
-    def evaluate(self, finding: Any, context: dict[str, Any] | None = None) -> list[EnforcementDecision]:
+    def evaluate(
+        self, finding: Any, context: dict[str, Any] | None = None
+    ) -> list[EnforcementDecision]:
         """Evaluate all rules in priority order against a finding."""
         # Sort rules by priority
         sorted_rules = sorted(self.rules, key=lambda r: (r.priority, self.rules.index(r)))
@@ -130,9 +132,13 @@ class RuleSet:
 
         # Build finding proxy
         finding_obj = {
-            "severity": finding.severity.value if hasattr(finding.severity, "value") else str(finding.severity),
+            "severity": finding.severity.value
+            if hasattr(finding.severity, "value")
+            else str(finding.severity),
             "confidence": float(finding.confidence),
-            "concern": finding.concern.value if hasattr(finding.concern, "value") else str(finding.concern),
+            "concern": finding.concern.value
+            if hasattr(finding.concern, "value")
+            else str(finding.concern),
             "file": finding.file,
             "line_start": finding.line_start,
             "line_end": finding.line_end,
@@ -209,7 +215,9 @@ class EnforcementEngine:
         """
         return await self.evaluate_with_context(finding, {})
 
-    async def evaluate_with_context(self, finding: Any, variables: dict[str, Any] | None = None) -> EnforcementDecision:
+    async def evaluate_with_context(
+        self, finding: Any, variables: dict[str, Any] | None = None
+    ) -> EnforcementDecision:
         """
         Evaluate a finding against all rules with additional context variables.
 
@@ -222,9 +230,13 @@ class EnforcementEngine:
         """
         # Build context for evaluation
         finding_obj = {
-            "severity": finding.severity.value if hasattr(finding.severity, "value") else str(finding.severity),
+            "severity": finding.severity.value
+            if hasattr(finding.severity, "value")
+            else str(finding.severity),
             "confidence": float(finding.confidence),
-            "concern": finding.concern.value if hasattr(finding.concern, "value") else str(finding.concern),
+            "concern": finding.concern.value
+            if hasattr(finding.concern, "value")
+            else str(finding.concern),
             "file": finding.file,
             "line_start": finding.line_start,
             "line_end": finding.line_end,
@@ -283,4 +295,6 @@ def load_rules_from_yaml(rules_file: str) -> list[GateRule]:
         rules.append(rule)
 
     return rules
+
+
 # clean test

@@ -12,7 +12,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Optional
+from typing import Any
 
 from verdity.coding_agent import ProposedFix
 from verdity.schemas import Finding
@@ -64,7 +64,7 @@ class VerificationGate:
         proposed_fix: ProposedFix,
         original_finding: Finding,
         verifier: VerifierSubagent | None = None,
-        approval_queue: Optional[Any] = None,
+        approval_queue: Any | None = None,
     ) -> GateVerdict:
         verdict = GateVerdict(proposed_fix_id=proposed_fix.finding_id)
 

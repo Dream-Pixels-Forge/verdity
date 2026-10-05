@@ -30,11 +30,20 @@ class Settings(BaseSettings):
     )
 
     # ── GitHub App ───────────────────────────────────────────────────
-    github_app_id: int = Field(..., description="GitHub App numeric ID")
-    github_app_installation_id: str = Field(
-        ..., description="Installation ID for the org/repo target"
+    # Optional when github_token is set: a static token needs no App
+    # credentials. App credentials can only be minted by the org owner, so
+    # requiring them unconditionally blocks contributor/local review runs.
+    github_token: SecretStr | None = Field(
+        default=None,
+        description="Static GitHub token (PAT or `gh auth token`). Bypasses App auth when set.",
     )
-    github_app_private_key: SecretStr = Field(..., description="PEM private key for the GitHub App")
+    github_app_id: int = Field(default=0, description="GitHub App numeric ID")
+    github_app_installation_id: str = Field(
+        default="", description="Installation ID for the org/repo target"
+    )
+    github_app_private_key: SecretStr = Field(
+        default=SecretStr(""), description="PEM private key for the GitHub App"
+    )
 
     # ── Event Queue ──────────────────────────────────────────────────
     # Production: redis:// or similar. Dev: sqlite-backed queue.

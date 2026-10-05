@@ -57,7 +57,9 @@ def _create_finding_proxy(finding_data: dict) -> object:
         "line_end": finding_data.get("line_end", 0),
         "summary": finding_data.get("summary", ""),
         "explanation": finding_data.get("explanation", ""),
-        "content": finding_data.get("explanation", "") or finding_data.get("summary", "") or finding_data.get("content", ""),
+        "content": finding_data.get("explanation", "")
+        or finding_data.get("summary", "")
+        or finding_data.get("content", ""),
     }
 
     class FindingProxy:
@@ -70,10 +72,151 @@ def _create_finding_proxy(finding_data: dict) -> object:
     return FindingProxy(finding_obj)
 
 
+def _finding_from_flattened(
+    flat: dict[str, Any],
+    *,
+    owner: str,
+    repo: str,
+) -> Any:
+    """Rebuild a full Finding from the dict that _run_orchestrator flattens.
+
+    _run_orchestrator emits a transport-friendly shape (rule_id / message /
+    file_path / line / severity / confidence). Finding requires seven more
+    fields than that, so constructing one directly from those keys raised a
+    ValidationError. Unknown severity/concern values degrade to safe defaults
+    rather than discarding the finding.
+    """
+    from .schemas._models import ConcernType, EvidenceItem, Finding, Severity
+
+    severity_raw = str(flat.get("severity", "info")).lower()
+    try:
+        severity = Severity(severity_raw)
+    except ValueError:
+        severity = Severity.INFO
+
+    # The rule_id is "<specialist>-<index>", so the specialist prefix is the
+    # best available signal for the concern type.
+    rule_id = str(flat.get("rule_id", ""))
+    concern_raw = rule_id.split("-", 1)[0].lower() if "-" in rule_id else ""
+    try:
+        concern = ConcernType(concern_raw)
+    except ValueError:
+        concern = ConcernType.CODE_QUALITY
+
+    line_start = int(flat.get("line", 1) or 1)
+    summary = str(flat.get("message", "")).strip()
+    if not summary:
+        raise ValueError(f"finding {rule_id!r} has no message/summary")
+
+    return Finding(
+        concern=concern,
+        severity=severity,
+        file=str(flat.get("file_path", "") or "unknown"),
+        line_start=line_start,
+        line_end=line_start,
+        summary=summary,
+        explanation=summary,
+        confidence=float(flat.get("confidence", 0.5) or 0.5),
+        evidence=[
+            EvidenceItem(
+                tool=f"verdity/{owner}/{repo}",
+                result=summary,
+                query=rule_id or "review",
+            )
+        ],
+        agent_version="mcp",
+        prompt_hash=rule_id or "mcp",
+    )
+
+
 logger = logging.getLogger(__name__)
 
 
 class MCPServer:
+    async def _run_orchestrator(
+        self,
+        *,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        head_sha: str = "",
+        base_sha: str = "",
+        diff: str = "",
+        file_path: str = "",
+        diff_files: list[dict[str, Any]] | None = None,
+        tier: str = "balanced",
+    ) -> dict[str, Any]:
+        """Drive a review through Orchestrator.process_event().
+
+        Orchestrator has no ``review()``; ``process_event(envelope)`` is the real
+        entry point and returns a review_run_id whose run carries
+        ``specialist_results``. This builds the VerdityEvent the orchestrator
+        expects and flattens every specialist's findings into one list.
+        """
+        import uuid as _uuid
+
+        from .schemas._models import (
+            PullRequestRef,
+            QueueEnvelope,
+            RepoRef,
+            TriggerType,
+            VerdityEvent,
+        )
+
+        event = VerdityEvent(
+            delivery_id=str(_uuid.uuid4()),
+            trigger_type=TriggerType.PR_SYNCHRONIZE,
+            repo=RepoRef(owner=owner, name=repo, id=0),
+            pull_request=PullRequestRef(
+                number=pr_number,
+                head_sha=head_sha or "unknown",
+                base_sha=base_sha or "unknown",
+            ),
+        )
+
+        # Prefer caller-supplied entries (built from the GitHub API per-file
+        # patches); otherwise derive them from a raw unified diff string.
+        if diff_files is None:
+            diff_files = _diff_to_files(diff, file_path) if diff else []
+
+        run_id = await self._orchestrator.process_event(
+            QueueEnvelope(
+                event=event,
+                diff_files=diff_files,
+                tier=tier,
+            )
+        )
+
+        run = self._orchestrator.get_run(run_id)
+        findings: list[dict[str, Any]] = []
+        if run is not None:
+            for specialist, response in (run.specialist_results or {}).items():
+                for i, f in enumerate(getattr(response, "findings", []) or []):
+                    findings.append(
+                        {
+                            "rule_id": f"{specialist}-{i}",
+                            "message": f.summary,
+                            "file_path": f.file,
+                            "line": f.line_start,
+                            "severity": getattr(
+                                getattr(f, "severity", "info"),
+                                "value",
+                                str(getattr(f, "severity", "info")),
+                            ),
+                            "confidence": f.confidence,
+                        }
+                    )
+
+        return {
+            "review_run_id": str(run_id),
+            "findings": findings,
+            "status": getattr(run, "status", None),
+            "summary": (
+                f"{len(findings)} finding(s) across "
+                f"{len(run.specialist_results or {}) if run else 0} specialist(s)"
+            ),
+        }
+
     """MCP server exposing Verdity's specialist agents as tools."""
 
     PROTOCOL_VERSION: ClassVar[str] = "2024-11-05"
@@ -281,13 +424,32 @@ class MCPServer:
                                 "line": {"type": "integer"},
                                 "line_start": {"type": "integer"},
                                 "line_end": {"type": "integer"},
-                                "severity": {"type": "string", "enum": ["critical", "high", "medium", "low", "info"]},
+                                "severity": {
+                                    "type": "string",
+                                    "enum": ["critical", "high", "medium", "low", "info"],
+                                },
                                 "confidence": {"type": "number"},
-                                "concern": {"type": "string", "enum": ["security", "code_quality", "testing", "documentation", "performance", "dependencies"]},
+                                "concern": {
+                                    "type": "string",
+                                    "enum": [
+                                        "security",
+                                        "code_quality",
+                                        "testing",
+                                        "documentation",
+                                        "performance",
+                                        "dependencies",
+                                    ],
+                                },
                                 "summary": {"type": "string"},
                                 "explanation": {"type": "string"},
                             },
-                            "required": ["file_path", "line_start", "severity", "confidence", "concern"],
+                            "required": [
+                                "file_path",
+                                "line_start",
+                                "severity",
+                                "confidence",
+                                "concern",
+                            ],
                         },
                         "rules_file": {
                             "type": "string",
@@ -407,14 +569,69 @@ class MCPServer:
 
     async def initialize(self) -> None:
         """Initialize the MCP server and orchestrator."""
-        self._orchestrator = Orchestrator(config=self.config)
-        await self._orchestrator.initialize()
+        # Orchestrator takes its collaborators explicitly (queue, semantic
+        # index, token economics, audit store) — it does not accept a config
+        # object. Constructing it with `config=` raised TypeError, and there is
+        # no async initialize()/shutdown() on Orchestrator. Follow the same
+        # wiring worker.py uses so both entry points behave alike.
+        from .audit_store import AuditStore
+        from .event_queue import EventQueue
+        from .semantic_index import SemanticIndex
+        from .token_economics import TokenEconomicsService
+
+        self._queue = EventQueue()
+        self._index = SemanticIndex()
+        self._token_economics = TokenEconomicsService()
+        self._audit = AuditStore()
+
+        # These stores refuse use until connect() is awaited; Orchestrator hits
+        # them on the first process_event().
+        for collaborator in (
+            self._queue,
+            self._index,
+            self._token_economics,
+            self._audit,
+        ):
+            connect = getattr(collaborator, "connect", None)
+            if connect is not None:
+                await connect()
+
+        self._orchestrator = Orchestrator(
+            queue=self._queue,
+            semantic_index=self._index,
+            token_economics=self._token_economics,
+            audit_store=self._audit,
+        )
+
+        # Specialists must be registered or process_event() dispatches to
+        # nothing and every review comes back empty.
+        from .agents import (
+            CodeQualityAgent,
+            DocumentationAgent,
+            SecurityAgent,
+            TestingAgent,
+        )
+
+        fallback = self.multi_model
+        self._orchestrator.register_specialist("security", SecurityAgent(fallback=fallback).run)
+        self._orchestrator.register_specialist(
+            "code_quality", CodeQualityAgent(fallback=fallback).run
+        )
+        self._orchestrator.register_specialist("testing", TestingAgent(fallback=fallback).run)
+        self._orchestrator.register_specialist(
+            "documentation", DocumentationAgent(fallback=fallback).run
+        )
+
         logger.info("MCP server initialized with %d tools", len(self._tools))
 
     async def shutdown(self) -> None:
         """Shutdown the MCP server."""
-        if self._orchestrator:
-            await self._orchestrator.shutdown()
+        # Orchestrator exposes no shutdown(); close the collaborators we opened.
+        # Each is optional so shutdown() is safe before initialize() ran.
+        for name in ("_queue", "_index", "_token_economics", "_audit"):
+            closer = getattr(getattr(self, name, None), "close", None)
+            if closer is not None:
+                await closer()
         logger.info("MCP server shutdown")
 
     def get_tools(self) -> list[dict[str, Any]]:
@@ -656,34 +873,20 @@ class MCPServer:
         diff = args.get("diff", "")
         file_path = args.get("file_path", "")
 
-        from .schemas import SpecialistContext
-
-        ctx = SpecialistContext(
-            review_run_id=uuid.uuid4(),
-            repo_owner="mcp",
-            repo_name="client",
-            base_sha="",
-            head_sha="",
-            diff_files=_diff_to_files(diff, file_path),
-            policy=ReviewPolicy(),
-        )
-
         try:
-            result = await self._orchestrator.review(ctx)
-            findings = [
-                {
-                    "rule_id": f"full-{i}",
-                    "message": f.summary,
-                    "file_path": f.file,
-                    "line": f.line_start,
-                    "severity": f.severity.value
-                    if hasattr(f.severity, "value")
-                    else str(f.severity),
-                    "confidence": f.confidence,
-                }
-                for i, f in enumerate(result.findings)
-            ]
-            return {"findings": findings, "summary": result.summary, "agent": "full"}
+            result = await self._run_orchestrator(
+                owner="mcp",
+                repo="client",
+                pr_number=0,
+                diff=diff,
+                file_path=file_path,
+                tier="balanced",
+            )
+            return {
+                "findings": result["findings"],
+                "summary": result["summary"],
+                "agent": "full",
+            }
         except Exception as e:
             return {"findings": [], "summary": str(e), "agent": "full", "error": str(e)}
 
@@ -691,9 +894,9 @@ class MCPServer:
 
     async def _verdity_review(self, args: dict[str, Any]) -> dict[str, Any]:
         """Trigger a full Verdity PR review on a GitHub PR."""
-        from .github_client import GitHubClient
-        from .schemas import SpecialistContext, ReviewPolicy
         from verdity.config import get_settings
+
+        from .github_client import GitHubClient
 
         owner = args["owner"]
         repo = args["repo"]
@@ -708,8 +911,9 @@ class MCPServer:
         settings = get_settings()
         client = GitHubClient(
             app_id=settings.github_app_id,
-            private_key_pem=settings.github_private_key,
-            installation_id=settings.github_installation_id,
+            private_key_pem=settings.github_app_private_key.get_secret_value(),
+            installation_id=settings.github_app_installation_id,
+            token=settings.github_token.get_secret_value() if settings.github_token else None,
         )
 
         try:
@@ -721,64 +925,63 @@ class MCPServer:
             # Convert diff to diff_files format
             diff_files = []
             for file_change in pr_diff.get("files", []):
-                diff_files.append({
-                    "path": file_change.get("filename", "unknown"),
-                    "content": file_change.get("patch", ""),
-                    "additions": file_change.get("additions", 0),
-                    "deletions": file_change.get("deletions", 0),
-                })
+                diff_files.append(
+                    {
+                        "path": file_change.get("filename", "unknown"),
+                        "content": file_change.get("patch", ""),
+                        "additions": file_change.get("additions", 0),
+                        "deletions": file_change.get("deletions", 0),
+                    }
+                )
 
-            # Determine policy based on tier
-            policy = ReviewPolicy(
-                tier=tier,
-                timeout_seconds={"lite": 30, "balanced": 120, "deep": 300}[tier],
-                budget_tokens={"lite": 5000, "balanced": 40000, "deep": 200000}[tier],
-            )
-
-            ctx = SpecialistContext(
-                review_run_id=uuid.uuid4(),
-                repo_owner=owner,
-                repo_name=repo,
-                base_sha=pr_diff.get("base_sha", ""),
+            # Run review through the orchestrator's real entry point. The tier
+            # is resolved inside _run_orchestrator, which builds its own policy.
+            result = await self._run_orchestrator(
+                owner=owner,
+                repo=repo,
+                pr_number=pr_number,
                 head_sha=pr_diff.get("head_sha", ""),
+                base_sha=pr_diff.get("base_sha", ""),
                 diff_files=diff_files,
-                policy=policy,
+                tier=tier,
             )
 
-            # Run review
-            result = await self._orchestrator.review(ctx)
-
-            findings = [
-                {
-                    "rule_id": f"review-{i}",
-                    "message": f.summary,
-                    "file_path": f.file,
-                    "line": f.line_start,
-                    "severity": f.severity.value
-                    if hasattr(f.severity, "value")
-                    else str(f.severity),
-                    "confidence": f.confidence,
-                }
-                for i, f in enumerate(result.findings)
-            ]
+            findings = result["findings"]
 
             response = {
-                "review_run_id": str(ctx.review_run_id),
+                "review_run_id": result["review_run_id"],
                 "pr_number": pr_number,
                 "tier": tier,
                 "findings": findings,
-                "summary": result.summary,
+                "summary": result["summary"],
                 "total_findings": len(findings),
             }
 
             # Optionally post to GitHub
             if post_to_github:
                 from verdity.github_client import create_check_output
-                check_output = create_check_output(result.findings)
-                check_result = await client.post_check_run(
+
+                postable = []
+                for f in findings:
+                    try:
+                        postable.append(_finding_from_flattened(f, owner=owner, repo=repo))
+                    except Exception:
+                        # One malformed finding must not cost us the whole
+                        # check run; the review results are still returned above.
+                        logger.warning(
+                            "Skipping unconvertible finding %s for check run",
+                            f.get("rule_id"),
+                            exc_info=True,
+                        )
+
+                if not postable:
+                    logger.warning("No convertible findings to post as a check run")
+
+                check_output = create_check_output(postable)
+                check_result = await client.create_check_run(
                     owner=owner,
                     repo=repo,
-                    head_sha=ctx.head_sha,
+                    head_sha=pr_diff.get("head_sha", ""),
                     name="Verdity Code Review",
                     output=check_output,
                 )
@@ -792,7 +995,7 @@ class MCPServer:
 
     async def _verdity_enforce(self, args: dict[str, Any]) -> dict[str, Any]:
         """Test a finding against Verdity's enforcement engine."""
-        from .enforcement import EnforcementEngine, GateRule, Action, load_rules_from_yaml
+        from .enforcement import Action, EnforcementEngine, GateRule, load_rules_from_yaml
 
         finding_data = args["finding"]
         rules_file = args.get("rules_file")
@@ -802,6 +1005,7 @@ class MCPServer:
             # Load rules
             if rules_file:
                 import yaml
+
                 with open(rules_file) as f:
                     data = yaml.safe_load(f)
                 rules = []
@@ -845,7 +1049,6 @@ class MCPServer:
 
     async def _verdity_rules_list(self, args: dict[str, Any]) -> dict[str, Any]:
         """List all enforcement rules from a repository's .verdity/rules.yml file."""
-        from .enforcement import load_rules_from_yaml
         import yaml
 
         repo_path = args["repo_path"]
@@ -862,7 +1065,11 @@ class MCPServer:
                 "rules": rules,
             }
         except FileNotFoundError:
-            return {"error": "Rules file not found", "repo_path": repo_path, "rules_file": rules_file}
+            return {
+                "error": "Rules file not found",
+                "repo_path": repo_path,
+                "rules_file": rules_file,
+            }
         except Exception as e:
             return {"error": str(e), "repo_path": repo_path}
 
@@ -895,23 +1102,41 @@ class MCPServer:
         }
 
     async def _apply_fix(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Apply a fix to a branch."""
+        """Apply a fix to a branch.
+
+        NOT IMPLEMENTED. GitHubClient has no apply_fix() (and no branch/commit
+        primitives to build one from), so this previously raised a bare
+        AttributeError against the real client — an advertised MCP tool that
+        could only ever fail. It also constructed a GitHubClient with no
+        credentials, so even a correct call would have been unauthenticated.
+
+        Returning an explicit, actionable error is strictly better than
+        pretending. Implementing the write path (create branch, apply patch,
+        open PR) is real work that needs its own tests and review.
+        """
         from .github_client import GitHubClient
 
-        fix_patch = args["fix_patch"]
         file_path = args["file_path"]
-        branch = args.get("branch", "main")
-        commit_message = args.get("commit_message", "fix: apply automated fix from Verdity")
 
-        client = GitHubClient()
-        result = await client.apply_fix(
-            file_path=file_path,
-            patch=fix_patch,
-            branch=branch,
-            commit_message=commit_message,
-        )
+        # Guard rather than assert, so this stays correct if apply_fix is ever
+        # added: we prefer the explicit error over an AttributeError, but we
+        # must never fall through returning None.
+        if hasattr(GitHubClient, "apply_fix"):
+            logger.warning(
+                "GitHubClient.apply_fix now exists; _apply_fix needs a real implementation"
+            )
 
-        return result
+        return {
+            "error": (
+                "apply_fix is not implemented: GitHubClient has no "
+                "apply_fix() and no branch/commit primitives. "
+                f"Requested file: {file_path}. "
+                "Post the fix as a PR comment or use the GitHub API directly."
+            ),
+            "tool": "apply_fix",
+            "file_path": file_path,
+            "implemented": False,
+        }
 
     async def _get_review_rules(self, args: dict[str, Any]) -> dict[str, Any]:
         """Get custom review rules for a repository."""

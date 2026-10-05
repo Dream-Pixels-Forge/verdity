@@ -20,11 +20,14 @@ import logging
 import signal
 import time
 from contextlib import suppress
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self
 
 from verdity.event_queue import EventQueue
 from verdity.orchestrator import Orchestrator
 from verdity.schemas import QueueEnvelope
+
+if TYPE_CHECKING:  # pragma: no cover - import for type checkers only
+    from verdity.approval_queue import ApprovalQueueStore
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +56,7 @@ class Worker:
         backoff_max: float = _MAX_BACKOFF,
         backoff_factor: float = _BACKOFF_FACTOR,
         sla_check_interval: float = 3600.0,  # 1 hour
-        approval_queue: "ApprovalQueueStore | None" = None,
+        approval_queue: ApprovalQueueStore | None = None,
     ) -> None:
         self._queue = queue
         self._orchestrator = orchestrator
@@ -178,10 +181,8 @@ class Worker:
         # Cancel SLA escalation task
         if self._sla_task:
             self._sla_task.cancel()
-            try:
+            with suppress(asyncio.CancelledError):
                 await self._sla_task
-            except asyncio.CancelledError:
-                pass
         if self._tasks:
             logger.info("Waiting for %d in-flight tasks…", len(self._tasks))
             await asyncio.gather(*self._tasks, return_exceptions=True)

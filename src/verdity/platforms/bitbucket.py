@@ -172,6 +172,7 @@ class BitbucketPlatform(Platform):
 
         # Parse and normalize
         import json
+
         try:
             payload = json.loads(raw_body)
         except json.JSONDecodeError as exc:
@@ -337,6 +338,7 @@ class BitbucketPlatform(Platform):
             File content as string
         """
         import urllib.parse
+
         encoded_path = urllib.parse.quote(file_path, safe="")
         url = f"https://api.bitbucket.org/2.0/repositories/{workspace}/{repo_slug}/src/{commit}/{encoded_path}"
         async with self._get_client() as client:

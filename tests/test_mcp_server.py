@@ -1,11 +1,31 @@
 """Tests for MCP Server module."""
 
+import uuid
 from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 
 import pytest
 import yaml
 
+import verdity.github_client
+import verdity.mcp_server
 from verdity.mcp_server import MCPServer, create_mcp_server
+
+
+def _mock_orchestrator_review(mock_orchestrator, mock_result):
+    """Point a mocked Orchestrator at its REAL review entry point.
+
+    Orchestrator exposes process_event(envelope) -> review_run_id and
+    get_run(id) -> run with .specialist_results. There is no review().
+    Mocking review() made these tests assert against a method that does not
+    exist, which is how the unwired MCP path survived.
+    """
+    import uuid as _uuid
+
+    run = MagicMock()
+    run.specialist_results = {"security": mock_result}
+    mock_orchestrator.process_event = AsyncMock(return_value=_uuid.uuid4())
+    mock_orchestrator.get_run = MagicMock(return_value=run)
+    return mock_orchestrator
 
 
 class TestMCPServer:
@@ -126,7 +146,7 @@ class TestMCPServer:
             mock_result = MagicMock()
             mock_result.findings = []
             mock_result.summary = "No findings"
-            mock_orchestrator.review = AsyncMock(return_value=mock_result)
+            _mock_orchestrator_review(mock_orchestrator, mock_result)
 
             result = await server.call_tool(
                 "review_full", {"diff": "test diff", "file_path": "test.py"}
@@ -236,7 +256,9 @@ class TestMCPServerErrorPaths:
         """Test _review_full handles orchestrator exceptions."""
         server = MCPServer()
         with patch.object(server, "_orchestrator") as mock_orchestrator:
-            mock_orchestrator.review = AsyncMock(side_effect=Exception("Orchestrator failed"))
+            mock_orchestrator.process_event = AsyncMock(
+                side_effect=Exception("Orchestrator failed")
+            )
 
             result = await server.call_tool(
                 "review_full", {"diff": "test diff", "file_path": "test.py"}
@@ -246,26 +268,20 @@ class TestMCPServerErrorPaths:
             assert result["agent"] == "full"
 
     @pytest.mark.asyncio
-    async def test_call_tool_apply_fix_exception(self):
-        """Test call_tool catches exceptions from _apply_fix."""
+    async def test_call_tool_apply_fix_reports_unimplemented(self):
+        """call_tool surfaces the not-implemented status for apply_fix."""
         server = MCPServer()
-        with patch("verdity.github_client.GitHubClient", side_effect=Exception("GitHub init failed")):
-            result = await server.call_tool(
-                "apply_fix",
-                {"fix_patch": "patch", "file_path": "test.py"}
-            )
-            assert "error" in result
-            assert "GitHub init failed" in result["error"]
-            assert result["tool"] == "apply_fix"
+        result = await server.call_tool("apply_fix", {"fix_patch": "patch", "file_path": "test.py"})
+        assert "error" in result
+        assert result["implemented"] is False
+        assert result["tool"] == "apply_fix"
 
     @pytest.mark.asyncio
     async def test_call_tool_get_review_rules_exception(self):
         """Test call_tool catches exceptions from _get_review_rules."""
         server = MCPServer()
         with patch("verdity.review_rules.ReviewRules", side_effect=Exception("Rules init failed")):
-            result = await server.call_tool(
-                "get_review_rules", {"repo_path": "/test/repo"}
-            )
+            result = await server.call_tool("get_review_rules", {"repo_path": "/test/repo"})
             assert "error" in result
             assert "Rules init failed" in result["error"]
             assert result["tool"] == "get_review_rules"
@@ -277,20 +293,27 @@ class TestDiffToFiles:
     def test_diff_to_files_empty_diff(self):
         """Test _diff_to_files with empty diff (line 43)."""
         from verdity.mcp_server import _diff_to_files
+
         result = _diff_to_files("")
         assert result == []
 
     def test_diff_to_files_with_file_path(self):
         """Test _diff_to_files with file_path (line 44-45)."""
         from verdity.mcp_server import _diff_to_files
+
         result = _diff_to_files("test diff", "test.py")
-        assert result == [{"path": "test.py", "content": "test diff", "additions": "test diff", "deletions": ""}]
+        assert result == [
+            {"path": "test.py", "content": "test diff", "additions": "test diff", "deletions": ""}
+        ]
 
     def test_diff_to_files_without_file_path(self):
         """Test _diff_to_files without file_path (line 46)."""
         from verdity.mcp_server import _diff_to_files
+
         result = _diff_to_files("test diff")
-        assert result == [{"path": "unknown", "content": "test diff", "additions": "test diff", "deletions": ""}]
+        assert result == [
+            {"path": "unknown", "content": "test diff", "additions": "test diff", "deletions": ""}
+        ]
 
 
 class TestCallToolFallback:
@@ -302,7 +325,9 @@ class TestCallToolFallback:
         server = MCPServer()
         # Add a fake tool to the tools list but don't implement handler
         original_tools = server._tools
-        server._tools = original_tools + [{"name": "fake_tool", "description": "Fake", "inputSchema": {}}]
+        server._tools = original_tools + [
+            {"name": "fake_tool", "description": "Fake", "inputSchema": {}}
+        ]
 
         try:
             result = await server.call_tool("fake_tool", {})
@@ -321,25 +346,37 @@ class TestMCPServerInitialize:
         server = MCPServer()
         # Mock the Orchestrator to avoid the config bug
         with patch("verdity.mcp_server.Orchestrator") as mock_orchestrator_class:
-            mock_orchestrator = AsyncMock()
+            mock_orchestrator = MagicMock()
             mock_orchestrator_class.return_value = mock_orchestrator
 
             await server.initialize()
 
             mock_orchestrator_class.assert_called_once()
-            mock_orchestrator.initialize.assert_called_once()
+            # Orchestrator exposes no async initialize(); construction is the
+            # initialization step, and collaborators are passed explicitly.
+            _, kwargs = mock_orchestrator_class.call_args
+            assert set(kwargs) >= {
+                "queue",
+                "semantic_index",
+                "token_economics",
+                "audit_store",
+            }
             assert server._orchestrator is mock_orchestrator
 
     @pytest.mark.asyncio
-    async def test_shutdown_calls_orchestrator_shutdown(self):
-        """Test shutdown calls orchestrator shutdown."""
+    async def test_shutdown_closes_collaborators(self):
+        """Test shutdown closes the collaborators it opened.
+
+        Orchestrator exposes no shutdown() method, so shutdown() closes the
+        queue/index/economics/audit collaborators instead.
+        """
         server = MCPServer()
-        mock_orchestrator = AsyncMock()
-        server._orchestrator = mock_orchestrator
+        await server.initialize()
+        server._audit = AsyncMock()
 
         await server.shutdown()
 
-        mock_orchestrator.shutdown.assert_called_once()
+        server._audit.close.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_shutdown_handles_none_orchestrator(self):
@@ -361,11 +398,11 @@ class TestReviewFullInitialize:
         server._orchestrator = None
 
         with patch("verdity.mcp_server.Orchestrator") as mock_orchestrator_class:
-            mock_orchestrator = AsyncMock()
+            mock_orchestrator = MagicMock()
             mock_result = MagicMock()
             mock_result.findings = []
             mock_result.summary = "No findings"
-            mock_orchestrator.review = AsyncMock(return_value=mock_result)
+            _mock_orchestrator_review(mock_orchestrator, mock_result)
             mock_orchestrator_class.return_value = mock_orchestrator
 
             result = await server.call_tool(
@@ -373,7 +410,10 @@ class TestReviewFullInitialize:
             )
 
             mock_orchestrator_class.assert_called_once()
-            mock_orchestrator.initialize.assert_called_once()
+            # Orchestrator has no async initialize(); collaborators are passed
+            # to the constructor, which is what initializes it.
+            _, init_kwargs = mock_orchestrator_class.call_args
+            assert "queue" in init_kwargs and "audit_store" in init_kwargs
             assert "findings" in result
 
 
@@ -386,10 +426,11 @@ class TestVerdityReviewInitialize:
         server = MCPServer()
         server._orchestrator = None
 
-        with patch("verdity.github_client.GitHubClient") as mock_github_client, \
-             patch("verdity.config.get_settings") as mock_get_settings, \
-             patch("verdity.mcp_server.Orchestrator") as mock_orchestrator_class:
-
+        with (
+            patch("verdity.github_client.GitHubClient") as mock_github_client,
+            patch("verdity.config.get_settings") as mock_get_settings,
+            patch("verdity.mcp_server.Orchestrator") as mock_orchestrator_class,
+        ):
             mock_settings = MagicMock()
             mock_settings.github_app_id = "123"
             mock_settings.github_private_key = "key"
@@ -404,20 +445,22 @@ class TestVerdityReviewInitialize:
             }
             mock_github_client.return_value = mock_client
 
-            mock_orchestrator = AsyncMock()
+            mock_orchestrator = MagicMock()
             mock_result = MagicMock()
             mock_result.findings = []
             mock_result.summary = "No findings"
-            mock_orchestrator.review = AsyncMock(return_value=mock_result)
+            _mock_orchestrator_review(mock_orchestrator, mock_result)
             mock_orchestrator_class.return_value = mock_orchestrator
 
             result = await server.call_tool(
-                "verdity_review",
-                {"owner": "testorg", "repo": "testrepo", "pr_number": 42}
+                "verdity_review", {"owner": "testorg", "repo": "testrepo", "pr_number": 42}
             )
 
             mock_orchestrator_class.assert_called_once()
-            mock_orchestrator.initialize.assert_called_once()
+            # Orchestrator has no async initialize(); collaborators are passed
+            # to the constructor, which is what initializes it.
+            _, init_kwargs = mock_orchestrator_class.call_args
+            assert "queue" in init_kwargs and "audit_store" in init_kwargs
             assert "review_run_id" in result
 
 
@@ -428,10 +471,11 @@ class TestVerdityReview:
     async def test_verdity_review_basic(self):
         """Test basic verdity_review with PR diff."""
         server = MCPServer()
-        with patch("verdity.github_client.GitHubClient") as mock_github_client, \
-             patch("verdity.config.get_settings") as mock_get_settings, \
-             patch.object(server, "_orchestrator") as mock_orchestrator:
-
+        with (
+            patch("verdity.github_client.GitHubClient") as mock_github_client,
+            patch("verdity.config.get_settings") as mock_get_settings,
+            patch.object(server, "_orchestrator") as mock_orchestrator,
+        ):
             # Mock settings
             mock_settings = MagicMock()
             mock_settings.github_app_id = "123"
@@ -443,7 +487,12 @@ class TestVerdityReview:
             mock_client = AsyncMock()
             mock_client.get_pr_diff.return_value = {
                 "files": [
-                    {"filename": "test.py", "patch": "@@ -1 +1 @@\n-old\n+new", "additions": 1, "deletions": 1}
+                    {
+                        "filename": "test.py",
+                        "patch": "@@ -1 +1 @@\n-old\n+new",
+                        "additions": 1,
+                        "deletions": 1,
+                    }
                 ],
                 "base_sha": "abc123",
                 "head_sha": "def456",
@@ -454,11 +503,11 @@ class TestVerdityReview:
             mock_result = MagicMock()
             mock_result.findings = []
             mock_result.summary = "No findings"
-            mock_orchestrator.review = AsyncMock(return_value=mock_result)
+            _mock_orchestrator_review(mock_orchestrator, mock_result)
 
             result = await server.call_tool(
                 "verdity_review",
-                {"owner": "testorg", "repo": "testrepo", "pr_number": 42, "tier": "balanced"}
+                {"owner": "testorg", "repo": "testrepo", "pr_number": 42, "tier": "balanced"},
             )
 
             assert "review_run_id" in result
@@ -471,10 +520,11 @@ class TestVerdityReview:
     async def test_verdity_review_pr_not_found(self):
         """Test verdity_review when PR diff fetch returns None (404)."""
         server = MCPServer()
-        with patch("verdity.github_client.GitHubClient") as mock_github_client, \
-             patch("verdity.config.get_settings") as mock_get_settings, \
-             patch.object(server, "_orchestrator") as mock_orchestrator:
-
+        with (
+            patch("verdity.github_client.GitHubClient") as mock_github_client,
+            patch("verdity.config.get_settings") as mock_get_settings,
+            patch.object(server, "_orchestrator") as mock_orchestrator,
+        ):
             mock_settings = MagicMock()
             mock_settings.github_app_id = "123"
             mock_settings.github_private_key = "key"
@@ -489,11 +539,10 @@ class TestVerdityReview:
             mock_result = MagicMock()
             mock_result.findings = []
             mock_result.summary = "No findings"
-            mock_orchestrator.review = AsyncMock(return_value=mock_result)
+            _mock_orchestrator_review(mock_orchestrator, mock_result)
 
             result = await server.call_tool(
-                "verdity_review",
-                {"owner": "testorg", "repo": "testrepo", "pr_number": 999}
+                "verdity_review", {"owner": "testorg", "repo": "testrepo", "pr_number": 999}
             )
 
             assert "error" in result
@@ -504,10 +553,11 @@ class TestVerdityReview:
     async def test_verdity_review_empty_diff(self):
         """Test verdity_review with empty diff files."""
         server = MCPServer()
-        with patch("verdity.github_client.GitHubClient") as mock_github_client, \
-             patch("verdity.config.get_settings") as mock_get_settings, \
-             patch.object(server, "_orchestrator") as mock_orchestrator:
-
+        with (
+            patch("verdity.github_client.GitHubClient") as mock_github_client,
+            patch("verdity.config.get_settings") as mock_get_settings,
+            patch.object(server, "_orchestrator") as mock_orchestrator,
+        ):
             mock_settings = MagicMock()
             mock_settings.github_app_id = "123"
             mock_settings.github_private_key = "key"
@@ -525,11 +575,10 @@ class TestVerdityReview:
             mock_result = MagicMock()
             mock_result.findings = []
             mock_result.summary = "No findings"
-            mock_orchestrator.review = AsyncMock(return_value=mock_result)
+            _mock_orchestrator_review(mock_orchestrator, mock_result)
 
             result = await server.call_tool(
-                "verdity_review",
-                {"owner": "testorg", "repo": "testrepo", "pr_number": 42}
+                "verdity_review", {"owner": "testorg", "repo": "testrepo", "pr_number": 42}
             )
 
             assert result["total_findings"] == 0
@@ -538,10 +587,11 @@ class TestVerdityReview:
     async def test_verdity_review_tier_selection(self):
         """Test verdity_review tier selection logic (lite, balanced, deep)."""
         server = MCPServer()
-        with patch("verdity.github_client.GitHubClient") as mock_github_client, \
-             patch("verdity.config.get_settings") as mock_get_settings, \
-             patch.object(server, "_orchestrator") as mock_orchestrator:
-
+        with (
+            patch("verdity.github_client.GitHubClient") as mock_github_client,
+            patch("verdity.config.get_settings") as mock_get_settings,
+            patch.object(server, "_orchestrator") as mock_orchestrator,
+        ):
             mock_settings = MagicMock()
             mock_settings.github_app_id = "123"
             mock_settings.github_private_key = "key"
@@ -559,38 +609,42 @@ class TestVerdityReview:
             mock_result = MagicMock()
             mock_result.findings = []
             mock_result.summary = "No findings"
-            mock_orchestrator.review = AsyncMock(return_value=mock_result)
+            _mock_orchestrator_review(mock_orchestrator, mock_result)
 
             # Test lite tier
             result_lite = await server.call_tool(
                 "verdity_review",
-                {"owner": "testorg", "repo": "testrepo", "pr_number": 42, "tier": "lite"}
+                {"owner": "testorg", "repo": "testrepo", "pr_number": 42, "tier": "lite"},
             )
             assert result_lite["tier"] == "lite"
 
             # Test deep tier
             result_deep = await server.call_tool(
                 "verdity_review",
-                {"owner": "testorg", "repo": "testrepo", "pr_number": 42, "tier": "deep"}
+                {"owner": "testorg", "repo": "testrepo", "pr_number": 42, "tier": "deep"},
             )
             assert result_deep["tier"] == "deep"
 
-            # Verify policy was created with correct tier settings
-            call_args = mock_orchestrator.review.call_args
-            ctx = call_args[0][0]
-            assert ctx.policy.tier == "deep"
-            assert ctx.policy.timeout_seconds == 300
-            assert ctx.policy.budget_tokens == 200000
+            # The orchestrator derives its ReviewPolicy from the event (PR diff
+            # size via resolve_policy), not from a caller-supplied tier — there
+            # is no SpecialistContext to pass a policy through process_event().
+            # So assert the requested tier is echoed back and a real event was
+            # dispatched, rather than asserting a policy we cannot set.
+            call_args = mock_orchestrator.process_event.call_args
+            envelope = call_args[0][0]
+            assert envelope.event.pull_request.number == 42
+            assert result_deep["tier"] == "deep"
 
     @pytest.mark.asyncio
     async def test_verdity_review_post_to_github(self):
         """Test verdity_review with post_to_github=True."""
         server = MCPServer()
-        with patch("verdity.github_client.GitHubClient") as mock_github_client, \
-             patch("verdity.config.get_settings") as mock_get_settings, \
-             patch("verdity.github_client.create_check_output") as mock_create_check, \
-             patch.object(server, "_orchestrator") as mock_orchestrator:
-
+        with (
+            patch("verdity.github_client.GitHubClient") as mock_github_client,
+            patch("verdity.config.get_settings") as mock_get_settings,
+            patch("verdity.github_client.create_check_output") as mock_create_check,
+            patch.object(server, "_orchestrator") as mock_orchestrator,
+        ):
             mock_settings = MagicMock()
             mock_settings.github_app_id = "123"
             mock_settings.github_private_key = "key"
@@ -603,7 +657,7 @@ class TestVerdityReview:
                 "base_sha": "abc123",
                 "head_sha": "def456",
             }
-            mock_client.post_check_run.return_value = {"id": 123, "status": "completed"}
+            mock_client.create_check_run.return_value = {"id": 123, "status": "completed"}
             mock_github_client.return_value = mock_client
 
             mock_create_check.return_value = {"title": "Verdity", "summary": "Done"}
@@ -611,25 +665,170 @@ class TestVerdityReview:
             mock_result = MagicMock()
             mock_result.findings = []
             mock_result.summary = "No findings"
-            mock_orchestrator.review = AsyncMock(return_value=mock_result)
+            _mock_orchestrator_review(mock_orchestrator, mock_result)
 
             result = await server.call_tool(
                 "verdity_review",
-                {"owner": "testorg", "repo": "testrepo", "pr_number": 42, "post_to_github": True}
+                {"owner": "testorg", "repo": "testrepo", "pr_number": 42, "post_to_github": True},
             )
 
             assert "github_check" in result
             assert result["github_check"]["id"] == 123
-            mock_client.post_check_run.assert_called_once()
+            mock_client.create_check_run.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_verdity_review_post_to_github_with_real_findings(self):
+        """Posting a check run must work when findings are actually present.
+
+        The existing post_to_github test used an empty findings list, so the
+        list comprehension that rebuilds Finding objects never ran. With real
+        findings it raised a 7-field ValidationError, which meant
+        `review run` failed on its default path (--post-comment defaults on).
+        """
+        from verdity.schemas import Severity
+        from verdity.schemas._models import Finding
+
+        server = MCPServer()
+        with (
+            patch("verdity.github_client.GitHubClient") as mock_github_client,
+            patch("verdity.config.get_settings") as mock_get_settings,
+            patch.object(server, "_orchestrator") as mock_orchestrator,
+        ):
+            mock_settings = MagicMock()
+            mock_settings.github_app_id = "123"
+            mock_settings.github_private_key = "key"
+            mock_settings.github_installation_id = "456"
+            mock_get_settings.return_value = mock_settings
+
+            mock_client = AsyncMock()
+            mock_client.get_pr_diff.return_value = {
+                "files": [{"filename": "test.py", "patch": "diff", "additions": 1, "deletions": 0}],
+                "base_sha": "abc123",
+                "head_sha": "def456",
+            }
+            mock_client.create_check_run.return_value = {"id": 123, "status": "completed"}
+            mock_github_client.return_value = mock_client
+
+            mock_result = MagicMock()
+            mock_result.summary = "1 issue"
+            mock_result.findings = [
+                Finding(
+                    concern="security",
+                    severity=Severity.HIGH,
+                    file="test.py",
+                    line_start=26,
+                    line_end=26,
+                    summary="Path Traversal in updater",
+                    explanation="tar member escapes the extraction dir",
+                    confidence=0.9,
+                    agent_version="v1",
+                    prompt_hash="abc",
+                )
+            ]
+            _mock_orchestrator_review(mock_orchestrator, mock_result)
+
+            result = await server.call_tool(
+                "verdity_review",
+                {
+                    "owner": "testorg",
+                    "repo": "testrepo",
+                    "pr_number": 42,
+                    "post_to_github": True,
+                },
+            )
+
+            assert "error" not in result, result.get("error")
+            assert result["total_findings"] == 1
+            assert "github_check" in result
+            # The check run must carry the finding, not an empty list.
+            posted = mock_client.create_check_run.call_args.kwargs["output"]
+            assert posted["annotations"], "check run lost the finding"
+
+    @pytest.mark.asyncio
+    async def test_verdity_review_skips_unconvertible_finding(self):
+        """One malformed finding must not cost the whole check run."""
+        server = MCPServer()
+        with (
+            patch("verdity.github_client.GitHubClient") as mock_github_client,
+            patch("verdity.config.get_settings") as mock_get_settings,
+            patch.object(server, "_orchestrator") as mock_orchestrator,
+        ):
+            mock_settings = MagicMock()
+            mock_settings.github_app_id = "123"
+            mock_settings.github_private_key = "key"
+            mock_settings.github_installation_id = "456"
+            mock_get_settings.return_value = mock_settings
+
+            mock_client = AsyncMock()
+            mock_client.get_pr_diff.return_value = {
+                "files": [{"filename": "t.py", "patch": "d", "additions": 1, "deletions": 0}],
+                "base_sha": "abc123",
+                "head_sha": "def456",
+            }
+            mock_client.create_check_run.return_value = {"id": 1}
+            mock_github_client.return_value = mock_client
+
+            from verdity.schemas import Severity
+            from verdity.schemas._models import Finding
+
+            # Two specialists: one whose finding cannot be converted (blank
+            # message) and one that is fine.
+            bad_finding = MagicMock()
+            bad_finding.summary = ""
+            bad_finding.file = "t.py"
+            bad_finding.line_start = 1
+            bad_finding.severity = Severity.LOW
+            bad_finding.confidence = 0.1
+            bad_specialist = MagicMock()
+            bad_specialist.findings = [bad_finding]
+
+            good_finding = Finding(
+                concern="security",
+                severity=Severity.HIGH,
+                file="t.py",
+                line_start=5,
+                line_end=5,
+                summary="Path traversal",
+                explanation="x",
+                confidence=0.8,
+                agent_version="v1",
+                prompt_hash="h",
+            )
+            good_specialist = MagicMock()
+            good_specialist.findings = [good_finding]
+
+            run = MagicMock()
+            run.specialist_results = {
+                "unknownspecialist": bad_specialist,
+                "security": good_specialist,
+            }
+            mock_orchestrator.process_event = AsyncMock(return_value=uuid.uuid4())
+            mock_orchestrator.get_run = MagicMock(return_value=run)
+
+            result = await server.call_tool(
+                "verdity_review",
+                {
+                    "owner": "testorg",
+                    "repo": "testrepo",
+                    "pr_number": 42,
+                    "post_to_github": True,
+                },
+            )
+
+            assert "error" not in result, result.get("error")
+            posted = mock_client.create_check_run.call_args.kwargs["output"]
+            # Only the good finding survives, and the check run still posts.
+            assert len(posted["annotations"]) == 1
 
     @pytest.mark.asyncio
     async def test_verdity_review_exception_handling(self):
         """Test verdity_review handles exceptions gracefully."""
         server = MCPServer()
-        with patch("verdity.github_client.GitHubClient") as mock_github_client, \
-             patch("verdity.config.get_settings") as mock_get_settings, \
-             patch.object(server, "_orchestrator") as mock_orchestrator:
-
+        with (
+            patch("verdity.github_client.GitHubClient") as mock_github_client,
+            patch("verdity.config.get_settings") as mock_get_settings,
+            patch.object(server, "_orchestrator") as mock_orchestrator,
+        ):
             mock_settings = MagicMock()
             mock_settings.github_app_id = "123"
             mock_settings.github_private_key = "key"
@@ -644,11 +843,10 @@ class TestVerdityReview:
             mock_result = MagicMock()
             mock_result.findings = []
             mock_result.summary = "No findings"
-            mock_orchestrator.review = AsyncMock(return_value=mock_result)
+            _mock_orchestrator_review(mock_orchestrator, mock_result)
 
             result = await server.call_tool(
-                "verdity_review",
-                {"owner": "testorg", "repo": "testrepo", "pr_number": 42}
+                "verdity_review", {"owner": "testorg", "repo": "testrepo", "pr_number": 42}
             )
 
             assert "error" in result
@@ -684,8 +882,8 @@ rules:
                         "summary": "Test finding",
                         "explanation": "Details",
                     },
-                    "rules_file": "/custom/rules.yml"
-                }
+                    "rules_file": "/custom/rules.yml",
+                },
             )
 
             assert "action" in result
@@ -705,11 +903,10 @@ rules:
 
             with patch("verdity.enforcement.EnforcementEngine") as mock_engine_class:
                 from verdity.enforcement import EnforcementDecision
+
                 mock_engine = AsyncMock()
                 mock_decision = EnforcementDecision(
-                    action="require_approval",
-                    rule_id="default-rule",
-                    message="Requires approval"
+                    action="require_approval", rule_id="default-rule", message="Requires approval"
                 )
                 mock_engine.evaluate_with_context.return_value = mock_decision
                 mock_engine_class.return_value = mock_engine
@@ -725,7 +922,7 @@ rules:
                             "concern": "security",
                             "summary": "Test finding",
                         }
-                    }
+                    },
                 )
 
                 assert result["action"] == "REQUIRE_APPROVAL"
@@ -738,6 +935,7 @@ rules:
         with patch("verdity.enforcement.load_rules_from_yaml", side_effect=FileNotFoundError()):
             with patch("verdity.enforcement.EnforcementEngine") as mock_engine_class:
                 from verdity.enforcement import EnforcementDecision
+
                 mock_engine = AsyncMock()
                 mock_decision = EnforcementDecision(action="allow")
                 mock_engine.evaluate_with_context.return_value = mock_decision
@@ -754,7 +952,7 @@ rules:
                             "concern": "code_quality",
                             "summary": "Test finding",
                         }
-                    }
+                    },
                 )
 
                 assert result["action"] == "ALLOW"
@@ -766,6 +964,7 @@ rules:
         with patch("verdity.enforcement.load_rules_from_yaml", side_effect=FileNotFoundError()):
             with patch("verdity.enforcement.EnforcementEngine") as mock_engine_class:
                 from verdity.enforcement import EnforcementDecision
+
                 mock_engine = AsyncMock()
                 mock_decision = EnforcementDecision(action="allow")
                 mock_engine.evaluate_with_context.return_value = mock_decision
@@ -786,7 +985,7 @@ rules:
                             "summary": "SQL injection",
                             "explanation": "User input not sanitized",
                         }
-                    }
+                    },
                 )
                 assert result["finding"]["concern"] == "security"
 
@@ -802,7 +1001,7 @@ rules:
                             "concern": "testing",
                             "summary": "Missing test",
                         }
-                    }
+                    },
                 )
                 assert result["finding"]["concern"] == "testing"
 
@@ -827,7 +1026,7 @@ rules:
                             "concern": "code_quality",
                             "summary": "Test",
                         }
-                    }
+                    },
                 )
 
                 assert "error" in result
@@ -848,9 +1047,7 @@ class TestVerdityRulesList:
             ]
         }
         with patch("builtins.open", mock_open(read_data=yaml.dump(rules_data))):
-            result = await server.call_tool(
-                "verdity_rules_list", {"repo_path": "/test/repo"}
-            )
+            result = await server.call_tool("verdity_rules_list", {"repo_path": "/test/repo"})
 
             assert result["repo_path"] == "/test/repo"
             assert len(result["rules"]) == 2
@@ -874,9 +1071,7 @@ class TestVerdityRulesList:
         """Test verdity_rules_list handles YAML parse errors."""
         server = MCPServer()
         with patch("builtins.open", mock_open(read_data="invalid: yaml: : :")):
-            result = await server.call_tool(
-                "verdity_rules_list", {"repo_path": "/test/repo"}
-            )
+            result = await server.call_tool("verdity_rules_list", {"repo_path": "/test/repo"})
 
             assert "error" in result
 
@@ -886,9 +1081,7 @@ class TestVerdityRulesList:
         server = MCPServer()
         rules_data = {"other_key": "value"}  # No "rules" key
         with patch("builtins.open", mock_open(read_data=yaml.dump(rules_data))):
-            result = await server.call_tool(
-                "verdity_rules_list", {"repo_path": "/test/repo"}
-            )
+            result = await server.call_tool("verdity_rules_list", {"repo_path": "/test/repo"})
 
             assert result["rules"] == []
 
@@ -913,48 +1106,40 @@ class TestApplyFix:
     """Tests for apply_fix tool (lines 899-914)."""
 
     @pytest.mark.asyncio
-    async def test_apply_fix_basic(self):
-        """Test apply_fix calls GitHubClient.apply_fix."""
+    async def test_apply_fix_reports_not_implemented(self):
+        """apply_fix must say it is unimplemented instead of raising AttributeError.
+
+        GitHubClient has no apply_fix(), so this advertised MCP tool could only
+        ever fail. These tests previously mocked GitHubClient with an AsyncMock,
+        which invents any attribute, so they passed against a method that does
+        not exist.
+        """
         server = MCPServer()
-        with patch("verdity.github_client.GitHubClient") as mock_github_client:
-            mock_client = AsyncMock()
-            mock_client.apply_fix.return_value = {"sha": "abc123", "url": "https://github.com/..."}
-            mock_github_client.return_value = mock_client
 
-            result = await server.call_tool(
-                "apply_fix",
-                {
-                    "fix_patch": "--- a/test.py\n+++ b/test.py\n@@ -1 +1 @@\n-old\n+new",
-                    "file_path": "test.py",
-                    "branch": "feature/test",
-                    "commit_message": "fix: apply fix"
-                }
-            )
+        result = await server.call_tool(
+            "apply_fix",
+            {
+                "fix_patch": "--- a/test.py\n+++ b/test.py\n@@ -1 +1 @@\n-old\n+new",
+                "file_path": "test.py",
+                "branch": "feature/test",
+                "commit_message": "fix: apply fix",
+            },
+        )
 
-            assert result["sha"] == "abc123"
-            mock_client.apply_fix.assert_called_once()
+        assert result["implemented"] is False
+        assert "not implemented" in result["error"]
+        assert result["file_path"] == "test.py"
 
     @pytest.mark.asyncio
-    async def test_apply_fix_defaults(self):
-        """Test apply_fix with default branch and commit message."""
+    async def test_apply_fix_error_names_the_missing_capability(self):
+        """The error must point at the actual missing client method."""
+        from verdity.github_client import GitHubClient
+
+        assert not hasattr(GitHubClient, "apply_fix")
+
         server = MCPServer()
-        with patch("verdity.github_client.GitHubClient") as mock_github_client:
-            mock_client = AsyncMock()
-            mock_client.apply_fix.return_value = {"sha": "abc123"}
-            mock_github_client.return_value = mock_client
-
-            result = await server.call_tool(
-                "apply_fix",
-                {
-                    "fix_patch": "patch",
-                    "file_path": "test.py"
-                }
-            )
-
-            # Check defaults were used
-            call_args = mock_client.apply_fix.call_args
-            assert call_args[1]["branch"] == "main"
-            assert "fix: apply automated fix" in call_args[1]["commit_message"]
+        result = await server.call_tool("apply_fix", {"fix_patch": "patch", "file_path": "test.py"})
+        assert "apply_fix()" in result["error"]
 
 
 class TestGetReviewRules:
@@ -986,9 +1171,135 @@ class TestGetReviewRules:
             mock_rules_instance.get_rules.return_value = {"rules": ["rule1"]}
             mock_review_rules.return_value = mock_rules_instance
 
-            result = await server.call_tool(
-                "get_review_rules", {"repo_path": "/test/repo"}
-            )
+            result = await server.call_tool("get_review_rules", {"repo_path": "/test/repo"})
 
             assert result["rules"] == ["rule1"]
             mock_rules_instance.get_rules.assert_called_once_with("")
+
+
+class TestMcpUsesRealGitHubClientApi:
+    """Guard: the MCP review path must only call methods GitHubClient has.
+
+    An AsyncMock happily invents any attribute, so a call to a non-existent
+    method (e.g. post_check_run) passed every mocked test and only blew up
+    against the real client with AttributeError. These assertions check the
+    names against the real class.
+    """
+
+    def test_check_run_method_names_exist_on_real_client(self):
+        from verdity.github_client import GitHubClient
+
+        assert hasattr(GitHubClient, "create_check_run")
+        assert hasattr(GitHubClient, "update_check_run")
+        assert not hasattr(GitHubClient, "post_check_run")
+
+    def test_mcp_source_only_references_real_client_methods(self):
+        import inspect
+        import re
+
+        from verdity import mcp_server
+        from verdity.github_client import GitHubClient
+
+        source = inspect.getsource(mcp_server)
+        called = set(re.findall(r"client\.([a-zA-Z_][a-zA-Z0-9_]*)\(", source))
+        # Only methods, not attributes assigned/passed around.
+        real = {n for n in dir(GitHubClient) if not n.startswith("_")}
+        missing = {c for c in called if c not in real and c not in {"close"}}
+        assert not missing, f"mcp_server calls methods GitHubClient lacks: {missing}"
+
+    @pytest.mark.asyncio
+    async def test_apply_fix_warns_if_client_gains_apply_fix(self):
+        """If GitHubClient ever gains apply_fix, _apply_fix must still be honest.
+
+        Guards against the tool silently continuing to claim "not implemented"
+        after the underlying capability appears.
+        """
+        server = MCPServer()
+        real = verdity.github_client.GitHubClient
+
+        class FutureClient(real):  # type: ignore[misc, valid-type]
+            async def apply_fix(self, **kwargs):
+                return {"ok": True}
+
+        with patch("verdity.github_client.GitHubClient", FutureClient):
+            with patch.object(verdity.mcp_server.logger, "warning") as mock_warning:
+                result = await server.call_tool(
+                    "apply_fix", {"fix_patch": "p", "file_path": "f.py"}
+                )
+
+        assert result["implemented"] is False
+        assert any(
+            "needs a real implementation" in str(c.args[0]) for c in mock_warning.call_args_list
+        )
+
+
+class TestFindingFromFlattened:
+    """_finding_from_flattened() must never lose a finding to a bad value."""
+
+    def test_maps_transport_keys_onto_full_finding(self):
+        from verdity.mcp_server import _finding_from_flattened
+
+        f = _finding_from_flattened(
+            {
+                "rule_id": "security-0",
+                "message": "Path traversal",
+                "file_path": "gui/updater.py",
+                "line": 26,
+                "severity": "high",
+                "confidence": 0.9,
+            },
+            owner="o",
+            repo="r",
+        )
+
+        assert f.summary == "Path traversal"
+        assert f.file == "gui/updater.py"
+        assert f.line_start == 26
+        assert f.line_end == 26
+        assert f.concern.value == "security"
+        assert f.severity.value == "high"
+        assert f.confidence == 0.9
+        assert f.evidence[0].tool == "verdity/o/r"
+
+    def test_unknown_severity_falls_back_to_info(self):
+        from verdity.mcp_server import _finding_from_flattened
+
+        f = _finding_from_flattened(
+            {"rule_id": "quality-1", "message": "m", "severity": "catastrophic"},
+            owner="o",
+            repo="r",
+        )
+        assert f.severity.value == "info"
+
+    def test_unknown_concern_falls_back_to_code_quality(self):
+        from verdity.mcp_server import _finding_from_flattened
+
+        f = _finding_from_flattened(
+            {"rule_id": "no-known-specialist-2", "message": "m"},
+            owner="o",
+            repo="r",
+        )
+        assert f.concern.value == "code_quality"
+
+    def test_missing_optional_fields_get_safe_defaults(self):
+        from verdity.mcp_server import _finding_from_flattened
+
+        f = _finding_from_flattened(
+            {"rule_id": "x-0", "message": "m", "file_path": "", "line": 0},
+            owner="o",
+            repo="r",
+        )
+        # line_start has ge=1, so a 0 must be coerced, not passed through.
+        assert f.line_start >= 1
+        assert f.file == "unknown"
+
+    def test_blank_message_is_rejected(self):
+        """A finding with no message is unusable; the caller skips it."""
+        from verdity.mcp_server import _finding_from_flattened
+
+        with pytest.raises(ValueError, match="no message"):
+            _finding_from_flattened(
+                {"rule_id": "security-0", "message": "   "},
+                owner="o",
+                repo="r",
+            )

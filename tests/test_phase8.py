@@ -7,9 +7,8 @@ STRIDE threat model from Security doc §3 against the actual implementation.
 
 from __future__ import annotations
 
-import importlib.metadata
-
 import asyncio
+import importlib.metadata
 import json
 import os
 import uuid
@@ -558,29 +557,18 @@ async def test_all_tests_pass_at_least_90_coverage():
     # This test verifies that the project is structured for 100% coverage.
     # The actual coverage check is enforced by pytest-cov's --cov-fail-under=100
     # in pyproject.toml, so we just verify key modules import cleanly.
-    import verdity
-    import verdity.agents.code_quality
-    import verdity.agents.documentation
-    import verdity.agents.security
-    import verdity.agents.testing
-    import verdity.aggregator
-    import verdity.approval_queue
-    import verdity.audit_store
-    import verdity.budget_enforcer
-    import verdity.coding_agent
-    import verdity.config
-    import verdity.event_queue
-    import verdity.gateway.app
-    import verdity.hmac_verify
-    import verdity.orchestrator
-    import verdity.router
-    import verdity.semantic_index
-    import verdity.token_economics
-    import verdity.verification_gate
-    import verdity.webhook_normalizer
 
     # All imports succeed - structure is intact for full coverage
-    assert importlib.metadata.version('verdity') in ("0.2.1", "0.3.0", "0.4.6", "0.4.7", "0.4.12", "0.4.13", "0.4.16", "0.4.17")
+    assert importlib.metadata.version("verdity") in (
+        "0.2.1",
+        "0.3.0",
+        "0.4.6",
+        "0.4.7",
+        "0.4.12",
+        "0.4.13",
+        "0.4.16",
+        "0.4.17",
+    )
 
 
 # ── Phase 13 Gate Test ──────────────────────────────────────────────

@@ -217,11 +217,6 @@ class BudgetEnforcer:
         }
 
 
-        # Allow new specialist
-        active[specialist_id] = True
-        return True, []
-
-
 async def dashboard_stats(te: TokenEconomicsService) -> dict[str, Any]:
     """
     Aggregate dashboard data: spend by scope, cost per PR, cost per finding.

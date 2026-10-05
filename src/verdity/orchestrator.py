@@ -22,6 +22,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import Any
 
 from verdity.audit_store import AuditStore
 from verdity.event_queue import EventQueue
@@ -69,7 +70,23 @@ class ReviewRun:
 # ── Trigger → Policy Mapping (Orchestration doc §3) ──────────────────
 
 
-def resolve_policy(event: VerdityEvent) -> ReviewPolicy:
+# Budget/timeout per tier, used when a caller pins a tier explicitly
+# (e.g. the CLI's --tier flag).
+#
+# NOTE: these are the *documented* tier budgets (<10s/5k for lite, <60s/40k for
+# balanced, <5min/200k for deep). The diff-size heuristic below deliberately
+# keeps its own, more generous values (10-30 min windows) because an
+# auto-classified tier is not a caller asking for a fast pass. tests/
+# test_orchestrator_extra.py pins those heuristic values, so do not unify the
+# two without changing that contract deliberately.
+_TIER_BUDGETS: dict[str, dict[str, Any]] = {
+    "lite": {"tier": "lite", "timeout_seconds": 30, "budget_tokens": 5_000},
+    "balanced": {"tier": "balanced", "timeout_seconds": 120, "budget_tokens": 40_000},
+    "deep": {"tier": "deep", "timeout_seconds": 300, "budget_tokens": 200_000},
+}
+
+
+def resolve_policy(event: VerdityEvent, requested_tier: str | None = None) -> ReviewPolicy:
     """
     Map a VerdityEvent to a ReviewPolicy per the trigger taxonomy.
     (Orchestration doc §3 — abbreviated for Phase 3; full table in prod config.)
@@ -77,9 +94,13 @@ def resolve_policy(event: VerdityEvent) -> ReviewPolicy:
       - "lite": fast, style + obvious bugs only (<10s, minimal tokens)
       - "balanced": all agents, full context (<60s, moderate tokens)
       - "deep": all agents + cross-repo context + security reasoning (<5min, high tokens)
+
+    `requested_tier` lets a caller (e.g. the CLI's --tier flag) pin the tier.
+    Without it the tier is derived from the PR diff size, as before.
     """
     trigger = event.trigger_type
 
+    # Tiers that are always meaningful, regardless of size.
     if trigger == TriggerType.PUSH:
         # Push events trigger semantic-index re-index, not a full review
         return ReviewPolicy(tier="lite", timeout_seconds=30, budget_tokens=5000)
@@ -89,8 +110,13 @@ def resolve_policy(event: VerdityEvent) -> ReviewPolicy:
 
     # PR-related triggers
     pr = event.pull_request
-    if pr is None:
+    if pr is None and requested_tier not in _TIER_BUDGETS:
         return ReviewPolicy(tier="balanced", timeout_seconds=120, budget_tokens=40000)
+
+    # An explicit tier wins over the size heuristic, so `--tier deep` is not
+    # silently downgraded on a small PR. Unknown tiers fall back to inference.
+    if requested_tier in _TIER_BUDGETS:
+        return ReviewPolicy(**_TIER_BUDGETS[requested_tier])
 
     # Determine tier based on PR size heuristic
     # In production, this comes from the GitHub API diff stats (additions + deletions).
@@ -205,6 +231,8 @@ class Orchestrator:
         review_run_id = uuid.uuid4()
 
         run = ReviewRun(review_run_id=review_run_id, event=event, status=RunStatus.RUNNING)
+        # Carry the caller's diff through to the specialists.
+        run.diff_files = list(getattr(envelope, "diff_files", []) or [])
         self._runs[review_run_id] = run
 
         # Audit: run started
@@ -220,8 +248,9 @@ class Orchestrator:
             related_run_id=review_run_id,
         )
 
-        # Resolve policy
-        policy = resolve_policy(event)
+        # Resolve policy. An explicit tier on the envelope (from a CLI flag)
+        # overrides the diff-size heuristic.
+        policy = resolve_policy(event, requested_tier=getattr(envelope, "tier", None))
         run.policy = policy
         logger.info(
             "Run %s: policy resolved — depth=%s timeout=%ds budget=%d tokens",
@@ -397,7 +426,7 @@ class Orchestrator:
             repo_name=event.repo.name,
             base_sha=pr.base_sha if pr else "",
             head_sha=pr.head_sha if pr else "",
-            diff_files=[],  # populated by caller or extracted from event
+            diff_files=list(getattr(run, "diff_files", []) or []),
             policy=policy,
         )
         try:

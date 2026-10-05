@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from contextlib import suppress
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -11,6 +12,145 @@ import pytest
 
 from verdity.orchestrator import Orchestrator
 from verdity.worker import Worker
+
+
+class TestSlaEscalationAndShutdown:
+    """Cover the SLA escalation loop and the shutdown path in worker.py.
+
+    These were the largest remaining coverage gap: run_forever() starting the
+    SLA task, the loop body itself, the public check_sla_escalations(), and
+    shutdown() cancelling the task and draining in-flight work.
+    """
+
+    def _worker(self, approval_queue=None, **kwargs):
+        queue = MagicMock()
+        queue.consume = AsyncMock(return_value=None)
+        orch = MagicMock()
+        return Worker(queue, orch, approval_queue=approval_queue, **kwargs)
+
+    @pytest.mark.asyncio
+    async def test_run_forever_starts_sla_task_when_approval_queue_present(self):
+        """run_forever() spawns the SLA task only when a queue is configured."""
+        queue = MagicMock()
+        queue.consume = AsyncMock(return_value=None)
+        orch = MagicMock()
+        aq = MagicMock()
+        aq.check_sla_escalations = AsyncMock(return_value=[])
+
+        worker = Worker(queue, orch, approval_queue=aq, sla_check_interval=3600)
+
+        # Stop the loop after a single iteration so the test cannot hang.
+        async def _one_drain():
+            worker._running = False
+
+        worker._drain_one = AsyncMock(side_effect=_one_drain)
+
+        await worker.run_forever()
+
+        assert worker._sla_task is not None
+        worker._sla_task.cancel()
+
+    @pytest.mark.asyncio
+    async def test_run_forever_without_approval_queue_spawns_no_sla_task(self):
+        worker = self._worker()
+        assert worker._sla_task is None
+
+        async def _one_drain():
+            worker._running = False
+
+        worker._drain_one = AsyncMock(side_effect=_one_drain)
+        await worker.run_forever()
+        assert worker._sla_task is None
+
+    @pytest.mark.asyncio
+    async def test_sla_escalation_loop_reports_escalations(self):
+        aq = MagicMock()
+        aq.check_sla_escalations = AsyncMock(return_value=[{"id": 1}, {"id": 2}])
+        worker = self._worker(approval_queue=aq, sla_check_interval=0)
+
+        worker._running = True
+        task = asyncio.create_task(worker._sla_escalation_loop())
+        await asyncio.sleep(0.01)
+        worker._running = False
+        await asyncio.sleep(0.01)
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+        assert aq.check_sla_escalations.called
+
+    @pytest.mark.asyncio
+    async def test_sla_escalation_loop_exits_on_cancellation(self):
+        """Cancelling the loop while it sleeps must break out via CancelledError.
+
+        Worker.shutdown() relies on this path to stop the background task.
+        """
+        aq = MagicMock()
+        aq.check_sla_escalations = AsyncMock(return_value=[])
+        worker = self._worker(approval_queue=aq, sla_check_interval=3600)
+
+        worker._running = True
+        task = asyncio.create_task(worker._sla_escalation_loop())
+        # Let the loop reach its `await asyncio.sleep(...)`, then cancel it.
+        await asyncio.sleep(0)
+        task.cancel()
+
+        # The loop catches CancelledError and breaks, so it finishes normally
+        # rather than propagating the cancellation.
+        await task
+
+        assert task.done()
+        assert not task.cancelled()
+        # No escalation check should have run, since it was still sleeping.
+        aq.check_sla_escalations.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_check_sla_escalations_delegates_to_queue(self):
+        aq = MagicMock()
+        aq.check_sla_escalations = AsyncMock(return_value=[{"id": 7}])
+        worker = self._worker(approval_queue=aq)
+
+        result = await worker.check_sla_escalations()
+        assert result == [{"id": 7}]
+        aq.check_sla_escalations.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_check_sla_escalations_without_queue_returns_empty(self):
+        worker = self._worker(approval_queue=None)
+        assert await worker.check_sla_escalations() == []
+
+    @pytest.mark.asyncio
+    async def test_shutdown_cancels_sla_task_and_drains_in_flight(self):
+        aq = MagicMock()
+        aq.check_sla_escalations = AsyncMock(return_value=[])
+        worker = self._worker(approval_queue=aq, sla_check_interval=0)
+
+        worker._running = True
+        worker._sla_task = asyncio.create_task(worker._sla_escalation_loop())
+
+        drained = MagicMock()
+
+        async def _slow():
+            await asyncio.sleep(0.05)
+            drained()
+
+        inflight = asyncio.create_task(_slow())
+        worker._tasks = {inflight}
+
+        await worker.shutdown(15, None)
+
+        assert worker._running is False
+        assert worker._sla_task.cancelled() or worker._sla_task.done()
+        await asyncio.sleep(0.06)
+        assert drained.called
+
+    @pytest.mark.asyncio
+    async def test_shutdown_without_sla_task_or_inflight_is_safe(self):
+        worker = self._worker()
+        worker._sla_task = None
+        worker._tasks = set()
+        await worker.shutdown(None, None)
+        assert worker._running is False
 
 
 def _make_envelope(repo_id: str, delivery_id: str | None = None):
