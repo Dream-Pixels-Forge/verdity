@@ -1,10 +1,13 @@
 """Tests for MCP Server module."""
 
+import uuid
 from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 
 import pytest
 import yaml
 
+import verdity.github_client
+import verdity.mcp_server
 from verdity.mcp_server import MCPServer, create_mcp_server
 
 
@@ -265,18 +268,13 @@ class TestMCPServerErrorPaths:
             assert result["agent"] == "full"
 
     @pytest.mark.asyncio
-    async def test_call_tool_apply_fix_exception(self):
-        """Test call_tool catches exceptions from _apply_fix."""
+    async def test_call_tool_apply_fix_reports_unimplemented(self):
+        """call_tool surfaces the not-implemented status for apply_fix."""
         server = MCPServer()
-        with patch(
-            "verdity.github_client.GitHubClient", side_effect=Exception("GitHub init failed")
-        ):
-            result = await server.call_tool(
-                "apply_fix", {"fix_patch": "patch", "file_path": "test.py"}
-            )
-            assert "error" in result
-            assert "GitHub init failed" in result["error"]
-            assert result["tool"] == "apply_fix"
+        result = await server.call_tool("apply_fix", {"fix_patch": "patch", "file_path": "test.py"})
+        assert "error" in result
+        assert result["implemented"] is False
+        assert result["tool"] == "apply_fix"
 
     @pytest.mark.asyncio
     async def test_call_tool_get_review_rules_exception(self):
@@ -659,7 +657,7 @@ class TestVerdityReview:
                 "base_sha": "abc123",
                 "head_sha": "def456",
             }
-            mock_client.post_check_run.return_value = {"id": 123, "status": "completed"}
+            mock_client.create_check_run.return_value = {"id": 123, "status": "completed"}
             mock_github_client.return_value = mock_client
 
             mock_create_check.return_value = {"title": "Verdity", "summary": "Done"}
@@ -676,7 +674,151 @@ class TestVerdityReview:
 
             assert "github_check" in result
             assert result["github_check"]["id"] == 123
-            mock_client.post_check_run.assert_called_once()
+            mock_client.create_check_run.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_verdity_review_post_to_github_with_real_findings(self):
+        """Posting a check run must work when findings are actually present.
+
+        The existing post_to_github test used an empty findings list, so the
+        list comprehension that rebuilds Finding objects never ran. With real
+        findings it raised a 7-field ValidationError, which meant
+        `review run` failed on its default path (--post-comment defaults on).
+        """
+        from verdity.schemas import Severity
+        from verdity.schemas._models import Finding
+
+        server = MCPServer()
+        with (
+            patch("verdity.github_client.GitHubClient") as mock_github_client,
+            patch("verdity.config.get_settings") as mock_get_settings,
+            patch.object(server, "_orchestrator") as mock_orchestrator,
+        ):
+            mock_settings = MagicMock()
+            mock_settings.github_app_id = "123"
+            mock_settings.github_private_key = "key"
+            mock_settings.github_installation_id = "456"
+            mock_get_settings.return_value = mock_settings
+
+            mock_client = AsyncMock()
+            mock_client.get_pr_diff.return_value = {
+                "files": [{"filename": "test.py", "patch": "diff", "additions": 1, "deletions": 0}],
+                "base_sha": "abc123",
+                "head_sha": "def456",
+            }
+            mock_client.create_check_run.return_value = {"id": 123, "status": "completed"}
+            mock_github_client.return_value = mock_client
+
+            mock_result = MagicMock()
+            mock_result.summary = "1 issue"
+            mock_result.findings = [
+                Finding(
+                    concern="security",
+                    severity=Severity.HIGH,
+                    file="test.py",
+                    line_start=26,
+                    line_end=26,
+                    summary="Path Traversal in updater",
+                    explanation="tar member escapes the extraction dir",
+                    confidence=0.9,
+                    agent_version="v1",
+                    prompt_hash="abc",
+                )
+            ]
+            _mock_orchestrator_review(mock_orchestrator, mock_result)
+
+            result = await server.call_tool(
+                "verdity_review",
+                {
+                    "owner": "testorg",
+                    "repo": "testrepo",
+                    "pr_number": 42,
+                    "post_to_github": True,
+                },
+            )
+
+            assert "error" not in result, result.get("error")
+            assert result["total_findings"] == 1
+            assert "github_check" in result
+            # The check run must carry the finding, not an empty list.
+            posted = mock_client.create_check_run.call_args.kwargs["output"]
+            assert posted["annotations"], "check run lost the finding"
+
+    @pytest.mark.asyncio
+    async def test_verdity_review_skips_unconvertible_finding(self):
+        """One malformed finding must not cost the whole check run."""
+        server = MCPServer()
+        with (
+            patch("verdity.github_client.GitHubClient") as mock_github_client,
+            patch("verdity.config.get_settings") as mock_get_settings,
+            patch.object(server, "_orchestrator") as mock_orchestrator,
+        ):
+            mock_settings = MagicMock()
+            mock_settings.github_app_id = "123"
+            mock_settings.github_private_key = "key"
+            mock_settings.github_installation_id = "456"
+            mock_get_settings.return_value = mock_settings
+
+            mock_client = AsyncMock()
+            mock_client.get_pr_diff.return_value = {
+                "files": [{"filename": "t.py", "patch": "d", "additions": 1, "deletions": 0}],
+                "base_sha": "abc123",
+                "head_sha": "def456",
+            }
+            mock_client.create_check_run.return_value = {"id": 1}
+            mock_github_client.return_value = mock_client
+
+            from verdity.schemas import Severity
+            from verdity.schemas._models import Finding
+
+            # Two specialists: one whose finding cannot be converted (blank
+            # message) and one that is fine.
+            bad_finding = MagicMock()
+            bad_finding.summary = ""
+            bad_finding.file = "t.py"
+            bad_finding.line_start = 1
+            bad_finding.severity = Severity.LOW
+            bad_finding.confidence = 0.1
+            bad_specialist = MagicMock()
+            bad_specialist.findings = [bad_finding]
+
+            good_finding = Finding(
+                concern="security",
+                severity=Severity.HIGH,
+                file="t.py",
+                line_start=5,
+                line_end=5,
+                summary="Path traversal",
+                explanation="x",
+                confidence=0.8,
+                agent_version="v1",
+                prompt_hash="h",
+            )
+            good_specialist = MagicMock()
+            good_specialist.findings = [good_finding]
+
+            run = MagicMock()
+            run.specialist_results = {
+                "unknownspecialist": bad_specialist,
+                "security": good_specialist,
+            }
+            mock_orchestrator.process_event = AsyncMock(return_value=uuid.uuid4())
+            mock_orchestrator.get_run = MagicMock(return_value=run)
+
+            result = await server.call_tool(
+                "verdity_review",
+                {
+                    "owner": "testorg",
+                    "repo": "testrepo",
+                    "pr_number": 42,
+                    "post_to_github": True,
+                },
+            )
+
+            assert "error" not in result, result.get("error")
+            posted = mock_client.create_check_run.call_args.kwargs["output"]
+            # Only the good finding survives, and the check run still posts.
+            assert len(posted["annotations"]) == 1
 
     @pytest.mark.asyncio
     async def test_verdity_review_exception_handling(self):
@@ -964,44 +1106,40 @@ class TestApplyFix:
     """Tests for apply_fix tool (lines 899-914)."""
 
     @pytest.mark.asyncio
-    async def test_apply_fix_basic(self):
-        """Test apply_fix calls GitHubClient.apply_fix."""
+    async def test_apply_fix_reports_not_implemented(self):
+        """apply_fix must say it is unimplemented instead of raising AttributeError.
+
+        GitHubClient has no apply_fix(), so this advertised MCP tool could only
+        ever fail. These tests previously mocked GitHubClient with an AsyncMock,
+        which invents any attribute, so they passed against a method that does
+        not exist.
+        """
         server = MCPServer()
-        with patch("verdity.github_client.GitHubClient") as mock_github_client:
-            mock_client = AsyncMock()
-            mock_client.apply_fix.return_value = {"sha": "abc123", "url": "https://github.com/..."}
-            mock_github_client.return_value = mock_client
 
-            result = await server.call_tool(
-                "apply_fix",
-                {
-                    "fix_patch": "--- a/test.py\n+++ b/test.py\n@@ -1 +1 @@\n-old\n+new",
-                    "file_path": "test.py",
-                    "branch": "feature/test",
-                    "commit_message": "fix: apply fix",
-                },
-            )
+        result = await server.call_tool(
+            "apply_fix",
+            {
+                "fix_patch": "--- a/test.py\n+++ b/test.py\n@@ -1 +1 @@\n-old\n+new",
+                "file_path": "test.py",
+                "branch": "feature/test",
+                "commit_message": "fix: apply fix",
+            },
+        )
 
-            assert result["sha"] == "abc123"
-            mock_client.apply_fix.assert_called_once()
+        assert result["implemented"] is False
+        assert "not implemented" in result["error"]
+        assert result["file_path"] == "test.py"
 
     @pytest.mark.asyncio
-    async def test_apply_fix_defaults(self):
-        """Test apply_fix with default branch and commit message."""
+    async def test_apply_fix_error_names_the_missing_capability(self):
+        """The error must point at the actual missing client method."""
+        from verdity.github_client import GitHubClient
+
+        assert not hasattr(GitHubClient, "apply_fix")
+
         server = MCPServer()
-        with patch("verdity.github_client.GitHubClient") as mock_github_client:
-            mock_client = AsyncMock()
-            mock_client.apply_fix.return_value = {"sha": "abc123"}
-            mock_github_client.return_value = mock_client
-
-            result = await server.call_tool(
-                "apply_fix", {"fix_patch": "patch", "file_path": "test.py"}
-            )
-
-            # Check defaults were used
-            call_args = mock_client.apply_fix.call_args
-            assert call_args[1]["branch"] == "main"
-            assert "fix: apply automated fix" in call_args[1]["commit_message"]
+        result = await server.call_tool("apply_fix", {"fix_patch": "patch", "file_path": "test.py"})
+        assert "apply_fix()" in result["error"]
 
 
 class TestGetReviewRules:
@@ -1037,3 +1175,131 @@ class TestGetReviewRules:
 
             assert result["rules"] == ["rule1"]
             mock_rules_instance.get_rules.assert_called_once_with("")
+
+
+class TestMcpUsesRealGitHubClientApi:
+    """Guard: the MCP review path must only call methods GitHubClient has.
+
+    An AsyncMock happily invents any attribute, so a call to a non-existent
+    method (e.g. post_check_run) passed every mocked test and only blew up
+    against the real client with AttributeError. These assertions check the
+    names against the real class.
+    """
+
+    def test_check_run_method_names_exist_on_real_client(self):
+        from verdity.github_client import GitHubClient
+
+        assert hasattr(GitHubClient, "create_check_run")
+        assert hasattr(GitHubClient, "update_check_run")
+        assert not hasattr(GitHubClient, "post_check_run")
+
+    def test_mcp_source_only_references_real_client_methods(self):
+        import inspect
+        import re
+
+        from verdity import mcp_server
+        from verdity.github_client import GitHubClient
+
+        source = inspect.getsource(mcp_server)
+        called = set(re.findall(r"client\.([a-zA-Z_][a-zA-Z0-9_]*)\(", source))
+        # Only methods, not attributes assigned/passed around.
+        real = {n for n in dir(GitHubClient) if not n.startswith("_")}
+        missing = {c for c in called if c not in real and c not in {"close"}}
+        assert not missing, f"mcp_server calls methods GitHubClient lacks: {missing}"
+
+    @pytest.mark.asyncio
+    async def test_apply_fix_warns_if_client_gains_apply_fix(self):
+        """If GitHubClient ever gains apply_fix, _apply_fix must still be honest.
+
+        Guards against the tool silently continuing to claim "not implemented"
+        after the underlying capability appears.
+        """
+        server = MCPServer()
+        real = verdity.github_client.GitHubClient
+
+        class FutureClient(real):  # type: ignore[misc, valid-type]
+            async def apply_fix(self, **kwargs):
+                return {"ok": True}
+
+        with patch("verdity.github_client.GitHubClient", FutureClient):
+            with patch.object(verdity.mcp_server.logger, "warning") as mock_warning:
+                result = await server.call_tool(
+                    "apply_fix", {"fix_patch": "p", "file_path": "f.py"}
+                )
+
+        assert result["implemented"] is False
+        assert any(
+            "needs a real implementation" in str(c.args[0]) for c in mock_warning.call_args_list
+        )
+
+
+class TestFindingFromFlattened:
+    """_finding_from_flattened() must never lose a finding to a bad value."""
+
+    def test_maps_transport_keys_onto_full_finding(self):
+        from verdity.mcp_server import _finding_from_flattened
+
+        f = _finding_from_flattened(
+            {
+                "rule_id": "security-0",
+                "message": "Path traversal",
+                "file_path": "gui/updater.py",
+                "line": 26,
+                "severity": "high",
+                "confidence": 0.9,
+            },
+            owner="o",
+            repo="r",
+        )
+
+        assert f.summary == "Path traversal"
+        assert f.file == "gui/updater.py"
+        assert f.line_start == 26
+        assert f.line_end == 26
+        assert f.concern.value == "security"
+        assert f.severity.value == "high"
+        assert f.confidence == 0.9
+        assert f.evidence[0].tool == "verdity/o/r"
+
+    def test_unknown_severity_falls_back_to_info(self):
+        from verdity.mcp_server import _finding_from_flattened
+
+        f = _finding_from_flattened(
+            {"rule_id": "quality-1", "message": "m", "severity": "catastrophic"},
+            owner="o",
+            repo="r",
+        )
+        assert f.severity.value == "info"
+
+    def test_unknown_concern_falls_back_to_code_quality(self):
+        from verdity.mcp_server import _finding_from_flattened
+
+        f = _finding_from_flattened(
+            {"rule_id": "no-known-specialist-2", "message": "m"},
+            owner="o",
+            repo="r",
+        )
+        assert f.concern.value == "code_quality"
+
+    def test_missing_optional_fields_get_safe_defaults(self):
+        from verdity.mcp_server import _finding_from_flattened
+
+        f = _finding_from_flattened(
+            {"rule_id": "x-0", "message": "m", "file_path": "", "line": 0},
+            owner="o",
+            repo="r",
+        )
+        # line_start has ge=1, so a 0 must be coerced, not passed through.
+        assert f.line_start >= 1
+        assert f.file == "unknown"
+
+    def test_blank_message_is_rejected(self):
+        """A finding with no message is unusable; the caller skips it."""
+        from verdity.mcp_server import _finding_from_flattened
+
+        with pytest.raises(ValueError, match="no message"):
+            _finding_from_flattened(
+                {"rule_id": "security-0", "message": "   "},
+                owner="o",
+                repo="r",
+            )

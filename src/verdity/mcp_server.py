@@ -72,6 +72,63 @@ def _create_finding_proxy(finding_data: dict) -> object:
     return FindingProxy(finding_obj)
 
 
+def _finding_from_flattened(
+    flat: dict[str, Any],
+    *,
+    owner: str,
+    repo: str,
+) -> Any:
+    """Rebuild a full Finding from the dict that _run_orchestrator flattens.
+
+    _run_orchestrator emits a transport-friendly shape (rule_id / message /
+    file_path / line / severity / confidence). Finding requires seven more
+    fields than that, so constructing one directly from those keys raised a
+    ValidationError. Unknown severity/concern values degrade to safe defaults
+    rather than discarding the finding.
+    """
+    from .schemas._models import ConcernType, EvidenceItem, Finding, Severity
+
+    severity_raw = str(flat.get("severity", "info")).lower()
+    try:
+        severity = Severity(severity_raw)
+    except ValueError:
+        severity = Severity.INFO
+
+    # The rule_id is "<specialist>-<index>", so the specialist prefix is the
+    # best available signal for the concern type.
+    rule_id = str(flat.get("rule_id", ""))
+    concern_raw = rule_id.split("-", 1)[0].lower() if "-" in rule_id else ""
+    try:
+        concern = ConcernType(concern_raw)
+    except ValueError:
+        concern = ConcernType.CODE_QUALITY
+
+    line_start = int(flat.get("line", 1) or 1)
+    summary = str(flat.get("message", "")).strip()
+    if not summary:
+        raise ValueError(f"finding {rule_id!r} has no message/summary")
+
+    return Finding(
+        concern=concern,
+        severity=severity,
+        file=str(flat.get("file_path", "") or "unknown"),
+        line_start=line_start,
+        line_end=line_start,
+        summary=summary,
+        explanation=summary,
+        confidence=float(flat.get("confidence", 0.5) or 0.5),
+        evidence=[
+            EvidenceItem(
+                tool=f"verdity/{owner}/{repo}",
+                result=summary,
+                query=rule_id or "review",
+            )
+        ],
+        agent_version="mcp",
+        prompt_hash=rule_id or "mcp",
+    )
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -903,18 +960,25 @@ class MCPServer:
             # Optionally post to GitHub
             if post_to_github:
                 from verdity.github_client import create_check_output
-                from verdity.schemas import Finding
 
-                postable = [
-                    Finding(
-                        summary=f.get("message", ""),
-                        file=f.get("file_path", ""),
-                        line_start=f.get("line", 1),
-                    )
-                    for f in findings
-                ]
+                postable = []
+                for f in findings:
+                    try:
+                        postable.append(_finding_from_flattened(f, owner=owner, repo=repo))
+                    except Exception:
+                        # One malformed finding must not cost us the whole
+                        # check run; the review results are still returned above.
+                        logger.warning(
+                            "Skipping unconvertible finding %s for check run",
+                            f.get("rule_id"),
+                            exc_info=True,
+                        )
+
+                if not postable:
+                    logger.warning("No convertible findings to post as a check run")
+
                 check_output = create_check_output(postable)
-                check_result = await client.post_check_run(
+                check_result = await client.create_check_run(
                     owner=owner,
                     repo=repo,
                     head_sha=pr_diff.get("head_sha", ""),
@@ -1038,23 +1102,41 @@ class MCPServer:
         }
 
     async def _apply_fix(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Apply a fix to a branch."""
+        """Apply a fix to a branch.
+
+        NOT IMPLEMENTED. GitHubClient has no apply_fix() (and no branch/commit
+        primitives to build one from), so this previously raised a bare
+        AttributeError against the real client — an advertised MCP tool that
+        could only ever fail. It also constructed a GitHubClient with no
+        credentials, so even a correct call would have been unauthenticated.
+
+        Returning an explicit, actionable error is strictly better than
+        pretending. Implementing the write path (create branch, apply patch,
+        open PR) is real work that needs its own tests and review.
+        """
         from .github_client import GitHubClient
 
-        fix_patch = args["fix_patch"]
         file_path = args["file_path"]
-        branch = args.get("branch", "main")
-        commit_message = args.get("commit_message", "fix: apply automated fix from Verdity")
 
-        client = GitHubClient()
-        result = await client.apply_fix(
-            file_path=file_path,
-            patch=fix_patch,
-            branch=branch,
-            commit_message=commit_message,
-        )
+        # Guard rather than assert, so this stays correct if apply_fix is ever
+        # added: we prefer the explicit error over an AttributeError, but we
+        # must never fall through returning None.
+        if hasattr(GitHubClient, "apply_fix"):
+            logger.warning(
+                "GitHubClient.apply_fix now exists; _apply_fix needs a real implementation"
+            )
 
-        return result
+        return {
+            "error": (
+                "apply_fix is not implemented: GitHubClient has no "
+                "apply_fix() and no branch/commit primitives. "
+                f"Requested file: {file_path}. "
+                "Post the fix as a PR comment or use the GitHub API directly."
+            ),
+            "tool": "apply_fix",
+            "file_path": file_path,
+            "implemented": False,
+        }
 
     async def _get_review_rules(self, args: dict[str, Any]) -> dict[str, Any]:
         """Get custom review rules for a repository."""

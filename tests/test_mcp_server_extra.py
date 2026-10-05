@@ -366,17 +366,18 @@ class TestCallToolExceptions:
 
     @pytest.mark.asyncio
     async def test_call_tool_apply_fix(self):
-        """Cover _apply_fix branch."""
+        """apply_fix reports that it is not implemented.
+
+        GitHubClient has no apply_fix(), so mocking the class let this test
+        pass against a method that does not exist.
+        """
         server = MCPServer()
-        with patch("verdity.github_client.GitHubClient") as mock_client_cls:
-            mock_instance = MagicMock()
-            mock_instance.apply_fix = AsyncMock(return_value={"ok": True})
-            mock_client_cls.return_value = mock_instance
-            result = await server.call_tool(
-                "apply_fix",
-                {"fix_patch": "+ x", "file_path": "x.py"},
-            )
-            assert result == {"ok": True}
+        result = await server.call_tool(
+            "apply_fix",
+            {"fix_patch": "+ x", "file_path": "x.py"},
+        )
+        assert result["implemented"] is False
+        assert "not implemented" in result["error"]
 
     @pytest.mark.asyncio
     async def test_call_tool_get_review_rules(self):
