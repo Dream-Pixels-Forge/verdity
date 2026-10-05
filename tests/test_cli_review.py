@@ -724,6 +724,10 @@ rules:
         old_stdout = sys.stdout
         sys.argv = ["verdity.cli.review", "--help"]
         sys.stdout = StringIO()
+        # Other tests in this file already imported the module, so runpy would
+        # re-execute an already-registered module and warn about it. Drop it
+        # first so this exercises the same path a fresh interpreter would.
+        saved = sys.modules.pop("verdity.cli.review", None)
         try:
             runpy.run_module("verdity.cli.review", run_name="__main__")
             output = sys.stdout.getvalue()
@@ -739,6 +743,10 @@ rules:
         finally:
             sys.argv = old_argv
             sys.stdout = old_stdout
+            # Restore the canonical module object the rest of the suite uses.
+            sys.modules.pop("verdity.cli.review", None)
+            if saved is not None:
+                sys.modules["verdity.cli.review"] = saved
 
     def test_enforce_command_invalid_finding_json(self):
         """enforce command should handle invalid JSON in finding file."""

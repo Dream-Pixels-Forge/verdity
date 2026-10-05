@@ -451,9 +451,15 @@ class TestEnforceCLIIntegration:
         """Set up test fixtures."""
         self.runner = CliRunner()
 
-    @pytest.mark.asyncio
-    async def test_cli_uses_enforcement_engine(self):
-        """CLI should use EnforcementEngine for evaluation."""
+    def test_cli_uses_enforcement_engine(self):
+        """CLI should use EnforcementEngine for evaluation.
+
+        Synchronous on purpose: `enforce test` is a plain Click command that
+        calls asyncio.run() internally. Marking this async made asyncio.run()
+        raise "cannot be called from a running event loop", the command
+        aborted, and the only assertion (engine was constructed) still held —
+        so the test passed while the CLI never actually produced a result.
+        """
         from verdity.cli.enforce import enforce
         from verdity.enforcement import EnforcementDecision
 
@@ -485,8 +491,12 @@ rules:
                 result = self.runner.invoke(
                     enforce, ["test", rules_file, "--finding", finding_file]
                 )
+                # The command must actually complete, not merely construct the
+                # engine — otherwise a crash inside asyncio.run() passes unnoticed.
+                assert result.exit_code == 0, result.output
                 # Engine should be instantiated and used
                 mock_engine_class.assert_called()
+                mock_engine.evaluate_with_context.assert_awaited_once()
             finally:
                 Path(rules_file).unlink()
                 Path(finding_file).unlink()
@@ -510,6 +520,10 @@ rules:
         old_stdout = sys.stdout
         sys.argv = ["verdity.cli.enforce", "--help"]
         sys.stdout = StringIO()
+        # Other tests in this file already imported the module, so runpy would
+        # re-execute an already-registered module and warn about it. Drop it
+        # first so this exercises the same path a fresh interpreter would.
+        saved = sys.modules.pop("verdity.cli.enforce", None)
         try:
             runpy.run_module("verdity.cli.enforce", run_name="__main__")
             output = sys.stdout.getvalue()
@@ -523,3 +537,58 @@ rules:
         finally:
             sys.argv = old_argv
             sys.stdout = old_stdout
+            # Restore the canonical module object the rest of the suite uses.
+            sys.modules.pop("verdity.cli.enforce", None)
+            if saved is not None:
+                sys.modules["verdity.cli.enforce"] = saved
+
+
+class TestCliPackageHasNoEagerReexports:
+    """verdity.cli must not re-export the submodules.
+
+    Importing them here made `python -m verdity.cli.review` import the module
+    twice — once via this package, once via runpy. runpy warns about that
+    double execution and it can produce two distinct module objects.
+    """
+
+    def test_package_import_does_not_import_submodules(self):
+        """A fresh `import verdity.cli` must pull in neither submodule."""
+        import subprocess
+        import sys
+
+        code = (
+            "import sys, verdity.cli;"
+            "print('verdity.cli.enforce' in sys.modules,"
+            " 'verdity.cli.review' in sys.modules)"
+        )
+        out = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert out.stdout.strip() == "False False"
+
+    def test_python_dash_m_emits_no_runpy_warning(self):
+        """`python -m verdity.cli.<mod> --help` must not warn about double import."""
+        import subprocess
+        import sys
+
+        for module in ("verdity.cli.enforce", "verdity.cli.review"):
+            out = subprocess.run(
+                [sys.executable, "-m", module, "--help"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            assert "found in sys.modules" not in out.stderr, (
+                f"{module} double-imported: {out.stderr}"
+            )
+
+    def test_console_script_entry_points_still_resolve(self):
+        """The documented entry points target the submodules directly."""
+        import verdity.cli.enforce as enforce_mod
+        import verdity.cli.review as review_mod
+
+        assert hasattr(enforce_mod, "enforce")
+        assert hasattr(review_mod, "review")

@@ -348,7 +348,7 @@ class TestMCPServerInitialize:
         server = MCPServer()
         # Mock the Orchestrator to avoid the config bug
         with patch("verdity.mcp_server.Orchestrator") as mock_orchestrator_class:
-            mock_orchestrator = AsyncMock()
+            mock_orchestrator = MagicMock()
             mock_orchestrator_class.return_value = mock_orchestrator
 
             await server.initialize()
@@ -400,7 +400,7 @@ class TestReviewFullInitialize:
         server._orchestrator = None
 
         with patch("verdity.mcp_server.Orchestrator") as mock_orchestrator_class:
-            mock_orchestrator = AsyncMock()
+            mock_orchestrator = MagicMock()
             mock_result = MagicMock()
             mock_result.findings = []
             mock_result.summary = "No findings"
@@ -447,7 +447,7 @@ class TestVerdityReviewInitialize:
             }
             mock_github_client.return_value = mock_client
 
-            mock_orchestrator = AsyncMock()
+            mock_orchestrator = MagicMock()
             mock_result = MagicMock()
             mock_result.findings = []
             mock_result.summary = "No findings"

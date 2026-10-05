@@ -83,6 +83,14 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 addopts = "-v --cov=src/verdity --cov-report=term-missing --cov-fail-under=100"
+# Treat warning classes that signal real defects as failures rather than
+# letting them scroll past in the summary. Un-awaited coroutines and
+# DeprecationWarnings have each hidden actual bugs here before.
+filterwarnings = [
+    "error::RuntimeWarning",
+    "error::DeprecationWarning",
+    "error::PendingDeprecationWarning",
+]
 
 [tool.ruff]
 target-version = "py311"
