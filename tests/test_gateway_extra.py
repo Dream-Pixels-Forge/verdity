@@ -612,31 +612,93 @@ def test_sanitize_path_null_byte():
 # ── GitHub webhook path ───────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
-async def test_unified_webhook_github_missing_secret_returns_401(gw_client):
-    """When no github webhook secret is configured, returns 401."""
+@pytest.mark.parametrize(
+    "bad_secret",
+    ["", "x" * 31],
+    ids=["empty", "too-short"],
+)
+def test_settings_rejects_empty_or_short_webhook_hmac_secret(bad_secret):
+    """Empty/short WEBHOOK_HMAC_SECRET is rejected at config validation (issue #26).
+
+    The old expectation (Settings accepts "") was the bug: an empty HMAC
+    secret lets anyone forge valid webhook signatures.
+    """
     import os
 
-    os.environ["WEBHOOK_HMAC_SECRET"] = ""
+    from pydantic import ValidationError
+
     from verdity.config import get_settings
 
+    original = os.environ.get("WEBHOOK_HMAC_SECRET")
+    os.environ["WEBHOOK_HMAC_SECRET"] = bad_secret
     get_settings.cache_clear()
     try:
-        body = b'{"action":"opened","pull_request":{},"repository":{}}'
-        resp = await gw_client.post(
-            "/verdity/webhooks/github",
-            content=body,
-            headers={
-                "Content-Type": "application/json",
-                "X-Hub-Signature-256": "sha256=x",
-                "X-GitHub-Event": "pull_request",
-                "X-GitHub-Delivery": str(uuid.uuid4()),
-            },
-        )
-        assert resp.status_code == 401
+        with pytest.raises(ValidationError) as exc_info:
+            get_settings()
+        assert "webhook_hmac_secret" in str(exc_info.value)
     finally:
-        os.environ["WEBHOOK_HMAC_SECRET"] = "test-hmac-secret-key-for-dev-only"
+        if original is None:
+            os.environ.pop("WEBHOOK_HMAC_SECRET", None)
+        else:
+            os.environ["WEBHOOK_HMAC_SECRET"] = original
         get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_main_webhook_empty_secret_rejects_forged_signature(gw_client, monkeypatch):
+    """Issue #26: empty HMAC secret must never accept a request on the main endpoint.
+
+    An attacker who knows the secret is empty can forge a "valid" signature
+    with an empty HMAC key. The handler must fail closed with 401 before
+    verification (parity with the unified endpoint's guard).
+    """
+    import sys
+    from types import SimpleNamespace
+
+    from pydantic import SecretStr
+
+    body = json.dumps(
+        {
+            "action": "opened",
+            "pull_request": {
+                "number": 1,
+                "head": {"sha": "abc"},
+                "base": {"sha": "def"},
+                "title": "T",
+                "body": "",
+                "user": {"login": "u"},
+            },
+            "repository": {
+                "name": "r",
+                "owner": {"login": "o"},
+                "id": 1,
+            },
+        },
+        separators=(",", ":"),
+    ).encode()
+    forged_sig = _sign("", body)  # signature forged with an empty HMAC key
+
+    # Patch the module object directly: the package attribute
+    # `verdity.gateway.app` is shadowed by the FastAPI instance.
+    monkeypatch.setattr(
+        sys.modules["verdity.gateway.app"],
+        "get_settings",
+        lambda: SimpleNamespace(
+            webhook_hmac_secret=SecretStr(""),
+            webhook_hmac_secret_previous=SecretStr(""),
+        ),
+    )
+    resp = await gw_client.post(
+        "/verdity/webhooks/github",
+        content=body,
+        headers={
+            "Content-Type": "application/json",
+            "X-Hub-Signature-256": forged_sig,
+            "X-GitHub-Event": "pull_request",
+            "X-GitHub-Delivery": str(uuid.uuid4()),
+        },
+    )
+    assert resp.status_code == 401
 
 
 @pytest.mark.asyncio
