@@ -44,6 +44,12 @@ class PromptInjectionResult:
     confidence: float = 0.0
     pattern_matched: str = ""
     method: str = "heuristic"  # "heuristic" or "llm_judge"
+    # Character offset of the match within the scanned text, so callers can
+    # resolve a real line number. -1 when there is no match.
+    match_start: int = -1
+    # Character offset of the match within the scanned text, so callers can
+    # resolve a real line number. -1 when there is no match.
+    match_start: int = -1
 
 
 # Heuristic patterns for prompt injection detection
@@ -100,7 +106,7 @@ def _detect_prompt_injection_heuristic(text: str) -> PromptInjectionResult:
     Returns:
         PromptInjectionResult with detection details
     """
-    if not text or not text.strip():  # pragma: no cover
+    if not text or not text.strip():
         return PromptInjectionResult()
 
     for pattern_name, compiled_re, base_confidence in _PROMPT_INJECTION_PATTERNS:
@@ -119,6 +125,7 @@ def _detect_prompt_injection_heuristic(text: str) -> PromptInjectionResult:
                 confidence=round(confidence, 2),
                 pattern_matched=pattern_name,
                 method="heuristic",
+                match_start=match.start(),
             )
 
     return PromptInjectionResult()
@@ -542,21 +549,20 @@ class SecurityAgent(BaseSpecialistAgent):
                 scan_texts.append(("content", content))
 
             for text_type, scan_text in scan_texts:
-                if not scan_text.strip():  # pragma: no cover
+                if not scan_text.strip():
                     continue
 
                 # Heuristic detection
                 result = _detect_prompt_injection_heuristic(scan_text)
                 if result.detected:
-                    # Find line number
-                    lines = scan_text.split("\n")
-                    line_start = 1
-                    for i, line in enumerate(lines, 1):
-                        if (
-                            result.pattern_matched.lower().replace("_", " ") in line.lower()
-                        ):  # pragma: no cover
-                            line_start = i  # pragma: no cover
-                            break
+                    # Resolve the real line from the match offset. Searching the
+                    # lines for the pattern *name* never matched, because the
+                    # name is an internal label like "ignore_instructions"
+                    # while the source text reads "ignore all previous ...".
+                    if result.match_start >= 0:
+                        line_start = scan_text.count("\n", 0, result.match_start) + 1
+                    else:
+                        line_start = 1
 
                     findings.append(
                         Finding(
@@ -588,11 +594,9 @@ class SecurityAgent(BaseSpecialistAgent):
                     )
 
                 # Optional LLM judge for more sophisticated detection
-                if use_llm and llm_client and llm_client.enabled:  # pragma: no cover
+                if use_llm and llm_client and llm_client.enabled:
                     llm_result = await self._detect_prompt_injection_llm(scan_text, llm_client)
-                    if (
-                        llm_result.detected and llm_result.confidence > result.confidence
-                    ):  # pragma: no cover
+                    if llm_result.detected and llm_result.confidence > result.confidence:
                         findings.append(
                             Finding(
                                 concern=ConcernType.SECURITY,

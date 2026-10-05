@@ -989,3 +989,407 @@ class TestIpAllowlist:
 
         assert _is_ip_allowed("203.0.113.5", []) is True
         assert _is_ip_allowed("not-an-ip", []) is True
+
+
+class TestRedisRateLimiterClientIp:
+    """RedisRateLimiter._client_ip decides which bucket a request is counted in.
+
+    This is duplicated from the in-memory _RateLimiter and had no direct test.
+    Trusting X-Forwarded-For means a caller can spoof its identity unless the
+    deployment strips that header, so the first-hop behaviour is worth pinning.
+    """
+
+    @staticmethod
+    def _limiter():
+        from verdity.gateway.app import RedisRateLimiter
+
+        return RedisRateLimiter(redis_url="redis://localhost:6379/0")
+
+    @staticmethod
+    def _request(headers=None, client_host="10.1.1.1"):
+        from unittest.mock import MagicMock
+
+        request = MagicMock()
+        request.headers = headers or {}
+        client = MagicMock()
+        client.host = client_host
+        request.client = client
+        return request
+
+    def test_takes_first_hop_from_forwarded_chain(self):
+        limiter = self._limiter()
+
+        request = self._request({"x-forwarded-for": "203.0.113.9, 10.0.0.1, 172.16.0.1"})
+
+        assert limiter._client_ip(request) == "203.0.113.9"
+
+    def test_forwarded_value_is_stripped(self):
+        limiter = self._limiter()
+
+        request = self._request({"x-forwarded-for": "  203.0.113.9  "})
+
+        assert limiter._client_ip(request) == "203.0.113.9"
+
+    def test_falls_back_to_direct_peer(self):
+        limiter = self._limiter()
+
+        request = self._request({}, client_host="198.51.100.4")
+
+        assert limiter._client_ip(request) == "198.51.100.4"
+
+    def test_missing_client_returns_unknown(self):
+        """No peer and no header must not raise."""
+        limiter = self._limiter()
+
+        request = self._request({})
+        request.client = None
+
+        assert limiter._client_ip(request) == "unknown"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_memory_when_not_connected(self):
+        """An unconnected limiter must serve requests, not reject everything."""
+        from unittest.mock import MagicMock
+
+        limiter = self._limiter()
+        limiter._connected = False
+        limiter._redis = None
+        # The in-memory _RateLimiter.is_allowed is *synchronous*, and the Redis
+        # limiter returns its tuple directly from an async def.
+        fallback = MagicMock()
+        fallback.is_allowed = MagicMock(return_value=(True, 0.0))
+        limiter._fallback_limiter = fallback
+
+        allowed, retry_after = await limiter.is_allowed(self._request())
+
+        assert allowed is True
+        assert retry_after == 0.0
+        fallback.is_allowed.assert_called_once()
+
+
+class TestGatewayLifespanRateLimiter:
+    """The FastAPI lifespan wires the rate limiter; ASGITransport skips it.
+
+    Every route test drives the app without lifespan, so these lines never ran.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clean_limiter_state(self):
+        """app.state persists across tests, so reset the rate limiter.
+
+        Without this, a MagicMock left behind by another test makes the
+        lifespan's `hasattr(limiter, "close")` true and it awaits the mock.
+        """
+        import importlib
+
+        gateway_module = importlib.import_module("verdity.gateway.app")
+        gateway_module.app.state._rate_limiter = None
+        yield
+        gateway_module.app.state._rate_limiter = None
+
+    @pytest.mark.asyncio
+    async def test_lifespan_uses_redis_when_enabled(self, tmp_path):
+        """Enabling Redis must construct and connect a RedisRateLimiter."""
+        import importlib
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        # verdity.gateway.__init__ re-exports the FastAPI instance as `app`,
+        # which shadows the submodule of the same name. Import by module.
+        gateway_module = importlib.import_module("verdity.gateway.app")
+
+        fake_redis = MagicMock()
+        fake_redis.connect = AsyncMock()
+        # The lifespan awaits close() on shutdown.
+        fake_redis.close = AsyncMock()
+
+        settings = MagicMock()
+        settings.redis_rate_limiter_enabled = True
+        settings.redis_url = "redis://example:6379/1"
+        # lifespan opens the real stores, and derives the delivery-cache path
+        # from the audit path's parent, so point them at a temp dir.
+        settings.queue_sqlite_path = str(tmp_path / "queue.db")
+        settings.audit_sqlite_path = str(tmp_path / "audit.db")
+        settings.metrics_sqlite_path = str(tmp_path / "metrics.db")
+        # A MagicMock attribute is not None, so the lifespan would try to use
+        # the mock object itself as a filesystem path.
+        settings.delivery_cache_sqlite_path = str(tmp_path / "delivery_cache.db")
+
+        with patch.object(gateway_module, "get_settings", return_value=settings):
+            with patch.object(
+                gateway_module, "RedisRateLimiter", return_value=fake_redis
+            ) as mock_cls:
+                async with gateway_module.app.router.lifespan_context(gateway_module.app):
+                    pass
+
+        mock_cls.assert_called_once()
+        assert mock_cls.call_args.kwargs["redis_url"] == "redis://example:6379/1"
+        assert mock_cls.call_args.kwargs["max_requests"] == gateway_module.RATE_LIMIT_MAX_REQUESTS
+        assert (
+            mock_cls.call_args.kwargs["window_seconds"] == gateway_module.RATE_LIMIT_WINDOW_SECONDS
+        )
+
+    @pytest.mark.asyncio
+    async def test_lifespan_closes_redis_limiter_on_shutdown(self, tmp_path):
+        """A limiter with close() must be closed during shutdown."""
+        import importlib
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        # verdity.gateway.__init__ re-exports the FastAPI instance as `app`,
+        # which shadows the submodule of the same name. Import by module.
+        gateway_module = importlib.import_module("verdity.gateway.app")
+
+        fake_redis = MagicMock()
+        fake_redis.connect = AsyncMock()
+        fake_redis.close = AsyncMock()
+
+        settings = MagicMock()
+        settings.redis_rate_limiter_enabled = True
+        settings.redis_url = "redis://example:6379/1"
+        # lifespan opens the real stores, and derives the delivery-cache path
+        # from the audit path's parent, so point them at a temp dir.
+        settings.queue_sqlite_path = str(tmp_path / "queue.db")
+        settings.audit_sqlite_path = str(tmp_path / "audit.db")
+        settings.metrics_sqlite_path = str(tmp_path / "metrics.db")
+        # A MagicMock attribute is not None, so the lifespan would try to use
+        # the mock object itself as a filesystem path.
+        settings.delivery_cache_sqlite_path = str(tmp_path / "delivery_cache.db")
+
+        with patch.object(gateway_module, "get_settings", return_value=settings):
+            with patch.object(gateway_module, "RedisRateLimiter", return_value=fake_redis):
+                async with gateway_module.app.router.lifespan_context(gateway_module.app):
+                    pass
+
+        fake_redis.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_lifespan_in_memory_limiter_has_no_close(self):
+        """The in-memory limiter has no close(); shutdown must not call one."""
+        import importlib
+
+        # verdity.gateway.__init__ re-exports the FastAPI instance as `app`,
+        # which shadows the submodule of the same name. Import by module.
+        gateway_module = importlib.import_module("verdity.gateway.app")
+
+        # Run lifespan with Redis disabled and assert nothing blows up.
+        async with gateway_module.app.router.lifespan_context(gateway_module.app):
+            limiter = gateway_module.app.state._rate_limiter
+            assert not hasattr(limiter, "close")
+
+
+class TestUnifiedWebhookGithubBranch:
+    """The generic /webhooks/{platform} route handles GitHub too.
+
+    There are two GitHub webhook routes: a dedicated /webhooks/github and the
+    unified /webhooks/{platform}. Every other test targeted the dedicated one,
+    so the unified route's GitHub branch — including its HMAC secret lookup —
+    never ran.
+    """
+
+    @pytest.mark.asyncio
+    async def test_unified_route_verifies_github_signature(self, gw_client):
+        """A correctly signed GitHub payload must be accepted by the unified route."""
+        import hashlib
+        import hmac
+        import json
+
+        secret = "test-hmac-secret-key-for-dev-only"
+        body = json.dumps(
+            {
+                "action": "opened",
+                "number": 7,
+                "pull_request": {
+                    "number": 7,
+                    "title": "T",
+                    "body": "",
+                    "head": {"sha": "abc"},
+                    "base": {"sha": "def"},
+                    "user": {"login": "u"},
+                },
+                "repository": {
+                    "full_name": "ns/p",
+                    "name": "p",
+                    "owner": {"name": "ns"},
+                },
+            },
+            separators=(",", ":"),
+        ).encode()
+
+        signature = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+
+        resp = await gw_client.post(
+            "/verdity/webhooks/github",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-GitHub-Event": "pull_request",
+                "X-GitHub-Delivery": str(uuid.uuid4()),
+                "X-Hub-Signature-256": signature,
+            },
+        )
+
+        assert resp.status_code == 202, resp.text
+
+    @pytest.mark.asyncio
+    async def test_unified_route_rejects_bad_github_signature(self, gw_client):
+        """A bad HMAC must 401 rather than reach normalization."""
+        resp = await gw_client.post(
+            "/verdity/webhooks/github",
+            content=b'{"action":"opened"}',
+            headers={
+                "Content-Type": "application/json",
+                "X-GitHub-Event": "pull_request",
+                "X-GitHub-Delivery": str(uuid.uuid4()),
+                "X-Hub-Signature-256": "sha256=deadbeef",
+            },
+        )
+
+        assert resp.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_unified_route_returns_400_on_unbuildable_event(self, gw_client):
+        """A payload that passes HMAC but cannot become a VerdityEvent is a 400.
+
+        The route catches the construction failure and converts it to a 400
+        instead of letting a 500 escape to the caller.
+        """
+        import hashlib
+        import hmac
+        import json
+
+        secret = "test-hmac-secret-key-for-dev-only"
+        body = json.dumps({"unexpected": "shape"}).encode()
+        signature = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+
+        # RepoRef.id is required; omitting it makes VerdityEvent construction fail.
+        from unittest.mock import patch
+
+        real_init = RepoRef.__init__
+
+        def strict_init(self, owner, name, **kwargs):
+            kwargs.pop("id", None)
+            real_init(self, owner=owner, name=name, id=None, **kwargs)
+
+        with patch.object(RepoRef, "__init__", strict_init):
+            resp = await gw_client.post(
+                "/verdity/webhooks/github",
+                content=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-GitHub-Event": "pull_request",
+                    "X-GitHub-Delivery": str(uuid.uuid4()),
+                    "X-Hub-Signature-256": signature,
+                },
+            )
+
+        assert resp.status_code == 400
+        # The route rejects the payload before event construction, so the
+        # detail names the normalizer rather than the event builder.
+        assert "normalization" in resp.text.lower()
+
+
+class TestDashboardQueryFailure:
+    """get_metrics_dashboard must degrade to a 500, not propagate."""
+
+    @pytest.mark.asyncio
+    async def test_dashboard_error_returns_500(self):
+        import importlib
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        gateway_module = importlib.import_module("verdity.gateway.app")
+
+        metrics = MagicMock()
+        metrics.get_repo_dashboard = AsyncMock(side_effect=KeyError("missing"))
+
+        with patch.object(gateway_module.app.state, "metrics", metrics, create=True):
+            resp = await gateway_module.get_metrics_dashboard(repo_id="o/r", days=7)
+
+        assert resp.status_code == 500
+        assert "Dashboard query failed" in resp.body.decode()
+
+
+class TestUnifiedWebhookInvalidEventConstruction:
+    """A payload that survives normalization but fails event construction is a 400.
+
+    The generic route builds a VerdityEvent from the normalized dict. If that
+    construction fails (e.g. a non-numeric PR number), the route must answer
+    400 rather than let a 500 escape to the caller.
+
+    Uses bitbucket because /verdity/webhooks/bitbucket has no dedicated route,
+    so this genuinely exercises the generic handler.
+    """
+
+    @pytest.mark.asyncio
+    async def test_bad_pr_number_returns_400(self, gw_client):
+        from unittest.mock import patch
+
+        from verdity.platforms.bitbucket import BitbucketPlatform
+
+        bad_event = {
+            "delivery_id": "d-bb-1",
+            "trigger_type": "pr.opened",
+            "repo": {"owner": "ns", "name": "p"},
+            "pull_request": {"number": "not-a-number", "head_sha": "a", "base_sha": "b"},
+        }
+
+        with (
+            patch.object(
+                BitbucketPlatform,
+                "verify_webhook",
+                return_value=True,
+            ),
+            patch.object(
+                BitbucketPlatform,
+                "normalize_event",
+                return_value=bad_event,
+            ),
+        ):
+            resp = await gw_client.post(
+                "/verdity/webhooks/bitbucket",
+                content=b'{"push":{}}',
+                headers={"Content-Type": "application/json"},
+            )
+
+        assert resp.status_code == 400
+        assert "Invalid event format" in resp.text
+
+
+class TestUnifiedWebhookPayloadLimit:
+    """The generic route re-checks body size itself, not just the middleware.
+
+    security_middleware rejects on the Content-Length header, which is the
+    common case. The route's own check is the defense-in-depth fallback for a
+    request that arrives without (or with a lying) Content-Length, so it has to
+    be exercised directly rather than through the client.
+    """
+
+    @pytest.mark.asyncio
+    async def test_route_raises_413_when_body_exceeds_limit(self):
+        """Calling the route directly must still enforce the cap."""
+        import importlib
+
+        from fastapi import HTTPException, Request
+
+        gateway_module = importlib.import_module("verdity.gateway.app")
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/verdity/webhooks/gitlab",
+            "headers": [(b"content-type", b"application/json")],
+        }
+
+        async def _receive():
+            return {
+                "type": "http.request",
+                "body": b"x" * (gateway_module.MAX_WEBHOOK_BODY_BYTES + 1),
+                "more_body": False,
+            }
+
+        request = Request(scope, receive=_receive)
+
+        # The body is read by the route; the oversized check must fire before
+        # any signature verification or JSON parsing.
+        with pytest.raises(HTTPException) as exc:
+            await gateway_module.handle_platform_webhook("gitlab", request)
+
+        assert exc.value.status_code == 413
