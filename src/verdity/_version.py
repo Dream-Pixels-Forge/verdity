@@ -5,7 +5,6 @@ Reads version from pyproject.toml (single source of truth) and provides it via v
 This avoids hardcoding version in multiple places.
 """
 
-import os
 import sys
 from pathlib import Path
 

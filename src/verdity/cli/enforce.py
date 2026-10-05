@@ -13,7 +13,11 @@ from pathlib import Path
 import click
 import yaml
 
-from verdity.enforcement import Action, EnforcementDecision, EnforcementEngine, GateRule, PATTERNS, regex_search
+from verdity.enforcement import (
+    Action,
+    EnforcementEngine,
+    GateRule,
+)
 
 
 @click.group()
@@ -33,8 +37,10 @@ def load_rules(rules_file: Path) -> list[GateRule]:
         action_str = rule_data["then"].upper()
         try:
             action = Action[action_str]
-        except KeyError:
-            raise ValueError(f"Invalid action: {rule_data['then']}. Valid actions: {[a.value for a in Action]}")
+        except KeyError as exc:
+            raise ValueError(
+                f"Invalid action: {rule_data['then']}. Valid actions: {[a.value for a in Action]}"
+            ) from exc
 
         rule = GateRule(
             id=rule_data["id"],
@@ -66,7 +72,9 @@ def create_finding_proxy(finding_data: dict):
         "line_end": finding_data.get("line_end", 0),
         "summary": finding_data.get("summary", ""),
         "explanation": finding_data.get("explanation", ""),
-        "content": finding_data.get("explanation", "") or finding_data.get("summary", "") or finding_data.get("content", ""),
+        "content": finding_data.get("explanation", "")
+        or finding_data.get("summary", "")
+        or finding_data.get("content", ""),
     }
 
     class FindingProxy:
@@ -96,9 +104,17 @@ def validate(rules_file: Path):
 
 @enforce.command()
 @click.argument("rules_file", type=click.Path(exists=True, path_type=Path))
-@click.option("--finding", "finding_file", type=click.Path(exists=True, path_type=Path), required=True, help="Finding JSON file to test against")
+@click.option(
+    "--finding",
+    "finding_file",
+    type=click.Path(exists=True, path_type=Path),
+    required=True,
+    help="Finding JSON file to test against",
+)
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed output")
-@click.option("--var", "variables", multiple=True, help="Variable substitutions in format key=value")
+@click.option(
+    "--var", "variables", multiple=True, help="Variable substitutions in format key=value"
+)
 def test(rules_file: Path, finding_file: Path, verbose: bool, variables: tuple[str, ...]):
     """Test rules against a finding."""
     # Parse variables
@@ -157,6 +173,7 @@ def test(rules_file: Path, finding_file: Path, verbose: bool, variables: tuple[s
                 when_display = rule.when
                 if var_dict:
                     from verdity.enforcement import substitute_variables
+
                     when_display = substitute_variables(rule.when, var_dict)
                 click.echo(f"    when: {when_display}")
             if matches:

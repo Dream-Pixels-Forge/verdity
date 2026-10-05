@@ -10,7 +10,7 @@ v0.4.6 Features:
 - Budget enforcer with specialist-level limits
 """
 
-from ._version import get_version, __version__
+from ._version import __version__, get_version
 
 __all__ = [
     "MCPServer",

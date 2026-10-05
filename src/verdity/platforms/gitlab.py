@@ -162,6 +162,7 @@ class GitLabPlatform(Platform):
 
         # Parse and normalize
         import json
+
         try:
             payload = json.loads(raw_body)
         except json.JSONDecodeError as exc:
@@ -326,6 +327,7 @@ class GitLabPlatform(Platform):
             Decoded file content as string
         """
         import urllib.parse
+
         encoded_path = urllib.parse.quote(file_path, safe="")
         url = f"https://gitlab.com/api/v4/projects/{project_id}/repository/files/{encoded_path}"
         params = {"ref": ref}

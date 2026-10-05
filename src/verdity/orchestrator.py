@@ -18,11 +18,11 @@ import asyncio
 import contextlib
 import logging
 import uuid
-from typing import Any
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import Any
 
 from verdity.audit_store import AuditStore
 from verdity.event_queue import EventQueue

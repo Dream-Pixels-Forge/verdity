@@ -8,7 +8,6 @@ import yaml
 from verdity.mcp_server import MCPServer, create_mcp_server
 
 
-
 def _mock_orchestrator_review(mock_orchestrator, mock_result):
     """Point a mocked Orchestrator at its REAL review entry point.
 
@@ -269,10 +268,11 @@ class TestMCPServerErrorPaths:
     async def test_call_tool_apply_fix_exception(self):
         """Test call_tool catches exceptions from _apply_fix."""
         server = MCPServer()
-        with patch("verdity.github_client.GitHubClient", side_effect=Exception("GitHub init failed")):
+        with patch(
+            "verdity.github_client.GitHubClient", side_effect=Exception("GitHub init failed")
+        ):
             result = await server.call_tool(
-                "apply_fix",
-                {"fix_patch": "patch", "file_path": "test.py"}
+                "apply_fix", {"fix_patch": "patch", "file_path": "test.py"}
             )
             assert "error" in result
             assert "GitHub init failed" in result["error"]
@@ -283,9 +283,7 @@ class TestMCPServerErrorPaths:
         """Test call_tool catches exceptions from _get_review_rules."""
         server = MCPServer()
         with patch("verdity.review_rules.ReviewRules", side_effect=Exception("Rules init failed")):
-            result = await server.call_tool(
-                "get_review_rules", {"repo_path": "/test/repo"}
-            )
+            result = await server.call_tool("get_review_rules", {"repo_path": "/test/repo"})
             assert "error" in result
             assert "Rules init failed" in result["error"]
             assert result["tool"] == "get_review_rules"
@@ -297,20 +295,27 @@ class TestDiffToFiles:
     def test_diff_to_files_empty_diff(self):
         """Test _diff_to_files with empty diff (line 43)."""
         from verdity.mcp_server import _diff_to_files
+
         result = _diff_to_files("")
         assert result == []
 
     def test_diff_to_files_with_file_path(self):
         """Test _diff_to_files with file_path (line 44-45)."""
         from verdity.mcp_server import _diff_to_files
+
         result = _diff_to_files("test diff", "test.py")
-        assert result == [{"path": "test.py", "content": "test diff", "additions": "test diff", "deletions": ""}]
+        assert result == [
+            {"path": "test.py", "content": "test diff", "additions": "test diff", "deletions": ""}
+        ]
 
     def test_diff_to_files_without_file_path(self):
         """Test _diff_to_files without file_path (line 46)."""
         from verdity.mcp_server import _diff_to_files
+
         result = _diff_to_files("test diff")
-        assert result == [{"path": "unknown", "content": "test diff", "additions": "test diff", "deletions": ""}]
+        assert result == [
+            {"path": "unknown", "content": "test diff", "additions": "test diff", "deletions": ""}
+        ]
 
 
 class TestCallToolFallback:
@@ -322,7 +327,9 @@ class TestCallToolFallback:
         server = MCPServer()
         # Add a fake tool to the tools list but don't implement handler
         original_tools = server._tools
-        server._tools = original_tools + [{"name": "fake_tool", "description": "Fake", "inputSchema": {}}]
+        server._tools = original_tools + [
+            {"name": "fake_tool", "description": "Fake", "inputSchema": {}}
+        ]
 
         try:
             result = await server.call_tool("fake_tool", {})
@@ -421,10 +428,11 @@ class TestVerdityReviewInitialize:
         server = MCPServer()
         server._orchestrator = None
 
-        with patch("verdity.github_client.GitHubClient") as mock_github_client, \
-             patch("verdity.config.get_settings") as mock_get_settings, \
-             patch("verdity.mcp_server.Orchestrator") as mock_orchestrator_class:
-
+        with (
+            patch("verdity.github_client.GitHubClient") as mock_github_client,
+            patch("verdity.config.get_settings") as mock_get_settings,
+            patch("verdity.mcp_server.Orchestrator") as mock_orchestrator_class,
+        ):
             mock_settings = MagicMock()
             mock_settings.github_app_id = "123"
             mock_settings.github_private_key = "key"
@@ -447,8 +455,7 @@ class TestVerdityReviewInitialize:
             mock_orchestrator_class.return_value = mock_orchestrator
 
             result = await server.call_tool(
-                "verdity_review",
-                {"owner": "testorg", "repo": "testrepo", "pr_number": 42}
+                "verdity_review", {"owner": "testorg", "repo": "testrepo", "pr_number": 42}
             )
 
             mock_orchestrator_class.assert_called_once()
@@ -466,10 +473,11 @@ class TestVerdityReview:
     async def test_verdity_review_basic(self):
         """Test basic verdity_review with PR diff."""
         server = MCPServer()
-        with patch("verdity.github_client.GitHubClient") as mock_github_client, \
-             patch("verdity.config.get_settings") as mock_get_settings, \
-             patch.object(server, "_orchestrator") as mock_orchestrator:
-
+        with (
+            patch("verdity.github_client.GitHubClient") as mock_github_client,
+            patch("verdity.config.get_settings") as mock_get_settings,
+            patch.object(server, "_orchestrator") as mock_orchestrator,
+        ):
             # Mock settings
             mock_settings = MagicMock()
             mock_settings.github_app_id = "123"
@@ -481,7 +489,12 @@ class TestVerdityReview:
             mock_client = AsyncMock()
             mock_client.get_pr_diff.return_value = {
                 "files": [
-                    {"filename": "test.py", "patch": "@@ -1 +1 @@\n-old\n+new", "additions": 1, "deletions": 1}
+                    {
+                        "filename": "test.py",
+                        "patch": "@@ -1 +1 @@\n-old\n+new",
+                        "additions": 1,
+                        "deletions": 1,
+                    }
                 ],
                 "base_sha": "abc123",
                 "head_sha": "def456",
@@ -496,7 +509,7 @@ class TestVerdityReview:
 
             result = await server.call_tool(
                 "verdity_review",
-                {"owner": "testorg", "repo": "testrepo", "pr_number": 42, "tier": "balanced"}
+                {"owner": "testorg", "repo": "testrepo", "pr_number": 42, "tier": "balanced"},
             )
 
             assert "review_run_id" in result
@@ -509,10 +522,11 @@ class TestVerdityReview:
     async def test_verdity_review_pr_not_found(self):
         """Test verdity_review when PR diff fetch returns None (404)."""
         server = MCPServer()
-        with patch("verdity.github_client.GitHubClient") as mock_github_client, \
-             patch("verdity.config.get_settings") as mock_get_settings, \
-             patch.object(server, "_orchestrator") as mock_orchestrator:
-
+        with (
+            patch("verdity.github_client.GitHubClient") as mock_github_client,
+            patch("verdity.config.get_settings") as mock_get_settings,
+            patch.object(server, "_orchestrator") as mock_orchestrator,
+        ):
             mock_settings = MagicMock()
             mock_settings.github_app_id = "123"
             mock_settings.github_private_key = "key"
@@ -530,8 +544,7 @@ class TestVerdityReview:
             _mock_orchestrator_review(mock_orchestrator, mock_result)
 
             result = await server.call_tool(
-                "verdity_review",
-                {"owner": "testorg", "repo": "testrepo", "pr_number": 999}
+                "verdity_review", {"owner": "testorg", "repo": "testrepo", "pr_number": 999}
             )
 
             assert "error" in result
@@ -542,10 +555,11 @@ class TestVerdityReview:
     async def test_verdity_review_empty_diff(self):
         """Test verdity_review with empty diff files."""
         server = MCPServer()
-        with patch("verdity.github_client.GitHubClient") as mock_github_client, \
-             patch("verdity.config.get_settings") as mock_get_settings, \
-             patch.object(server, "_orchestrator") as mock_orchestrator:
-
+        with (
+            patch("verdity.github_client.GitHubClient") as mock_github_client,
+            patch("verdity.config.get_settings") as mock_get_settings,
+            patch.object(server, "_orchestrator") as mock_orchestrator,
+        ):
             mock_settings = MagicMock()
             mock_settings.github_app_id = "123"
             mock_settings.github_private_key = "key"
@@ -566,8 +580,7 @@ class TestVerdityReview:
             _mock_orchestrator_review(mock_orchestrator, mock_result)
 
             result = await server.call_tool(
-                "verdity_review",
-                {"owner": "testorg", "repo": "testrepo", "pr_number": 42}
+                "verdity_review", {"owner": "testorg", "repo": "testrepo", "pr_number": 42}
             )
 
             assert result["total_findings"] == 0
@@ -576,10 +589,11 @@ class TestVerdityReview:
     async def test_verdity_review_tier_selection(self):
         """Test verdity_review tier selection logic (lite, balanced, deep)."""
         server = MCPServer()
-        with patch("verdity.github_client.GitHubClient") as mock_github_client, \
-             patch("verdity.config.get_settings") as mock_get_settings, \
-             patch.object(server, "_orchestrator") as mock_orchestrator:
-
+        with (
+            patch("verdity.github_client.GitHubClient") as mock_github_client,
+            patch("verdity.config.get_settings") as mock_get_settings,
+            patch.object(server, "_orchestrator") as mock_orchestrator,
+        ):
             mock_settings = MagicMock()
             mock_settings.github_app_id = "123"
             mock_settings.github_private_key = "key"
@@ -602,14 +616,14 @@ class TestVerdityReview:
             # Test lite tier
             result_lite = await server.call_tool(
                 "verdity_review",
-                {"owner": "testorg", "repo": "testrepo", "pr_number": 42, "tier": "lite"}
+                {"owner": "testorg", "repo": "testrepo", "pr_number": 42, "tier": "lite"},
             )
             assert result_lite["tier"] == "lite"
 
             # Test deep tier
             result_deep = await server.call_tool(
                 "verdity_review",
-                {"owner": "testorg", "repo": "testrepo", "pr_number": 42, "tier": "deep"}
+                {"owner": "testorg", "repo": "testrepo", "pr_number": 42, "tier": "deep"},
             )
             assert result_deep["tier"] == "deep"
 
@@ -627,11 +641,12 @@ class TestVerdityReview:
     async def test_verdity_review_post_to_github(self):
         """Test verdity_review with post_to_github=True."""
         server = MCPServer()
-        with patch("verdity.github_client.GitHubClient") as mock_github_client, \
-             patch("verdity.config.get_settings") as mock_get_settings, \
-             patch("verdity.github_client.create_check_output") as mock_create_check, \
-             patch.object(server, "_orchestrator") as mock_orchestrator:
-
+        with (
+            patch("verdity.github_client.GitHubClient") as mock_github_client,
+            patch("verdity.config.get_settings") as mock_get_settings,
+            patch("verdity.github_client.create_check_output") as mock_create_check,
+            patch.object(server, "_orchestrator") as mock_orchestrator,
+        ):
             mock_settings = MagicMock()
             mock_settings.github_app_id = "123"
             mock_settings.github_private_key = "key"
@@ -656,7 +671,7 @@ class TestVerdityReview:
 
             result = await server.call_tool(
                 "verdity_review",
-                {"owner": "testorg", "repo": "testrepo", "pr_number": 42, "post_to_github": True}
+                {"owner": "testorg", "repo": "testrepo", "pr_number": 42, "post_to_github": True},
             )
 
             assert "github_check" in result
@@ -667,10 +682,11 @@ class TestVerdityReview:
     async def test_verdity_review_exception_handling(self):
         """Test verdity_review handles exceptions gracefully."""
         server = MCPServer()
-        with patch("verdity.github_client.GitHubClient") as mock_github_client, \
-             patch("verdity.config.get_settings") as mock_get_settings, \
-             patch.object(server, "_orchestrator") as mock_orchestrator:
-
+        with (
+            patch("verdity.github_client.GitHubClient") as mock_github_client,
+            patch("verdity.config.get_settings") as mock_get_settings,
+            patch.object(server, "_orchestrator") as mock_orchestrator,
+        ):
             mock_settings = MagicMock()
             mock_settings.github_app_id = "123"
             mock_settings.github_private_key = "key"
@@ -688,8 +704,7 @@ class TestVerdityReview:
             _mock_orchestrator_review(mock_orchestrator, mock_result)
 
             result = await server.call_tool(
-                "verdity_review",
-                {"owner": "testorg", "repo": "testrepo", "pr_number": 42}
+                "verdity_review", {"owner": "testorg", "repo": "testrepo", "pr_number": 42}
             )
 
             assert "error" in result
@@ -725,8 +740,8 @@ rules:
                         "summary": "Test finding",
                         "explanation": "Details",
                     },
-                    "rules_file": "/custom/rules.yml"
-                }
+                    "rules_file": "/custom/rules.yml",
+                },
             )
 
             assert "action" in result
@@ -746,11 +761,10 @@ rules:
 
             with patch("verdity.enforcement.EnforcementEngine") as mock_engine_class:
                 from verdity.enforcement import EnforcementDecision
+
                 mock_engine = AsyncMock()
                 mock_decision = EnforcementDecision(
-                    action="require_approval",
-                    rule_id="default-rule",
-                    message="Requires approval"
+                    action="require_approval", rule_id="default-rule", message="Requires approval"
                 )
                 mock_engine.evaluate_with_context.return_value = mock_decision
                 mock_engine_class.return_value = mock_engine
@@ -766,7 +780,7 @@ rules:
                             "concern": "security",
                             "summary": "Test finding",
                         }
-                    }
+                    },
                 )
 
                 assert result["action"] == "REQUIRE_APPROVAL"
@@ -779,6 +793,7 @@ rules:
         with patch("verdity.enforcement.load_rules_from_yaml", side_effect=FileNotFoundError()):
             with patch("verdity.enforcement.EnforcementEngine") as mock_engine_class:
                 from verdity.enforcement import EnforcementDecision
+
                 mock_engine = AsyncMock()
                 mock_decision = EnforcementDecision(action="allow")
                 mock_engine.evaluate_with_context.return_value = mock_decision
@@ -795,7 +810,7 @@ rules:
                             "concern": "code_quality",
                             "summary": "Test finding",
                         }
-                    }
+                    },
                 )
 
                 assert result["action"] == "ALLOW"
@@ -807,6 +822,7 @@ rules:
         with patch("verdity.enforcement.load_rules_from_yaml", side_effect=FileNotFoundError()):
             with patch("verdity.enforcement.EnforcementEngine") as mock_engine_class:
                 from verdity.enforcement import EnforcementDecision
+
                 mock_engine = AsyncMock()
                 mock_decision = EnforcementDecision(action="allow")
                 mock_engine.evaluate_with_context.return_value = mock_decision
@@ -827,7 +843,7 @@ rules:
                             "summary": "SQL injection",
                             "explanation": "User input not sanitized",
                         }
-                    }
+                    },
                 )
                 assert result["finding"]["concern"] == "security"
 
@@ -843,7 +859,7 @@ rules:
                             "concern": "testing",
                             "summary": "Missing test",
                         }
-                    }
+                    },
                 )
                 assert result["finding"]["concern"] == "testing"
 
@@ -868,7 +884,7 @@ rules:
                             "concern": "code_quality",
                             "summary": "Test",
                         }
-                    }
+                    },
                 )
 
                 assert "error" in result
@@ -889,9 +905,7 @@ class TestVerdityRulesList:
             ]
         }
         with patch("builtins.open", mock_open(read_data=yaml.dump(rules_data))):
-            result = await server.call_tool(
-                "verdity_rules_list", {"repo_path": "/test/repo"}
-            )
+            result = await server.call_tool("verdity_rules_list", {"repo_path": "/test/repo"})
 
             assert result["repo_path"] == "/test/repo"
             assert len(result["rules"]) == 2
@@ -915,9 +929,7 @@ class TestVerdityRulesList:
         """Test verdity_rules_list handles YAML parse errors."""
         server = MCPServer()
         with patch("builtins.open", mock_open(read_data="invalid: yaml: : :")):
-            result = await server.call_tool(
-                "verdity_rules_list", {"repo_path": "/test/repo"}
-            )
+            result = await server.call_tool("verdity_rules_list", {"repo_path": "/test/repo"})
 
             assert "error" in result
 
@@ -927,9 +939,7 @@ class TestVerdityRulesList:
         server = MCPServer()
         rules_data = {"other_key": "value"}  # No "rules" key
         with patch("builtins.open", mock_open(read_data=yaml.dump(rules_data))):
-            result = await server.call_tool(
-                "verdity_rules_list", {"repo_path": "/test/repo"}
-            )
+            result = await server.call_tool("verdity_rules_list", {"repo_path": "/test/repo"})
 
             assert result["rules"] == []
 
@@ -968,8 +978,8 @@ class TestApplyFix:
                     "fix_patch": "--- a/test.py\n+++ b/test.py\n@@ -1 +1 @@\n-old\n+new",
                     "file_path": "test.py",
                     "branch": "feature/test",
-                    "commit_message": "fix: apply fix"
-                }
+                    "commit_message": "fix: apply fix",
+                },
             )
 
             assert result["sha"] == "abc123"
@@ -985,11 +995,7 @@ class TestApplyFix:
             mock_github_client.return_value = mock_client
 
             result = await server.call_tool(
-                "apply_fix",
-                {
-                    "fix_patch": "patch",
-                    "file_path": "test.py"
-                }
+                "apply_fix", {"fix_patch": "patch", "file_path": "test.py"}
             )
 
             # Check defaults were used
@@ -1027,9 +1033,7 @@ class TestGetReviewRules:
             mock_rules_instance.get_rules.return_value = {"rules": ["rule1"]}
             mock_review_rules.return_value = mock_rules_instance
 
-            result = await server.call_tool(
-                "get_review_rules", {"repo_path": "/test/repo"}
-            )
+            result = await server.call_tool("get_review_rules", {"repo_path": "/test/repo"})
 
             assert result["rules"] == ["rule1"]
             mock_rules_instance.get_rules.assert_called_once_with("")

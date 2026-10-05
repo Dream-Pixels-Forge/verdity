@@ -209,10 +209,12 @@ class ApprovalQueue:
         )
         if not rows:
             return None
+
         class ApprovalItem:
             def __init__(self, **kwargs):
                 for k, v in kwargs.items():
                     setattr(self, k, v)
+
         return ApprovalItem(**dict(rows[0]))
 
     async def stats(self, repo_id: str | None = None) -> dict[str, int]:
@@ -244,7 +246,7 @@ class ApprovalQueue:
             SELECT * FROM approval_queue
             WHERE status = 'pending'
               AND escalated = 0
-              AND datetime(created_at, '+' || sla_hours || ' hours') < ?
+              AND datetime(created_at, '+' || sla_hours || ' hours') < datetime(?)
             """,
             (cutoff,),
         )
@@ -256,11 +258,13 @@ class ApprovalQueue:
                 "UPDATE approval_queue SET escalated = 1 WHERE id = ?",
                 (row["id"],),
             )
+
             # Create an object with attribute access for test compatibility
             class EscalatedItem:
                 def __init__(self, **kwargs):
                     for k, v in kwargs.items():
                         setattr(self, k, v)
+
             escalated_items.append(EscalatedItem(**dict(row)))
 
         if escalated_items:
@@ -269,6 +273,6 @@ class ApprovalQueue:
 
         return escalated_items
 
+
 # Backward compatibility alias
 ApprovalQueueStore = ApprovalQueue
-

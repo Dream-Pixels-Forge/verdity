@@ -129,7 +129,9 @@ def create_check_output(findings: list[Finding]) -> dict[str, Any]:
         text_parts.append(
             f"#### {i}. {severity_emoji} {finding.concern.value.title()}: {finding.summary}"
         )
-        text_parts.append(f"**File:** `{finding.file}` (lines {finding.line_start}-{finding.line_end})")
+        text_parts.append(
+            f"**File:** `{finding.file}` (lines {finding.line_start}-{finding.line_end})"
+        )
         text_parts.append(f"**Severity:** {finding.severity.value.upper()}")
         text_parts.append(f"**Confidence:** {finding.confidence:.0%}")
         text_parts.append(f"**Explanation:** {finding.explanation}")
@@ -579,7 +581,6 @@ class GitHubClient:
     async def __aexit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
         """Async context manager exit - ensures client is closed."""
         await self.close()
-
 
     # ── PR Diff Fetching ──────────────────────────────────────────────
 

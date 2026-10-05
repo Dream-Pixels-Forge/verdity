@@ -816,18 +816,6 @@ class MCPServer:
         diff = args.get("diff", "")
         file_path = args.get("file_path", "")
 
-        from .schemas import SpecialistContext
-
-        ctx = SpecialistContext(
-            review_run_id=uuid.uuid4(),
-            repo_owner="mcp",
-            repo_name="client",
-            base_sha="",
-            head_sha="",
-            diff_files=_diff_to_files(diff, file_path),
-            policy=ReviewPolicy(),
-        )
-
         try:
             result = await self._run_orchestrator(
                 owner="mcp",
@@ -849,9 +837,9 @@ class MCPServer:
 
     async def _verdity_review(self, args: dict[str, Any]) -> dict[str, Any]:
         """Trigger a full Verdity PR review on a GitHub PR."""
-        from .github_client import GitHubClient
-        from .schemas import SpecialistContext, ReviewPolicy
         from verdity.config import get_settings
+
+        from .github_client import GitHubClient
 
         owner = args["owner"]
         repo = args["repo"]
@@ -889,24 +877,8 @@ class MCPServer:
                     }
                 )
 
-            # Determine policy based on tier
-            policy = ReviewPolicy(
-                tier=tier,
-                timeout_seconds={"lite": 30, "balanced": 120, "deep": 300}[tier],
-                budget_tokens={"lite": 5000, "balanced": 40000, "deep": 200000}[tier],
-            )
-
-            ctx = SpecialistContext(
-                review_run_id=uuid.uuid4(),
-                repo_owner=owner,
-                repo_name=repo,
-                base_sha=pr_diff.get("base_sha", ""),
-                head_sha=pr_diff.get("head_sha", ""),
-                diff_files=diff_files,
-                policy=policy,
-            )
-
-            # Run review through the orchestrator's real entry point.
+            # Run review through the orchestrator's real entry point. The tier
+            # is resolved inside _run_orchestrator, which builds its own policy.
             result = await self._run_orchestrator(
                 owner=owner,
                 repo=repo,
@@ -959,7 +931,7 @@ class MCPServer:
 
     async def _verdity_enforce(self, args: dict[str, Any]) -> dict[str, Any]:
         """Test a finding against Verdity's enforcement engine."""
-        from .enforcement import EnforcementEngine, GateRule, Action, load_rules_from_yaml
+        from .enforcement import Action, EnforcementEngine, GateRule, load_rules_from_yaml
 
         finding_data = args["finding"]
         rules_file = args.get("rules_file")
@@ -1013,7 +985,6 @@ class MCPServer:
 
     async def _verdity_rules_list(self, args: dict[str, Any]) -> dict[str, Any]:
         """List all enforcement rules from a repository's .verdity/rules.yml file."""
-        from .enforcement import load_rules_from_yaml
         import yaml
 
         repo_path = args["repo_path"]

@@ -78,13 +78,16 @@ def run(
         )
         await server.initialize()
 
-        result = await server.call_tool("verdity_review", {
-            "owner": owner,
-            "repo": repo,
-            "pr_number": pr_number,
-            "tier": tier,
-            "post_to_github": post_check or post_comment,
-        })
+        result = await server.call_tool(
+            "verdity_review",
+            {
+                "owner": owner,
+                "repo": repo,
+                "pr_number": pr_number,
+                "tier": tier,
+                "post_to_github": post_check or post_comment,
+            },
+        )
 
         await server.shutdown()
 
@@ -102,7 +105,7 @@ def _print_text_result(result: dict):
         click.echo(f"Error: {result['error']}", err=True)
         sys.exit(1)
 
-    click.echo(f"\n=== Verdity Review Results ===")
+    click.echo("\n=== Verdity Review Results ===")
     click.echo(f"PR: #{result.get('pr_number', 'unknown')}")
     click.echo(f"Tier: {result.get('tier', 'unknown')}")
     click.echo(f"Review Run ID: {result.get('review_run_id', 'unknown')}")
@@ -116,6 +119,7 @@ def _print_text_result(result: dict):
 
     # Group by severity
     from collections import defaultdict
+
     by_severity = defaultdict(list)
     for f in findings:
         by_severity[f.get("severity", "unknown")].append(f)
@@ -125,7 +129,9 @@ def _print_text_result(result: dict):
         if sev in by_severity:
             click.echo(f"\n--- {sev.upper()} ({len(by_severity[sev])}) ---")
             for f in by_severity[sev]:
-                click.echo(f"  {f.get('file_path', 'unknown')}:{f.get('line', 0)} - {f.get('message', 'No message')}")
+                click.echo(
+                    f"  {f.get('file_path', 'unknown')}:{f.get('line', 0)} - {f.get('message', 'No message')}"
+                )
 
 
 @review.command()
@@ -136,8 +142,8 @@ def _print_text_result(result: dict):
 @click.option("--output", type=click.Choice(["json", "text"]), default="json")
 def diff(owner: str, repo: str, pr_number: int, tier: str, output: str):
     """Fetch and display PR diff (for debugging)."""
-    from verdity.github_client import GitHubClient
     from verdity.config import get_settings
+    from verdity.github_client import GitHubClient
 
     async def _run():
         settings = get_settings()
@@ -145,9 +151,7 @@ def diff(owner: str, repo: str, pr_number: int, tier: str, output: str):
             app_id=settings.github_app_id,
             private_key_pem=settings.github_app_private_key.get_secret_value(),
             installation_id=settings.github_app_installation_id,
-            token=settings.github_token.get_secret_value()
-            if settings.github_token
-            else None,
+            token=settings.github_token.get_secret_value() if settings.github_token else None,
         )
 
         diff = await client.get_pr_diff(owner, repo, pr_number)
@@ -165,19 +169,26 @@ def diff(owner: str, repo: str, pr_number: int, tier: str, output: str):
             click.echo(f"  Head SHA: {diff['head_sha'][:8]}")
             click.echo(f"  Files changed: {len(diff['files'])}")
             for f in diff["files"]:
-                click.echo(f"  - {f['filename']} (+{f['additions']}/-{f['deletions']}) [{f['status']}]")
+                click.echo(
+                    f"  - {f['filename']} (+{f['additions']}/-{f['deletions']}) [{f['status']}]"
+                )
 
     asyncio.run(_run())
 
 
 @review.command()
 @click.argument("finding_file", type=click.Path(exists=True, path_type=Path))
-@click.option("--rules", "rules_file", type=click.Path(exists=True, path_type=Path), help="Custom rules YAML file")
+@click.option(
+    "--rules",
+    "rules_file",
+    type=click.Path(exists=True, path_type=Path),
+    help="Custom rules YAML file",
+)
 @click.option("--var", "variables", multiple=True, help="Variables in format key=value")
 @click.option("--output", type=click.Choice(["json", "text"]), default="json")
 def enforce(finding_file: Path, rules_file: Path | None, variables: tuple[str, ...], output: str):
     """Test a finding against enforcement rules."""
-    from verdity.enforcement import EnforcementEngine, GateRule, Action, load_rules_from_yaml
+    from verdity.enforcement import EnforcementEngine, load_rules_from_yaml
 
     # Parse variables
     var_dict = {}
@@ -208,15 +219,21 @@ def enforce(finding_file: Path, rules_file: Path | None, variables: tuple[str, .
     finding_proxy = _create_finding_proxy(finding_data)
 
     import asyncio
+
     decision = asyncio.run(engine.evaluate_with_context(finding_proxy, var_dict))
 
     if output == "json":
-        click.echo(json.dumps({
-            "action": decision.action.upper(),
-            "blocked": decision.blocked,
-            "rule_id": decision.rule_id,
-            "message": decision.message,
-        }, indent=2))
+        click.echo(
+            json.dumps(
+                {
+                    "action": decision.action.upper(),
+                    "blocked": decision.blocked,
+                    "rule_id": decision.rule_id,
+                    "message": decision.message,
+                },
+                indent=2,
+            )
+        )
     else:
         click.echo(f"Action: {decision.action.upper()}")
         if decision.blocked:
@@ -235,7 +252,9 @@ def _create_finding_proxy(finding_data: dict) -> object:
         "line_end": finding_data.get("line_end", finding_data.get("line", 0)),
         "summary": finding_data.get("summary", finding_data.get("message", "")),
         "explanation": finding_data.get("explanation", ""),
-        "content": finding_data.get("explanation", "") or finding_data.get("summary", "") or finding_data.get("content", ""),
+        "content": finding_data.get("explanation", "")
+        or finding_data.get("summary", "")
+        or finding_data.get("content", ""),
     }
 
     class FindingProxy:

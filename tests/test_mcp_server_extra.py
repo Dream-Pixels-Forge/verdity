@@ -33,8 +33,9 @@ class TestDiffFilesReachSpecialists:
 
     def test_queue_envelope_accepts_diff_files(self):
         """QueueEnvelope is the carrier; it needs the field."""
-        from verdity.schemas._models import QueueEnvelope, RepoRef, TriggerType, VerdityEvent
         import uuid as _uuid
+
+        from verdity.schemas._models import QueueEnvelope, RepoRef, TriggerType, VerdityEvent
 
         envelope = QueueEnvelope(
             event=VerdityEvent(
@@ -96,7 +97,12 @@ class TestDiffFilesReachSpecialists:
                 repo="r",
                 pr_number=1,
                 diff_files=[
-                    {"path": "gui/updater.py", "content": "+ os.system(x)", "additions": 1, "deletions": 0}
+                    {
+                        "path": "gui/updater.py",
+                        "content": "+ os.system(x)",
+                        "additions": 1,
+                        "deletions": 0,
+                    }
                 ],
             )
 

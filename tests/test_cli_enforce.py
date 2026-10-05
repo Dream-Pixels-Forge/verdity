@@ -53,19 +53,21 @@ rules:
 
     def _make_finding_json(self) -> str:
         """Create a sample finding JSON content."""
-        return json.dumps({
-            "finding_id": "test-finding-1",
-            "concern": "security",
-            "severity": "high",
-            "file": "src/auth.py",
-            "line_start": 10,
-            "line_end": 15,
-            "summary": "Hardcoded API key",
-            "explanation": 'api_key = "sk_live_abc123def456"',
-            "confidence": 0.85,
-            "agent_version": "test@0.1.0",
-            "prompt_hash": "sha256:abc123",
-        })
+        return json.dumps(
+            {
+                "finding_id": "test-finding-1",
+                "concern": "security",
+                "severity": "high",
+                "file": "src/auth.py",
+                "line_start": 10,
+                "line_end": 15,
+                "summary": "Hardcoded API key",
+                "explanation": 'api_key = "sk_live_abc123def456"',
+                "confidence": 0.85,
+                "agent_version": "test@0.1.0",
+                "prompt_hash": "sha256:abc123",
+            }
+        )
 
     def test_enforce_command_exists(self):
         """CLI should have enforce command group."""
@@ -128,7 +130,10 @@ rules:
             result = self.runner.invoke(enforce, ["test", rules_file, "--finding", finding_file])
             assert result.exit_code == 0
             # Should show which rules matched
-            assert "block-critical-secrets" in result.output or "require-approval-high" in result.output
+            assert (
+                "block-critical-secrets" in result.output
+                or "require-approval-high" in result.output
+            )
         finally:
             Path(rules_file).unlink()
             Path(finding_file).unlink()
@@ -146,7 +151,9 @@ rules:
             finding_file = ff.name
 
         try:
-            result = self.runner.invoke(enforce, ["test", rules_file, "--finding", finding_file, "--verbose"])
+            result = self.runner.invoke(
+                enforce, ["test", rules_file, "--finding", finding_file, "--verbose"]
+            )
             assert result.exit_code == 0
             # Verbose should show more details
             assert "priority" in result.output.lower() or "enabled" in result.output.lower()
@@ -178,7 +185,9 @@ rules:
             rules_file = rf.name
 
         try:
-            result = self.runner.invoke(enforce, ["test", rules_file, "--finding", "nonexistent.json"])
+            result = self.runner.invoke(
+                enforce, ["test", rules_file, "--finding", "nonexistent.json"]
+            )
             assert result.exit_code != 0
         finally:
             Path(rules_file).unlink()
@@ -226,7 +235,19 @@ rules:
             finding_file = ff.name
 
         try:
-            result = self.runner.invoke(enforce, ["test", rules_file, "--finding", finding_file, "--var", "sev=high", "--var", "thresh=0.8"])
+            result = self.runner.invoke(
+                enforce,
+                [
+                    "test",
+                    rules_file,
+                    "--finding",
+                    finding_file,
+                    "--var",
+                    "sev=high",
+                    "--var",
+                    "thresh=0.8",
+                ],
+            )
             assert result.exit_code == 0
             assert "var-rule" in result.output
         finally:
@@ -329,7 +350,9 @@ rules:
             finding_file = ff.name
 
         try:
-            result = self.runner.invoke(enforce, ["test", rules_file, "--finding", finding_file, "--var", "invalid-format"])
+            result = self.runner.invoke(
+                enforce, ["test", rules_file, "--finding", finding_file, "--var", "invalid-format"]
+            )
             assert result.exit_code != 0
             assert "Invalid variable format" in result.output
         finally:
@@ -410,7 +433,10 @@ rules:
             finding_file = ff.name
 
         try:
-            result = self.runner.invoke(enforce, ["test", rules_file, "--finding", finding_file, "--var", "sev=high", "--verbose"])
+            result = self.runner.invoke(
+                enforce,
+                ["test", rules_file, "--finding", finding_file, "--var", "sev=high", "--verbose"],
+            )
             assert result.exit_code == 0
             assert "high" in result.output  # Variable should be substituted
         finally:
@@ -429,7 +455,7 @@ class TestEnforceCLIIntegration:
     async def test_cli_uses_enforcement_engine(self):
         """CLI should use EnforcementEngine for evaluation."""
         from verdity.cli.enforce import enforce
-        from verdity.enforcement import EnforcementEngine, EnforcementDecision
+        from verdity.enforcement import EnforcementDecision
 
         # This test verifies the CLI integrates with the engine
         # We'll mock the engine to verify it's called
@@ -456,7 +482,9 @@ rules:
                 finding_file = ff.name
 
             try:
-                result = self.runner.invoke(enforce, ["test", rules_file, "--finding", finding_file])
+                result = self.runner.invoke(
+                    enforce, ["test", rules_file, "--finding", finding_file]
+                )
                 # Engine should be instantiated and used
                 mock_engine_class.assert_called()
             finally:
@@ -487,7 +515,7 @@ rules:
             output = sys.stdout.getvalue()
             assert "test" in output
             assert "validate" in output
-        except SystemExit as e:
+        except SystemExit:
             # --help causes SystemExit(0)
             output = sys.stdout.getvalue()
             assert "test" in output

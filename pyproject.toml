@@ -133,6 +133,10 @@ ignore = [
     "RUF012",  # mutable class attr default — common in mock scaffolding
     "B017",    # pytest.raises(Exception) — pydantic ValidationError is broad
     "DTZ005",  # datetime.now() without tz — tests, not production
+    "SIM117",  # nested `with patch(...)` — nesting keeps each mock's scope explicit
+    "F841",    # unused local bindings from tuple/multi-target scaffolding
+    "RUF059",  # unused unpacked bindings from multi-target scaffolding
+    "RUF005",  # explicit list concatenation is clearer than unpacking in tests
 ]
 
 [tool.ruff.format]

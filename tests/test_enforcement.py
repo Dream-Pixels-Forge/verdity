@@ -11,9 +11,7 @@ Covers:
 
 from __future__ import annotations
 
-import asyncio
 import os
-from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -21,26 +19,28 @@ import httpx
 import pytest
 import pytest_asyncio
 
-from verdity.schemas import ConcernType, Finding, RankedFinding, Severity
 from verdity.router import RouteAction
+from verdity.schemas import ConcernType, Finding, Severity
 
 
 @pytest_asyncio.fixture
 async def enforcement_fixture():
     """Set up enforcement components."""
-    from verdity.enforcement import EnforcementEngine, GateRule, Action
-    from verdity.github_client import GitHubClient
     from verdity.approval_queue import ApprovalQueue
-    from verdity.budget_enforcer import BudgetEnforcer
-    from verdity.token_economics import TokenEconomicsService
     from verdity.audit_store import AuditStore
+    from verdity.budget_enforcer import BudgetEnforcer
+    from verdity.enforcement import EnforcementEngine
     from verdity.event_queue import EventQueue
+    from verdity.github_client import GitHubClient
     from verdity.metrics_store import MetricsStore
+    from verdity.token_economics import TokenEconomicsService
 
     # Set required env vars
     os.environ["GITHUB_APP_ID"] = "12345"
     os.environ["GITHUB_APP_INSTALLATION_ID"] = "98765"
-    os.environ["GITHUB_APP_PRIVATE_KEY"] = "-----BEGIN RSA PRIVATE KEY-----\ntest\n-----END RSA PRIVATE KEY-----"
+    os.environ["GITHUB_APP_PRIVATE_KEY"] = (
+        "-----BEGIN RSA PRIVATE KEY-----\ntest\n-----END RSA PRIVATE KEY-----"
+    )
 
     # Initialize components
     audit_store = AuditStore(db_path=":memory:")
@@ -105,7 +105,7 @@ class TestGateRule:
 
     def test_gate_rule_creation(self):
         """GateRule should be created with id, when, then, message."""
-        from verdity.enforcement import GateRule, Action
+        from verdity.enforcement import Action, GateRule
 
         rule = GateRule(
             id="block-critical",
@@ -139,7 +139,7 @@ class TestEnforcementEngine:
         engine = enforcement_fixture["enforcement_engine"]
 
         # Add blocking rule
-        from verdity.enforcement import GateRule, Action
+        from verdity.enforcement import Action, GateRule
 
         rule = GateRule(
             id="block-critical",
@@ -160,7 +160,7 @@ class TestEnforcementEngine:
         """Engine should ALLOW when finding doesn't match blocking rules."""
         engine = enforcement_fixture["enforcement_engine"]
 
-        from verdity.enforcement import GateRule, Action
+        from verdity.enforcement import Action, GateRule
 
         rule = GateRule(
             id="block-critical",
@@ -180,7 +180,7 @@ class TestEnforcementEngine:
         """Engine should REQUIRE_APPROVAL when rule matches."""
         engine = enforcement_fixture["enforcement_engine"]
 
-        from verdity.enforcement import GateRule, Action
+        from verdity.enforcement import Action, GateRule
 
         rule = GateRule(
             id="require-approval-high",
@@ -200,7 +200,7 @@ class TestEnforcementEngine:
         """Engine should ESCALATE when rule matches."""
         engine = enforcement_fixture["enforcement_engine"]
 
-        from verdity.enforcement import GateRule, Action
+        from verdity.enforcement import Action, GateRule
 
         rule = GateRule(
             id="escalate-medium",
@@ -220,7 +220,7 @@ class TestEnforcementEngine:
         """Engine should apply first matching rule."""
         engine = enforcement_fixture["enforcement_engine"]
 
-        from verdity.enforcement import GateRule, Action
+        from verdity.enforcement import Action, GateRule
 
         # Rule 1: block CRITICAL
         rule1 = GateRule(
@@ -260,7 +260,7 @@ class TestEnforcementEngine:
         """Engine should evaluate blocking rules BEFORE confidence threshold."""
         engine = enforcement_fixture["enforcement_engine"]
 
-        from verdity.enforcement import GateRule, Action
+        from verdity.enforcement import Action, GateRule
 
         rule = GateRule(
             id="block-low-conf-critical",
@@ -304,43 +304,51 @@ class TestGitHubChecksAPI:
         """create_check_run should call GitHub API with correct parameters."""
         client = enforcement_fixture["github_client"]
 
-        with patch.object(client, "_get_installation_token", new_callable=AsyncMock, return_value="fake-token"):
-            with patch("httpx.AsyncClient.request", new_callable=AsyncMock) as mock_request:
-                mock_request.return_value = httpx.Response(
-                    200, json={"id": 12345, "status": "in_progress"}
-                )
+        with (
+            patch.object(
+                client, "_get_installation_token", new_callable=AsyncMock, return_value="fake-token"
+            ),
+            patch("httpx.AsyncClient.request", new_callable=AsyncMock) as mock_request,
+        ):
+            mock_request.return_value = httpx.Response(
+                200, json={"id": 12345, "status": "in_progress"}
+            )
 
-                result = await client.create_check_run(
-                    owner="test-owner",
-                    repo="test-repo",
-                    name="verdity-review",
-                    head_sha="abc123",
-                    status="in_progress",
-                    conclusion=None,
-                )
+            result = await client.create_check_run(
+                owner="test-owner",
+                repo="test-repo",
+                name="verdity-review",
+                head_sha="abc123",
+                status="in_progress",
+                conclusion=None,
+            )
 
-                assert result["id"] == 12345
+            assert result["id"] == 12345
 
     @pytest.mark.asyncio
     async def test_update_check_run_calls_github_api(self, enforcement_fixture):
         """update_check_run should call GitHub API with correct parameters."""
         client = enforcement_fixture["github_client"]
 
-        with patch.object(client, "_get_installation_token", new_callable=AsyncMock, return_value="fake-token"):
-            with patch("httpx.AsyncClient.request", new_callable=AsyncMock) as mock_request:
-                mock_request.return_value = httpx.Response(
-                    200, json={"id": 12345, "status": "completed", "conclusion": "success"}
-                )
+        with (
+            patch.object(
+                client, "_get_installation_token", new_callable=AsyncMock, return_value="fake-token"
+            ),
+            patch("httpx.AsyncClient.request", new_callable=AsyncMock) as mock_request,
+        ):
+            mock_request.return_value = httpx.Response(
+                200, json={"id": 12345, "status": "completed", "conclusion": "success"}
+            )
 
-                result = await client.update_check_run(
-                    owner="test-owner",
-                    repo="test-repo",
-                    check_run_id=12345,
-                    status="completed",
-                    conclusion="success",
-                )
+            result = await client.update_check_run(
+                owner="test-owner",
+                repo="test-repo",
+                check_run_id=12345,
+                status="completed",
+                conclusion="success",
+            )
 
-                assert result["conclusion"] == "success"
+            assert result["conclusion"] == "success"
 
 
 # ── Approval Queue SLA Tests ────────────────────────────────────────────────
@@ -390,6 +398,48 @@ class TestApprovalQueueSLA:
 
         assert len(escalated) >= 1
         assert any(e.id == "test-sla-1" for e in escalated)
+
+    @pytest.mark.asyncio
+    async def test_sla_boundary_respects_both_directions(self, enforcement_fixture):
+        """Regression: created_at is stored as ISO with 'T' and '+00:00', while
+        SQLite's datetime() yields 'YYYY-MM-DD HH:MM:SS'. Comparing the two as
+        TEXT made every pending item look overdue, so items were escalated
+        immediately instead of after their SLA elapsed.
+
+        Both directions must hold: an item inside its SLA stays pending, and an
+        item past its SLA escalates.
+        """
+        approval_queue = enforcement_fixture["approval_queue"]
+
+        from verdity.approval_queue import ApprovalItem
+
+        now = datetime.now(UTC)
+        inside = ApprovalItem(
+            id="sla-inside",
+            repo_id="acme/widgets",
+            pr_number=1,
+            finding_id="f-inside",
+            reason="Within SLA",
+            sla_hours=24,
+            created_at=now - timedelta(hours=1),
+        )
+        outside = ApprovalItem(
+            id="sla-outside",
+            repo_id="acme/widgets",
+            pr_number=2,
+            finding_id="f-outside",
+            reason="Past SLA",
+            sla_hours=1,
+            created_at=now - timedelta(hours=2),
+        )
+        await approval_queue.add_item(inside)
+        await approval_queue.add_item(outside)
+
+        escalated = await approval_queue.check_sla_escalations()
+        escalated_ids = {e.id for e in escalated}
+
+        assert "sla-inside" not in escalated_ids
+        assert "sla-outside" in escalated_ids
 
     @pytest.mark.asyncio
     async def test_sla_not_escalated_before_deadline(self, enforcement_fixture):
@@ -448,9 +498,8 @@ class TestVerifierDisagreementEscalation:
     @pytest.mark.asyncio
     async def test_verification_gate_escalates_disagreement(self, enforcement_fixture):
         """VerificationGate should escalate when verifiers disagree."""
-        from verdity.verification_gate import VerificationGate
         from verdity.coding_agent import ProposedFix
-        from verdity.schemas import Finding
+        from verdity.verification_gate import VerificationGate
 
         gate = VerificationGate()
 
@@ -476,7 +525,8 @@ class TestVerifierDisagreementEscalation:
         # Mock verifier that disagrees
         class DisagreeingVerifier:
             def verify(self, proposed_fix, original_finding):
-                from verdity.verification_gate import GateCheck, CheckResult
+                from verdity.verification_gate import CheckResult, GateCheck
+
                 return GateCheck(
                     name="matches_intent",
                     result=CheckResult.FAIL,
@@ -491,6 +541,49 @@ class TestVerifierDisagreementEscalation:
         # Should have escalation due to disagreement
         assert result.escalated is True
         assert "disagreement" in result.notes.lower()
+
+    def test_escalation_scheduled_when_approval_queue_present(self):
+        """With an approval queue, escalation is scheduled for human review."""
+        from verdity.coding_agent import ProposedFix
+        from verdity.verification_gate import CheckResult, GateCheck, VerificationGate
+
+        original_finding = _make_finding(
+            severity=Severity.CRITICAL,
+            confidence=0.9,
+            file="src/auth.py",
+            line_start=1,
+            line_end=1,
+        )
+        proposed_fix = ProposedFix(
+            finding_id=original_finding.finding_id,
+            file="src/auth.py",
+            original_line=1,
+            suggested_lines=["# Fixed code"],
+            explanation="Fix with low confidence",
+            fix_type="security",
+        )
+
+        class DisagreeingVerifier:
+            def verify(self, proposed_fix, original_finding):
+                return GateCheck(
+                    name="matches_intent",
+                    result=CheckResult.FAIL,
+                    reason="Verifier disagrees with fix",
+                )
+
+        gate = VerificationGate()
+        approval_queue = MagicMock()
+
+        result = gate.run_checks(
+            proposed_fix,
+            original_finding,
+            verifier=DisagreeingVerifier(),
+            approval_queue=approval_queue,
+        )
+
+        assert result.escalated is True
+        assert result.escalation_scheduled is True
+        assert "ESCALATED" in result.notes
 
 
 # ── Budget Enforcer Re-Queue Tests ──────────────────────────────────────────
@@ -547,11 +640,9 @@ class TestRouterEnforcementIntegration:
     @pytest.mark.asyncio
     async def test_router_calls_enforcement_before_confidence(self, enforcement_fixture):
         """Router should evaluate enforcement rules before confidence threshold."""
-        from verdity.router import route
-        from verdity.enforcement import GateRule, Action
-
         # Create engine with rule
-        from verdity.enforcement import EnforcementEngine
+        from verdity.enforcement import Action, EnforcementEngine, GateRule
+        from verdity.router import route
 
         engine = EnforcementEngine(rules=[])
         rule = GateRule(
@@ -576,7 +667,7 @@ class TestRouterEnforcementIntegration:
 async def test_gate_issue42_enforcement():
     """Issue #42 gate: full enforcement engine works end-to-end."""
     # 1. EnforcementEngine exists and evaluates rules
-    from verdity.enforcement import EnforcementEngine, GateRule, Action
+    from verdity.enforcement import Action, EnforcementEngine, GateRule
 
     engine = EnforcementEngine(rules=[])
     rule = GateRule(
@@ -603,7 +694,7 @@ async def test_gate_issue42_enforcement():
     assert hasattr(client, "update_check_run")
 
     # 3. ApprovalQueue has sla_hours and escalation
-    from verdity.approval_queue import ApprovalQueue, ApprovalItem
+    from verdity.approval_queue import ApprovalItem, ApprovalQueue
     from verdity.audit_store import AuditStore
 
     audit_store = AuditStore(db_path=":memory:")
@@ -625,7 +716,6 @@ async def test_gate_issue42_enforcement():
 
     # 4. BudgetEnforcer returns dropped specialists
     from verdity.budget_enforcer import BudgetEnforcer, SpecialistBudget
-    from verdity.metrics_store import MetricsStore
     from verdity.token_economics import TokenEconomicsService
 
     te_service = TokenEconomicsService()
@@ -640,6 +730,7 @@ async def test_gate_issue42_enforcement():
 
     # 5. Worker has SLA escalation background task
     from verdity.worker import Worker as VerdityWorker
+
     assert hasattr(VerdityWorker, "check_sla_escalations")
 
     print("All Issue #42 gate checks passed!")
@@ -653,7 +744,7 @@ class TestGateRuleEnhancements:
 
     def test_gate_rule_priority_default(self):
         """GateRule should have default priority of 100."""
-        from verdity.enforcement import GateRule, Action
+        from verdity.enforcement import Action, GateRule
 
         rule = GateRule(
             id="test-rule",
@@ -665,7 +756,7 @@ class TestGateRuleEnhancements:
 
     def test_gate_rule_priority_custom(self):
         """GateRule should accept custom priority."""
-        from verdity.enforcement import GateRule, Action
+        from verdity.enforcement import Action, GateRule
 
         rule = GateRule(
             id="test-rule",
@@ -678,7 +769,7 @@ class TestGateRuleEnhancements:
 
     def test_gate_rule_enabled_default(self):
         """GateRule should be enabled by default."""
-        from verdity.enforcement import GateRule, Action
+        from verdity.enforcement import Action, GateRule
 
         rule = GateRule(
             id="test-rule",
@@ -690,7 +781,7 @@ class TestGateRuleEnhancements:
 
     def test_gate_rule_enabled_false(self):
         """GateRule should support disabled state."""
-        from verdity.enforcement import GateRule, Action
+        from verdity.enforcement import Action, GateRule
 
         rule = GateRule(
             id="test-rule",
@@ -708,7 +799,7 @@ class TestRuleTemplating:
     @pytest.mark.asyncio
     async def test_rule_with_variable_substitution(self):
         """Rule should support {{variable}} substitution in when clause."""
-        from verdity.enforcement import EnforcementEngine, GateRule, Action
+        from verdity.enforcement import Action, EnforcementEngine, GateRule
 
         engine = EnforcementEngine(rules=[])
         rule = GateRule(
@@ -729,7 +820,7 @@ class TestRuleTemplating:
     @pytest.mark.asyncio
     async def test_rule_variable_not_matching(self):
         """Rule should not match when variable condition fails."""
-        from verdity.enforcement import EnforcementEngine, GateRule, Action
+        from verdity.enforcement import Action, EnforcementEngine, GateRule
 
         engine = EnforcementEngine(rules=[])
         rule = GateRule(
@@ -749,7 +840,7 @@ class TestRuleTemplating:
     @pytest.mark.asyncio
     async def test_rule_multiple_variables(self):
         """Rule should support multiple variables."""
-        from verdity.enforcement import EnforcementEngine, GateRule, Action
+        from verdity.enforcement import Action, EnforcementEngine, GateRule
 
         engine = EnforcementEngine(rules=[])
         rule = GateRule(
@@ -761,14 +852,16 @@ class TestRuleTemplating:
         engine.add_rule(rule)
 
         finding = _make_finding(severity=Severity.HIGH, confidence=0.9)
-        decision = await engine.evaluate_with_context(finding, {"severity": "high", "min_conf": 0.8})
+        decision = await engine.evaluate_with_context(
+            finding, {"severity": "high", "min_conf": 0.8}
+        )
 
         assert decision.action == "block"
 
     @pytest.mark.asyncio
     async def test_rule_variable_in_message(self):
         """Rule message should support variable substitution."""
-        from verdity.enforcement import EnforcementEngine, GateRule, Action
+        from verdity.enforcement import Action, EnforcementEngine, GateRule
 
         engine = EnforcementEngine(rules=[])
         rule = GateRule(
@@ -792,7 +885,7 @@ class TestRulePriorities:
     @pytest.mark.asyncio
     async def test_rules_evaluated_by_priority(self):
         """Rules should be evaluated in priority order (lower = higher priority)."""
-        from verdity.enforcement import EnforcementEngine, GateRule, Action
+        from verdity.enforcement import Action, EnforcementEngine, GateRule
 
         engine = EnforcementEngine(rules=[])
 
@@ -824,7 +917,7 @@ class TestRulePriorities:
     @pytest.mark.asyncio
     async def test_same_priority_preserves_insertion_order(self):
         """Rules with same priority should preserve insertion order."""
-        from verdity.enforcement import EnforcementEngine, GateRule, Action
+        from verdity.enforcement import Action, EnforcementEngine, GateRule
 
         engine = EnforcementEngine(rules=[])
 
@@ -854,7 +947,7 @@ class TestRulePriorities:
     @pytest.mark.asyncio
     async def test_disabled_rule_skipped(self):
         """Disabled rules should be skipped during evaluation."""
-        from verdity.enforcement import EnforcementEngine, GateRule, Action
+        from verdity.enforcement import Action, EnforcementEngine, GateRule
 
         engine = EnforcementEngine(rules=[])
 
@@ -887,11 +980,21 @@ class TestRuleSet:
 
     def test_rule_set_creation(self):
         """RuleSet should be created with name, rules, description."""
-        from verdity.enforcement import RuleSet, GateRule, Action
+        from verdity.enforcement import Action, GateRule, RuleSet
 
         rules = [
-            GateRule(id="r1", when="finding.severity=='critical'", then=Action.BLOCK, message="Block critical"),
-            GateRule(id="r2", when="finding.severity=='high'", then=Action.REQUIRE_APPROVAL, message="Approve high"),
+            GateRule(
+                id="r1",
+                when="finding.severity=='critical'",
+                then=Action.BLOCK,
+                message="Block critical",
+            ),
+            GateRule(
+                id="r2",
+                when="finding.severity=='high'",
+                then=Action.REQUIRE_APPROVAL,
+                message="Approve high",
+            ),
         ]
         rule_set = RuleSet(name="security-rules", rules=rules, description="Security rule set")
 
@@ -901,11 +1004,23 @@ class TestRuleSet:
 
     def test_rule_set_evaluate(self):
         """RuleSet should evaluate all rules in priority order."""
-        from verdity.enforcement import RuleSet, GateRule, Action
+        from verdity.enforcement import Action, GateRule, RuleSet
 
         rules = [
-            GateRule(id="r1", when="finding.severity=='high'", then=Action.BLOCK, message="Block high", priority=100),
-            GateRule(id="r2", when="finding.severity=='critical'", then=Action.REQUIRE_APPROVAL, message="Approve critical", priority=50),
+            GateRule(
+                id="r1",
+                when="finding.severity=='high'",
+                then=Action.BLOCK,
+                message="Block high",
+                priority=100,
+            ),
+            GateRule(
+                id="r2",
+                when="finding.severity=='critical'",
+                then=Action.REQUIRE_APPROVAL,
+                message="Approve critical",
+                priority=50,
+            ),
         ]
         rule_set = RuleSet(name="test-set", rules=rules, description="Test")
 
@@ -919,7 +1034,7 @@ class TestRuleSet:
 
     def test_rule_set_evaluate_with_context(self):
         """RuleSet should support context variables."""
-        from verdity.enforcement import RuleSet, GateRule, Action
+        from verdity.enforcement import Action, GateRule, RuleSet
 
         rules = [
             GateRule(
@@ -954,6 +1069,7 @@ class TestRegexPatterns:
     def test_secret_pattern_matches(self):
         """Secret pattern should match common secret formats."""
         import re
+
         from verdity.enforcement import PATTERNS
 
         pattern = re.compile(PATTERNS.secret)
@@ -965,6 +1081,7 @@ class TestRegexPatterns:
     def test_sql_injection_pattern_matches(self):
         """SQL injection pattern should match suspicious SQL."""
         import re
+
         from verdity.enforcement import PATTERNS
 
         pattern = re.compile(PATTERNS.sql_injection)
@@ -975,6 +1092,7 @@ class TestRegexPatterns:
     def test_xss_pattern_matches(self):
         """XSS pattern should match script tags and event handlers."""
         import re
+
         from verdity.enforcement import PATTERNS
 
         pattern = re.compile(PATTERNS.xss)
@@ -985,6 +1103,7 @@ class TestRegexPatterns:
     def test_path_traversal_pattern_matches(self):
         """Path traversal pattern should match ../ sequences."""
         import re
+
         from verdity.enforcement import PATTERNS
 
         pattern = re.compile(PATTERNS.path_traversal)
@@ -994,7 +1113,7 @@ class TestRegexPatterns:
     @pytest.mark.asyncio
     async def test_rule_using_regex_pattern(self):
         """Rule should be able to use regex_search with PATTERNS."""
-        from verdity.enforcement import EnforcementEngine, GateRule, Action
+        from verdity.enforcement import Action, EnforcementEngine, GateRule
 
         engine = EnforcementEngine(rules=[])
         rule = GateRule(
@@ -1025,7 +1144,7 @@ class TestEnforcementEngineEnhancements:
     @pytest.mark.asyncio
     async def test_evaluate_with_context_method(self):
         """Engine should have evaluate_with_context method."""
-        from verdity.enforcement import EnforcementEngine, GateRule, Action
+        from verdity.enforcement import EnforcementEngine
 
         engine = EnforcementEngine(rules=[])
         assert hasattr(engine, "evaluate_with_context")
@@ -1034,7 +1153,7 @@ class TestEnforcementEngineEnhancements:
     @pytest.mark.asyncio
     async def test_evaluate_with_context_passes_variables(self):
         """evaluate_with_context should pass variables to rule evaluation."""
-        from verdity.enforcement import EnforcementEngine, GateRule, Action
+        from verdity.enforcement import Action, EnforcementEngine, GateRule
 
         engine = EnforcementEngine(rules=[])
         rule = GateRule(
@@ -1053,7 +1172,7 @@ class TestEnforcementEngineEnhancements:
     @pytest.mark.asyncio
     async def test_evaluate_uses_default_context(self):
         """evaluate() should work without explicit context (backward compat)."""
-        from verdity.enforcement import EnforcementEngine, GateRule, Action
+        from verdity.enforcement import Action, EnforcementEngine, GateRule
 
         engine = EnforcementEngine(rules=[])
         rule = GateRule(
@@ -1080,7 +1199,7 @@ class TestGateRuleEdgeCases:
 
     def test_gate_rule_evaluate_empty_finding_dict(self):
         """GateRule.evaluate should handle empty finding dict gracefully."""
-        from verdity.enforcement import GateRule, Action
+        from verdity.enforcement import Action, GateRule
 
         rule = GateRule(
             id="test-rule",
@@ -1096,7 +1215,7 @@ class TestGateRuleEdgeCases:
 
     def test_gate_rule_evaluate_exception_handling(self):
         """GateRule.evaluate should catch exceptions and return False."""
-        from verdity.enforcement import GateRule, Action
+        from verdity.enforcement import Action, GateRule
 
         rule = GateRule(
             id="test-rule",
@@ -1112,7 +1231,7 @@ class TestGateRuleEdgeCases:
 
     def test_gate_rule_evaluate_finding_none(self):
         """GateRule.evaluate should handle None finding gracefully."""
-        from verdity.enforcement import GateRule, Action
+        from verdity.enforcement import Action, GateRule
 
         rule = GateRule(
             id="test-rule",
@@ -1178,8 +1297,8 @@ class TestRuleSetEdgeCases:
 
     def test_rule_set_evaluate_missing_optional_attributes(self):
         """RuleSet.evaluate should handle findings without explanation/content."""
-        from verdity.enforcement import RuleSet, GateRule, Action
-        from verdity.schemas import Finding, ConcernType, Severity
+        from verdity.enforcement import Action, GateRule, RuleSet
+        from verdity.schemas import ConcernType, Finding, Severity
 
         # Create a minimal finding without explanation attribute
         finding = Finding(
@@ -1214,8 +1333,8 @@ class TestRuleSetEdgeCases:
 
     def test_rule_set_evaluate_disabled_rule_skipped(self):
         """RuleSet.evaluate should skip disabled rules."""
-        from verdity.enforcement import RuleSet, GateRule, Action
-        from verdity.schemas import Finding, ConcernType, Severity
+        from verdity.enforcement import Action, GateRule, RuleSet
+        from verdity.schemas import Severity
 
         finding = _make_finding(severity=Severity.HIGH, confidence=0.8)
 
@@ -1251,7 +1370,7 @@ class TestEnforcementEngineEdgeCases:
     @pytest.mark.asyncio
     async def test_evaluate_with_context_empty_variables(self):
         """EnforcementEngine.evaluate_with_context should handle empty variables dict."""
-        from verdity.enforcement import EnforcementEngine, GateRule, Action
+        from verdity.enforcement import Action, EnforcementEngine, GateRule
 
         engine = EnforcementEngine(rules=[])
         rule = GateRule(
@@ -1270,7 +1389,7 @@ class TestEnforcementEngineEdgeCases:
     @pytest.mark.asyncio
     async def test_evaluate_with_context_none_variables(self):
         """EnforcementEngine.evaluate_with_context should handle None variables."""
-        from verdity.enforcement import EnforcementEngine, GateRule, Action
+        from verdity.enforcement import Action, EnforcementEngine, GateRule
 
         engine = EnforcementEngine(rules=[])
         rule = GateRule(
@@ -1289,7 +1408,7 @@ class TestEnforcementEngineEdgeCases:
     @pytest.mark.asyncio
     async def test_evaluate_with_context_multiple_variables(self):
         """EnforcementEngine.evaluate_with_context should handle multiple variable types."""
-        from verdity.enforcement import EnforcementEngine, GateRule, Action
+        from verdity.enforcement import Action, EnforcementEngine, GateRule
 
         engine = EnforcementEngine(rules=[])
         rule = GateRule(
@@ -1302,11 +1421,14 @@ class TestEnforcementEngineEdgeCases:
         engine.add_rule(rule)
 
         finding = _make_finding(severity=Severity.HIGH, confidence=0.9)
-        decision = await engine.evaluate_with_context(finding, {
-            "sev": "high",
-            "min_conf": 0.8,
-            "flag": True,
-        })
+        decision = await engine.evaluate_with_context(
+            finding,
+            {
+                "sev": "high",
+                "min_conf": 0.8,
+                "flag": True,
+            },
+        )
 
         assert decision.action == "block"
         assert "high" in decision.message
@@ -1316,7 +1438,7 @@ class TestEnforcementEngineEdgeCases:
     @pytest.mark.asyncio
     async def test_evaluate_with_context_no_matching_rules(self):
         """EnforcementEngine.evaluate_with_context should return allow when no rules match."""
-        from verdity.enforcement import EnforcementEngine, GateRule, Action
+        from verdity.enforcement import Action, EnforcementEngine, GateRule
 
         engine = EnforcementEngine(rules=[])
         rule = GateRule(
@@ -1337,7 +1459,7 @@ class TestEnforcementEngineEdgeCases:
     @pytest.mark.asyncio
     async def test_evaluate_with_context_variable_in_when_and_message(self):
         """Variables should work in both when clause and message."""
-        from verdity.enforcement import EnforcementEngine, GateRule, Action
+        from verdity.enforcement import Action, EnforcementEngine, GateRule
 
         engine = EnforcementEngine(rules=[])
         rule = GateRule(
@@ -1350,10 +1472,13 @@ class TestEnforcementEngineEdgeCases:
         engine.add_rule(rule)
 
         finding = _make_finding(severity=Severity.HIGH, confidence=0.95)
-        decision = await engine.evaluate_with_context(finding, {
-            "threshold": 0.9,
-            "actual": 0.95,
-        })
+        decision = await engine.evaluate_with_context(
+            finding,
+            {
+                "threshold": 0.9,
+                "actual": 0.95,
+            },
+        )
 
         assert decision.action == "block"
         assert "0.9" in decision.message
@@ -1365,6 +1490,7 @@ class TestEnforcementEngineEdgeCases:
 async def test_approval_queue_get_item_not_found():
     """Test get_item returns None for non-existent item."""
     from verdity.approval_queue import ApprovalQueue
+
     db = ApprovalQueue(":memory:")
     await db.connect()
     try:
@@ -1373,55 +1499,62 @@ async def test_approval_queue_get_item_not_found():
     finally:
         await db.close()
 
+
 # Additional tests for budget_enforcer
 @pytest.mark.asyncio
 @pytest.mark.asyncio
 async def test_budget_enforcer_same_specialist_twice():
     """BudgetEnforcer should allow same specialist ID twice."""
     from verdity.budget_enforcer import BudgetEnforcer, SpecialistBudget, TokenEconomicsService
-    
+
     te_service = TokenEconomicsService()
     be = BudgetEnforcer(te_service=te_service)
     be.set_budget("security", SpecialistBudget(max_concurrent=2))
-    
+
     # Same specialist twice should be allowed
     allowed1, dropped1 = await be.check_specialist_budget("security", "spec-1")
     allowed2, dropped2 = await be.check_specialist_budget("security", "spec-1")
-    
+
     assert allowed1 is True
     assert allowed2 is True
     assert dropped1 == []
     assert dropped2 == []
 
+
 # Additional tests for enforcement engine edge cases (ISS-001)
+
 
 class TestRegexSearchEdgeCases:
     def test_regex_search_none_text(self):
         """regex_search should return False for None text."""
         from verdity.enforcement import regex_search
+
         assert regex_search(None, "pattern") is False
 
     def test_regex_search_empty_text(self):
         """regex_search should return False for empty text."""
         from verdity.enforcement import regex_search
+
         assert regex_search("", "pattern") is False
 
     def test_regex_search_match(self):
         """regex_search should return True for matching pattern."""
         from verdity.enforcement import regex_search
+
         assert regex_search("hello world", "world") is True
 
     def test_regex_search_no_match(self):
         """regex_search should return False for non-matching pattern."""
         from verdity.enforcement import regex_search
+
         assert regex_search("hello", "world") is False
 
 
 class TestEnforcementEngineRemoveRule:
     def test_remove_rule_not_found(self):
         """remove_rule should return False when rule not found."""
-        from verdity.enforcement import EnforcementEngine, GateRule, Action
-        
+        from verdity.enforcement import Action, EnforcementEngine, GateRule
+
         engine = EnforcementEngine(rules=[])
         rule = GateRule(
             id="test-rule",
@@ -1430,10 +1563,10 @@ class TestEnforcementEngineRemoveRule:
             message="Test",
         )
         engine.add_rule(rule)
-        
+
         result = engine.remove_rule("non-existent")
         assert result is False
-        
+
         # Original rule should still be there
         result = engine.remove_rule("test-rule")
         assert result is True
@@ -1442,8 +1575,8 @@ class TestEnforcementEngineRemoveRule:
 class TestLoadRulesFromYaml:
     def test_load_rules_from_yaml_success(self, tmp_path):
         """load_rules_from_yaml should parse valid YAML."""
-        from verdity.enforcement import load_rules_from_yaml, GateRule, Action
-        
+        from verdity.enforcement import Action, load_rules_from_yaml
+
         rules_file = tmp_path / "rules.yml"
         rules_file.write_text("""
 rules:
@@ -1454,7 +1587,7 @@ rules:
     priority: 50
     enabled: true
 """)
-        
+
         rules = load_rules_from_yaml(str(rules_file))
         assert len(rules) == 1
         assert rules[0].id == "test-rule"
@@ -1464,27 +1597,27 @@ rules:
     def test_load_rules_from_yaml_empty_rules(self, tmp_path):
         """load_rules_from_yaml should handle empty rules list."""
         from verdity.enforcement import load_rules_from_yaml
-        
+
         rules_file = tmp_path / "rules.yml"
         rules_file.write_text("rules: []")
-        
+
         rules = load_rules_from_yaml(str(rules_file))
         assert rules == []
 
     def test_load_rules_from_yaml_missing_rules_key(self, tmp_path):
         """load_rules_from_yaml should handle missing rules key."""
         from verdity.enforcement import load_rules_from_yaml
-        
+
         rules_file = tmp_path / "rules.yml"
         rules_file.write_text("other_key: value")
-        
+
         rules = load_rules_from_yaml(str(rules_file))
         assert rules == []
 
     def test_load_rules_from_yaml_invalid_action(self, tmp_path):
         """load_rules_from_yaml should handle invalid action."""
         from verdity.enforcement import load_rules_from_yaml
-        
+
         rules_file = tmp_path / "rules.yml"
         rules_file.write_text("""
 rules:
@@ -1493,15 +1626,16 @@ rules:
     then: "INVALID_ACTION"
     message: "Test"
 """)
-        
+
         import pytest
+
         with pytest.raises(KeyError):
             load_rules_from_yaml(str(rules_file))
 
     def test_load_rules_from_yaml_disabled_rule(self, tmp_path):
         """load_rules_from_yaml should handle disabled rules."""
-        from verdity.enforcement import load_rules_from_yaml, GateRule, Action
-        
+        from verdity.enforcement import load_rules_from_yaml
+
         rules_file = tmp_path / "rules.yml"
         rules_file.write_text("""
 rules:
@@ -1511,15 +1645,15 @@ rules:
     message: "Test"
     enabled: false
 """)
-        
+
         rules = load_rules_from_yaml(str(rules_file))
         assert len(rules) == 1
         assert rules[0].enabled is False
 
     def test_load_rules_from_yaml_default_priority(self, tmp_path):
         """load_rules_from_yaml should use default priority."""
-        from verdity.enforcement import load_rules_from_yaml, GateRule, Action
-        
+        from verdity.enforcement import load_rules_from_yaml
+
         rules_file = tmp_path / "rules.yml"
         rules_file.write_text("""
 rules:
@@ -1528,7 +1662,7 @@ rules:
     then: "BLOCK"
     message: "Test"
 """)
-        
+
         rules = load_rules_from_yaml(str(rules_file))
         assert len(rules) == 1
         assert rules[0].priority == 100

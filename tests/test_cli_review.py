@@ -31,19 +31,21 @@ class TestReviewCLI:
 
     def _make_finding_json(self) -> str:
         """Create a sample finding JSON content."""
-        return json.dumps({
-            "finding_id": "test-finding-1",
-            "concern": "security",
-            "severity": "high",
-            "file_path": "src/auth.py",
-            "line_start": 10,
-            "line_end": 15,
-            "summary": "Hardcoded API key",
-            "explanation": 'api_key = "sk_live_abc123def456"',
-            "confidence": 0.85,
-            "agent_version": "test@0.1.0",
-            "prompt_hash": "sha256:abc123",
-        })
+        return json.dumps(
+            {
+                "finding_id": "test-finding-1",
+                "concern": "security",
+                "severity": "high",
+                "file_path": "src/auth.py",
+                "line_start": 10,
+                "line_end": 15,
+                "summary": "Hardcoded API key",
+                "explanation": 'api_key = "sk_live_abc123def456"',
+                "confidence": 0.85,
+                "agent_version": "test@0.1.0",
+                "prompt_hash": "sha256:abc123",
+            }
+        )
 
     def _make_rules_yaml(self) -> str:
         """Create a sample rules YAML content."""
@@ -102,15 +104,27 @@ rules:
             "head_sha": "def456ghi",
             "files": [
                 {"filename": "src/main.py", "additions": 10, "deletions": 5, "status": "modified"}
-            ]
+            ],
         }
         mock_client.close = AsyncMock()
         mock_github_client.return_value = mock_client
 
-        result = self.runner.invoke(review, [
-            "diff", "--owner", "testowner", "--repo", "testrepo",
-            "--pr", "123", "--tier", "lite", "--output", "json"
-        ])
+        result = self.runner.invoke(
+            review,
+            [
+                "diff",
+                "--owner",
+                "testowner",
+                "--repo",
+                "testrepo",
+                "--pr",
+                "123",
+                "--tier",
+                "lite",
+                "--output",
+                "json",
+            ],
+        )
 
         assert result.exit_code == 0
         output = json.loads(result.output)
@@ -136,15 +150,25 @@ rules:
             "head_sha": "def456ghi",
             "files": [
                 {"filename": "src/main.py", "additions": 10, "deletions": 5, "status": "modified"}
-            ]
+            ],
         }
         mock_client.close = AsyncMock()
         mock_github_client.return_value = mock_client
 
-        result = self.runner.invoke(review, [
-            "diff", "--owner", "testowner", "--repo", "testrepo",
-            "--pr", "123", "--output", "text"
-        ])
+        result = self.runner.invoke(
+            review,
+            [
+                "diff",
+                "--owner",
+                "testowner",
+                "--repo",
+                "testrepo",
+                "--pr",
+                "123",
+                "--output",
+                "text",
+            ],
+        )
 
         assert result.exit_code == 0
         assert "PR #123 Diff:" in result.output
@@ -168,10 +192,20 @@ rules:
         mock_client.close = AsyncMock()
         mock_github_client.return_value = mock_client
 
-        result = self.runner.invoke(review, [
-            "diff", "--owner", "testowner", "--repo", "testrepo",
-            "--pr", "123", "--output", "json"
-        ])
+        result = self.runner.invoke(
+            review,
+            [
+                "diff",
+                "--owner",
+                "testowner",
+                "--repo",
+                "testrepo",
+                "--pr",
+                "123",
+                "--output",
+                "json",
+            ],
+        )
 
         assert result.exit_code == 1
         assert "Failed to fetch diff" in result.output
@@ -182,7 +216,11 @@ rules:
 
         result = self.runner.invoke(review, ["diff"])
         assert result.exit_code != 0
-        assert "owner" in result.output.lower() or "repo" in result.output.lower() or "pr" in result.output.lower()
+        assert (
+            "owner" in result.output.lower()
+            or "repo" in result.output.lower()
+            or "pr" in result.output.lower()
+        )
 
     # ==================== run command tests ====================
 
@@ -200,17 +238,30 @@ rules:
             "findings": [
                 {"severity": "high", "file_path": "src/a.py", "line": 10, "message": "Issue 1"},
                 {"severity": "medium", "file_path": "src/b.py", "line": 20, "message": "Issue 2"},
-            ]
+            ],
         }
         mock_server.initialize = AsyncMock()
         mock_server.shutdown = AsyncMock()
         mock_create_mcp_server.return_value = mock_server
 
-        result = self.runner.invoke(review, [
-            "run", "--owner", "testowner", "--repo", "testrepo",
-            "--pr", "123", "--tier", "balanced", "--output", "json",
-            "--no-post-comment", "--no-post-check"
-        ])
+        result = self.runner.invoke(
+            review,
+            [
+                "run",
+                "--owner",
+                "testowner",
+                "--repo",
+                "testrepo",
+                "--pr",
+                "123",
+                "--tier",
+                "balanced",
+                "--output",
+                "json",
+                "--no-post-comment",
+                "--no-post-check",
+            ],
+        )
 
         assert result.exit_code == 0
         output = json.loads(result.output)
@@ -231,16 +282,28 @@ rules:
             "findings": [
                 {"severity": "high", "file_path": "src/a.py", "line": 10, "message": "Issue 1"},
                 {"severity": "medium", "file_path": "src/b.py", "line": 20, "message": "Issue 2"},
-            ]
+            ],
         }
         mock_server.initialize = AsyncMock()
         mock_server.shutdown = AsyncMock()
         mock_create_mcp_server.return_value = mock_server
 
-        result = self.runner.invoke(review, [
-            "run", "--owner", "testowner", "--repo", "testrepo",
-            "--pr", "123", "--output", "text", "--no-post-comment", "--no-post-check"
-        ])
+        result = self.runner.invoke(
+            review,
+            [
+                "run",
+                "--owner",
+                "testowner",
+                "--repo",
+                "testrepo",
+                "--pr",
+                "123",
+                "--output",
+                "text",
+                "--no-post-comment",
+                "--no-post-check",
+            ],
+        )
 
         assert result.exit_code == 0
         assert "Verdity Review Results" in result.output
@@ -257,7 +320,11 @@ rules:
 
         mock_server = AsyncMock()
         mock_server.call_tool.return_value = {
-            "pr_number": 123, "tier": "lite", "review_run_id": "run-1", "total_findings": 0, "findings": []
+            "pr_number": 123,
+            "tier": "lite",
+            "review_run_id": "run-1",
+            "total_findings": 0,
+            "findings": [],
         }
         mock_server.initialize = AsyncMock()
         mock_server.shutdown = AsyncMock()
@@ -271,11 +338,24 @@ rules:
             config_file = f.name
 
         try:
-            result = self.runner.invoke(review, [
-                "run", "--owner", "testowner", "--repo", "testrepo",
-                "--pr", "123", "--config", config_file, "--output", "json",
-                "--no-post-comment", "--no-post-check"
-            ])
+            result = self.runner.invoke(
+                review,
+                [
+                    "run",
+                    "--owner",
+                    "testowner",
+                    "--repo",
+                    "testrepo",
+                    "--pr",
+                    "123",
+                    "--config",
+                    config_file,
+                    "--output",
+                    "json",
+                    "--no-post-comment",
+                    "--no-post-check",
+                ],
+            )
             assert result.exit_code == 0, f"Exit code: {result.exit_code}, Output: {result.output}"
             # Path object is passed, not string
             mock_inspector_config.from_file.assert_called_once()
@@ -295,10 +375,22 @@ rules:
         mock_server.shutdown = AsyncMock()
         mock_create_mcp_server.return_value = mock_server
 
-        result = self.runner.invoke(review, [
-            "run", "--owner", "testowner", "--repo", "testrepo",
-            "--pr", "123", "--output", "text", "--no-post-comment", "--no-post-check"
-        ])
+        result = self.runner.invoke(
+            review,
+            [
+                "run",
+                "--owner",
+                "testowner",
+                "--repo",
+                "testrepo",
+                "--pr",
+                "123",
+                "--output",
+                "text",
+                "--no-post-comment",
+                "--no-post-check",
+            ],
+        )
 
         assert result.exit_code == 1
         assert "Error: Server error occurred" in result.output
@@ -315,11 +407,24 @@ rules:
         mock_create_mcp_server.return_value = mock_server
 
         for tier in ["lite", "balanced", "deep"]:
-            result = self.runner.invoke(review, [
-                "run", "--owner", "testowner", "--repo", "testrepo",
-                "--pr", "123", "--tier", tier, "--output", "json",
-                "--no-post-comment", "--no-post-check"
-            ])
+            result = self.runner.invoke(
+                review,
+                [
+                    "run",
+                    "--owner",
+                    "testowner",
+                    "--repo",
+                    "testrepo",
+                    "--pr",
+                    "123",
+                    "--tier",
+                    tier,
+                    "--output",
+                    "json",
+                    "--no-post-comment",
+                    "--no-post-check",
+                ],
+            )
             assert result.exit_code == 0, f"Failed for tier={tier}: {result.output}"
 
     def test_run_command_missing_required_options(self):
@@ -344,9 +449,9 @@ rules:
             rules_file = rf.name
 
         try:
-            result = self.runner.invoke(review, [
-                "enforce", finding_file, "--rules", rules_file, "--output", "json"
-            ])
+            result = self.runner.invoke(
+                review, ["enforce", finding_file, "--rules", rules_file, "--output", "json"]
+            )
             assert result.exit_code == 0
             output = json.loads(result.output)
             assert "action" in output
@@ -370,9 +475,9 @@ rules:
             rules_file = rf.name
 
         try:
-            result = self.runner.invoke(review, [
-                "enforce", finding_file, "--rules", rules_file, "--output", "text"
-            ])
+            result = self.runner.invoke(
+                review, ["enforce", finding_file, "--rules", rules_file, "--output", "text"]
+            )
             assert result.exit_code == 0
             assert "Action:" in result.output
         finally:
@@ -401,10 +506,21 @@ rules:
             rules_file = rf.name
 
         try:
-            result = self.runner.invoke(review, [
-                "enforce", finding_file, "--rules", rules_file,
-                "--var", "sev=high", "--var", "thresh=0.8", "--output", "json"
-            ])
+            result = self.runner.invoke(
+                review,
+                [
+                    "enforce",
+                    finding_file,
+                    "--rules",
+                    rules_file,
+                    "--var",
+                    "sev=high",
+                    "--var",
+                    "thresh=0.8",
+                    "--output",
+                    "json",
+                ],
+            )
             assert result.exit_code == 0
             output = json.loads(result.output)
             assert output["rule_id"] == "var-rule"
@@ -425,11 +541,18 @@ rules:
     priority: 10
     enabled: true
 """
-        finding_json = json.dumps({
-            "severity": "medium", "confidence": 0.9, "content": "test",
-            "file_path": "test.py", "line_start": 1, "line_end": 1,
-            "summary": "Test", "explanation": "Test"
-        })
+        finding_json = json.dumps(
+            {
+                "severity": "medium",
+                "confidence": 0.9,
+                "content": "test",
+                "file_path": "test.py",
+                "line_start": 1,
+                "line_end": 1,
+                "summary": "Test",
+                "explanation": "Test",
+            }
+        )
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as ff:
             ff.write(finding_json)
@@ -441,10 +564,19 @@ rules:
 
         try:
             # Pass JSON value for threshold
-            result = self.runner.invoke(review, [
-                "enforce", finding_file, "--rules", rules_file,
-                "--var", "threshold=0.85", "--output", "json"
-            ])
+            result = self.runner.invoke(
+                review,
+                [
+                    "enforce",
+                    finding_file,
+                    "--rules",
+                    rules_file,
+                    "--var",
+                    "threshold=0.85",
+                    "--output",
+                    "json",
+                ],
+            )
             assert result.exit_code == 0
             output = json.loads(result.output)
             assert output["rule_id"] == "json-var-rule"
@@ -465,10 +597,19 @@ rules:
             rules_file = rf.name
 
         try:
-            result = self.runner.invoke(review, [
-                "enforce", finding_file, "--rules", rules_file,
-                "--var", "invalid-format", "--output", "json"
-            ])
+            result = self.runner.invoke(
+                review,
+                [
+                    "enforce",
+                    finding_file,
+                    "--rules",
+                    rules_file,
+                    "--var",
+                    "invalid-format",
+                    "--output",
+                    "json",
+                ],
+            )
             assert result.exit_code == 1
             assert "Invalid variable format" in result.output
         finally:
@@ -484,9 +625,9 @@ rules:
             rules_file = rf.name
 
         try:
-            result = self.runner.invoke(review, [
-                "enforce", "nonexistent.json", "--rules", rules_file
-            ])
+            result = self.runner.invoke(
+                review, ["enforce", "nonexistent.json", "--rules", rules_file]
+            )
             assert result.exit_code != 0
         finally:
             Path(rules_file).unlink()
@@ -496,20 +637,25 @@ rules:
         from verdity.cli.review import review
 
         # Use a finding without secret patterns to avoid triggering default rules
-        finding_json = json.dumps({
-            "severity": "low", "confidence": 0.3, "content": "just some code",
-            "file_path": "test.py", "line_start": 1, "line_end": 1,
-            "summary": "Style issue", "explanation": "Minor style issue"
-        })
+        finding_json = json.dumps(
+            {
+                "severity": "low",
+                "confidence": 0.3,
+                "content": "just some code",
+                "file_path": "test.py",
+                "line_start": 1,
+                "line_end": 1,
+                "summary": "Style issue",
+                "explanation": "Minor style issue",
+            }
+        )
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as ff:
             ff.write(finding_json)
             finding_file = ff.name
 
         try:
-            result = self.runner.invoke(review, [
-                "enforce", finding_file, "--output", "json"
-            ])
+            result = self.runner.invoke(review, ["enforce", finding_file, "--output", "json"])
             # Should not crash, just use empty rules
             assert result.exit_code == 0
             output = json.loads(result.output)
@@ -521,26 +667,31 @@ rules:
         """enforce command should handle missing default rules file gracefully."""
         from verdity.cli.review import review
 
-        finding_json = json.dumps({
-            "severity": "low", "confidence": 0.3, "content": "just some code",
-            "file_path": "test.py", "line_start": 1, "line_end": 1,
-            "summary": "Style issue", "explanation": "Minor style issue"
-        })
+        finding_json = json.dumps(
+            {
+                "severity": "low",
+                "confidence": 0.3,
+                "content": "just some code",
+                "file_path": "test.py",
+                "line_start": 1,
+                "line_end": 1,
+                "summary": "Style issue",
+                "explanation": "Minor style issue",
+            }
+        )
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as ff:
             ff.write(finding_json)
             finding_file = ff.name
 
         # Ensure .verdity/rules.yml doesn't exist
-        import os
+
         default_rules = Path(".verdity/rules.yml")
         if default_rules.exists():
             default_rules.unlink()
 
         try:
-            result = self.runner.invoke(review, [
-                "enforce", finding_file, "--output", "json"
-            ])
+            result = self.runner.invoke(review, ["enforce", finding_file, "--output", "json"])
             # Should not crash, just use empty rules
             assert result.exit_code == 0
             output = json.loads(result.output)
@@ -550,8 +701,9 @@ rules:
 
     def test_review_main_entry_point_direct_call(self):
         """Main entry point should be callable directly."""
-        from verdity.cli.review import review
         import sys
+
+        from verdity.cli.review import review
 
         # Simulate calling the module directly
         old_argv = sys.argv
@@ -578,7 +730,7 @@ rules:
             assert "run" in output
             assert "diff" in output
             assert "enforce" in output
-        except SystemExit as e:
+        except SystemExit:
             # --help causes SystemExit(0)
             output = sys.stdout.getvalue()
             assert "run" in output
@@ -601,9 +753,7 @@ rules:
             rules_file = rf.name
 
         try:
-            result = self.runner.invoke(review, [
-                "enforce", finding_file, "--rules", rules_file
-            ])
+            result = self.runner.invoke(review, ["enforce", finding_file, "--rules", rules_file])
             assert result.exit_code != 0
         finally:
             Path(finding_file).unlink()
@@ -622,9 +772,7 @@ rules:
             rules_file = rf.name
 
         try:
-            result = self.runner.invoke(review, [
-                "enforce", finding_file, "--rules", rules_file
-            ])
+            result = self.runner.invoke(review, ["enforce", finding_file, "--rules", rules_file])
             assert result.exit_code != 0
         finally:
             Path(finding_file).unlink()
@@ -641,12 +789,13 @@ rules:
             "tier": "lite",
             "review_run_id": "run-1",
             "total_findings": 0,
-            "findings": []
+            "findings": [],
         }
 
         # Capture stdout
         import io
         import sys
+
         old_stdout = sys.stdout
         sys.stdout = io.StringIO()
         try:
@@ -667,14 +816,20 @@ rules:
             "review_run_id": "run-1",
             "total_findings": 3,
             "findings": [
-                {"severity": "critical", "file_path": "a.py", "line": 1, "message": "Critical issue"},
+                {
+                    "severity": "critical",
+                    "file_path": "a.py",
+                    "line": 1,
+                    "message": "Critical issue",
+                },
                 {"severity": "high", "file_path": "b.py", "line": 2, "message": "High issue"},
                 {"severity": "medium", "file_path": "c.py", "line": 3, "message": "Medium issue"},
-            ]
+            ],
         }
 
         import io
         import sys
+
         old_stdout = sys.stdout
         sys.stdout = io.StringIO()
         try:
@@ -698,6 +853,7 @@ rules:
 
         import io
         import sys
+
         old_stderr = sys.stderr
         sys.stderr = io.StringIO()
         try:
@@ -721,7 +877,7 @@ rules:
             "concern": "style",
             "file_path": "test.py",
             "line": 42,
-            "message": "Style issue"
+            "message": "Style issue",
         }
 
         proxy = _create_finding_proxy(finding_data)
@@ -746,7 +902,7 @@ rules:
             "line_end": 15,
             "summary": "Secret found",
             "explanation": "API key in code",
-            "content": "Full content here"
+            "content": "Full content here",
         }
 
         proxy = _create_finding_proxy(finding_data)
@@ -766,11 +922,7 @@ rules:
         from verdity.cli.review import _create_finding_proxy
 
         # Test with 'file' instead of 'file_path', 'line' instead of line_start/line_end
-        finding_data = {
-            "file": "src/main.py",
-            "line": 100,
-            "message": "Issue found"
-        }
+        finding_data = {"file": "src/main.py", "line": 100, "message": "Issue found"}
 
         proxy = _create_finding_proxy(finding_data)
         assert proxy.file == "src/main.py"
@@ -782,10 +934,7 @@ rules:
         """_create_finding_proxy should fallback content to explanation/summary."""
         from verdity.cli.review import _create_finding_proxy
 
-        finding_data = {
-            "summary": "Summary text",
-            "explanation": "Explanation text"
-        }
+        finding_data = {"summary": "Summary text", "explanation": "Explanation text"}
 
         proxy = _create_finding_proxy(finding_data)
         # content should fallback to explanation or summary
@@ -811,10 +960,22 @@ class TestReviewCLIIntegration:
         mock_create_mcp_server.return_value = mock_server
 
         # Test with post-comment enabled
-        self.runner.invoke(review, [
-            "run", "--owner", "o", "--repo", "r", "--pr", "1",
-            "--post-comment", "--no-post-check", "--output", "json"
-        ])
+        self.runner.invoke(
+            review,
+            [
+                "run",
+                "--owner",
+                "o",
+                "--repo",
+                "r",
+                "--pr",
+                "1",
+                "--post-comment",
+                "--no-post-check",
+                "--output",
+                "json",
+            ],
+        )
         call_args = mock_server.call_tool.call_args
         assert call_args is not None
         args, kwargs = call_args
@@ -823,10 +984,22 @@ class TestReviewCLIIntegration:
 
         # Test with post-check enabled
         mock_server.call_tool.reset_mock()
-        self.runner.invoke(review, [
-            "run", "--owner", "o", "--repo", "r", "--pr", "1",
-            "--no-post-comment", "--post-check", "--output", "json"
-        ])
+        self.runner.invoke(
+            review,
+            [
+                "run",
+                "--owner",
+                "o",
+                "--repo",
+                "r",
+                "--pr",
+                "1",
+                "--no-post-comment",
+                "--post-check",
+                "--output",
+                "json",
+            ],
+        )
         call_args = mock_server.call_tool.call_args
         assert call_args is not None
         args, kwargs = call_args
@@ -835,10 +1008,22 @@ class TestReviewCLIIntegration:
 
         # Test with both disabled
         mock_server.call_tool.reset_mock()
-        self.runner.invoke(review, [
-            "run", "--owner", "o", "--repo", "r", "--pr", "1",
-            "--no-post-comment", "--no-post-check", "--output", "json"
-        ])
+        self.runner.invoke(
+            review,
+            [
+                "run",
+                "--owner",
+                "o",
+                "--repo",
+                "r",
+                "--pr",
+                "1",
+                "--no-post-comment",
+                "--no-post-check",
+                "--output",
+                "json",
+            ],
+        )
         call_args = mock_server.call_tool.call_args
         assert call_args is not None
         args, kwargs = call_args

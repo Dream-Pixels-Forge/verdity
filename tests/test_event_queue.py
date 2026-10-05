@@ -115,6 +115,38 @@ async def test_repo_partitioning(queue: EventQueue, sample_event):
 
 
 @pytest.mark.asyncio
+async def test_get_events_returns_recent_messages(queue: EventQueue, sample_event):
+    """get_events() is the monitoring read path and was untested."""
+    await queue.publish(QueueEnvelope(event=sample_event))
+    rows = await queue.get_events(limit=10)
+    assert isinstance(rows, list)
+    assert rows, "published envelope should appear in get_events()"
+    assert "del-001" in rows[0]["envelope_json"]
+
+
+@pytest.mark.asyncio
+async def test_get_events_respects_limit(queue: EventQueue):
+    """Distinct delivery ids, since message_id is UNIQUE and dedupes."""
+    for i in range(3):
+        evt = VerdityEvent(
+            delivery_id=f"del-limit-{i}",
+            trigger_type=TriggerType.PR_OPENED,
+            repo=RepoRef(owner="acme", name="widgets", id=123),
+        )
+        await queue.publish(QueueEnvelope(event=evt))
+
+    rows = await queue.get_events(limit=2)
+    assert len(rows) == 2
+
+
+@pytest.mark.asyncio
+async def test_get_events_raises_when_not_connected():
+    queue = EventQueue(db_path=":memory:")
+    with pytest.raises(RuntimeError, match="not connected"):
+        await queue.get_events()
+
+
+@pytest.mark.asyncio
 async def test_publish_raises_when_not_connected():
     queue = EventQueue(db_path=":memory:")
     # Do NOT call connect()
