@@ -153,3 +153,36 @@ async def test_count_by_state_raises_when_not_connected():
     queue = EventQueue(db_path=":memory:")
     with pytest.raises(RuntimeError, match="not connected"):
         await queue.count_by_state()
+
+
+@pytest.mark.asyncio
+async def test_requeue_returns_to_pending_without_burning_retry_budget(
+    queue: EventQueue, sample_event
+):
+    """requeue() puts a processing message back to pending, retry_count untouched."""
+    envelope = QueueEnvelope(event=sample_event)
+    msg_id = await queue.publish(envelope)
+    await queue.consume()
+    await queue.requeue(msg_id)
+
+    counts = await queue.count_by_state()
+    assert counts["pending"] == 1
+    assert counts["dead"] == 0
+
+    consumed = await queue.consume()
+    assert consumed is not None
+    assert consumed.retry_count == 0
+
+    # Even after repeated requeues the message stays alive
+    await queue.requeue(msg_id)
+    await queue.requeue(msg_id)
+    counts = await queue.count_by_state()
+    assert counts["pending"] == 1
+    assert counts["dead"] == 0
+
+
+@pytest.mark.asyncio
+async def test_requeue_raises_when_not_connected():
+    queue_obj = EventQueue(db_path=":memory:")
+    with pytest.raises(RuntimeError, match="not connected"):
+        await queue_obj.requeue("msg-id")

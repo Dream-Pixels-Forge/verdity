@@ -203,6 +203,20 @@ class EventQueue:
             )
         await self._conn.commit()
 
+    async def requeue(self, message_id: str) -> None:
+        """Return a processing message to pending without touching retry_count.
+
+        Used when a message was consumed but deferred (e.g. repo backoff)
+        rather than genuinely failing — the retry budget must not shrink.
+        """
+        if self._conn is None:
+            raise RuntimeError("EventQueue is not connected. Call connect() first.")
+        await self._conn.execute(
+            "UPDATE queue_messages SET state = 'pending' WHERE message_id = ?",
+            (message_id,),
+        )
+        await self._conn.commit()
+
     async def count_by_state(self, repo_id: str | None = None) -> dict[str, int]:
         """Return counts per state for monitoring."""
         if self._conn is None:
