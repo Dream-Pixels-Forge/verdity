@@ -58,6 +58,16 @@ CREATE_TABLE_SQL = """
         precision_at_09 REAL DEFAULT 0.0,
         recall_at_06    REAL DEFAULT 0.0
     );
+
+    CREATE TABLE IF NOT EXISTS calibration_llm_suggestions (
+        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+        finding_type        TEXT NOT NULL,
+        suggested_action_json TEXT NOT NULL,
+        model               TEXT NOT NULL,
+        confidence          REAL,
+        applied             BOOLEAN DEFAULT FALSE,
+        created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+    );
 """
 
 
@@ -447,3 +457,263 @@ class TrustCalibrator:
             )
 
         return has_drift
+
+
+# ─────────────────────────────────────────────────────────────────────
+# LLM-Assisted Calibrator
+# ─────────────────────────────────────────────────────────────────────
+
+
+class LLMAssistedCalibrator(TrustCalibrator):
+    """
+    Enhanced calibrator that uses LLM to analyze drift patterns and suggest
+    rule/weight adjustments.
+
+    This runs as an async background process (not per-finding) to preserve
+    Constraint #5 (deterministic confidence at runtime). The LLM analyzes
+    aggregated false positive patterns and suggests global weight changes.
+    """
+
+    def __init__(
+        self,
+        db_path: str = ":memory:",
+        metrics_store: object | None = None,
+        llm_gateway: object | None = None,
+        llm_config: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(db_path=db_path, metrics_store=metrics_store)
+        self._llm_gateway = llm_gateway
+        self._llm_config = llm_config or {
+            "model": "qwen2.5-7b-instruct",
+            "backend": "ollama",
+            "temperature": 0.1,
+        }
+
+    def set_llm_gateway(self, gateway: object) -> None:
+        """Set the LLM gateway for calibration analysis."""
+        self._llm_gateway = gateway
+
+    @dataclass
+    class CalibrationAction:
+        """Action suggested by LLM for calibration adjustment."""
+
+        action_type: str  # "increase_weight", "decrease_weight", "add_rule", "modify_rule"
+        target: str  # e.g., "severity_weights.high", "concern_boost.security"
+        factor: float  # Multiplicative factor (e.g., 1.2 for 20% increase)
+        rationale: str  # Human-readable explanation
+        confidence: float  # LLM's confidence in this suggestion (0-1)
+        finding_type: str  # Which finding type this applies to
+        examples_analyzed: int  # Number of examples the LLM reviewed
+
+    async def analyze_drift_patterns(
+        self,
+        finding_type: str,
+        false_positive_examples: list[dict[str, Any]],
+        confirmed_examples: list[dict[str, Any]],
+    ) -> list[CalibrationAction]:
+        """
+        Use LLM to understand WHY certain patterns produce false positives.
+        Returns suggested rule modifications and weight adjustments.
+
+        This runs OFFLINE as a calibration assistant, never per-finding.
+        """
+        if not self._llm_gateway:
+            logger.warning("No LLM gateway configured, skipping LLM-assisted calibration")
+            return []
+
+        # Prepare context for LLM
+        fp_count = len(false_positive_examples)
+        confirmed_count = len(confirmed_examples)
+
+        # Build prompt with examples
+        fp_summary = "\n".join(
+            [
+                f"  - File: {ex.get('file', 'unknown')}, Line: {ex.get('line', 'unknown')}, "
+                f"Summary: {ex.get('summary', '')}, "
+                f"Confidence: {ex.get('confidence', 0)}"
+                for ex in false_positive_examples[:10]  # Limit to 10 for token budget
+            ]
+        )
+
+        confirmed_summary = "\n".join(
+            [
+                f"  - File: {ex.get('file', 'unknown')}, Line: {ex.get('line', 'unknown')}, "
+                f"Summary: {ex.get('summary', '')}, "
+                f"Confidence: {ex.get('confidence', 0)}"
+                for ex in confirmed_examples[:10]
+            ]
+        )
+
+        prompt = (
+            "You are a calibration assistant for an AI code review system.\n\n"
+            f'Analyze why the following finding type "{finding_type}" produces false positives.\n\n'
+            f"FALSE POSITIVE EXAMPLES ({fp_count} total):\n"
+            f"{fp_summary if fp_summary else '  (none provided)'}\n\n"
+            f"CONFIRMED TRUE POSITIVE EXAMPLES ({confirmed_count} total):\n"
+            f"{confirmed_summary if confirmed_summary else '  (none provided)'}\n\n"
+            "Based on the patterns you see, suggest calibration actions to reduce false positives\n"
+            "while preserving true positives. Return a JSON array of actions with this schema:\n"
+            "[\n"
+            "  {{\n"
+            '    "action_type": "increase_weight|decrease_weight|add_rule|modify_rule",\n'
+            '    "target": "severity_weights.high|concern_boost.security|...",\n'
+            '    "factor": 1.2,\n'
+            '    "rationale": "Explanation of why this adjustment helps",\n'
+            '    "confidence": 0.85,\n'
+            f'    "finding_type": "{finding_type}",\n'
+            f'    "examples_analyzed": {fp_count + confirmed_count}\n'
+            "  }}\n"
+            "]\n\n"
+            "Focus on:\n"
+            "1. What patterns distinguish false positives from true positives?\n"
+            "2. Should severity weights be adjusted up/down?\n"
+            "3. Should concern boost be adjusted?\n"
+            "4. Are there new rules needed to catch the difference?\n"
+        )
+
+        try:
+            from verdity.llm_gateway import GatewayConfig, LocalLLMGateway
+
+            # Use existing gateway or create from config
+            gateway = self._llm_gateway
+            if gateway is None:
+                config = GatewayConfig(
+                    model=self._llm_config.get("model", "qwen2.5-7b-instruct"),
+                    backend=self._llm_config.get("backend", "ollama"),
+                    temperature=self._llm_config.get("temperature", 0.1),
+                )
+                gateway = LocalLLMGateway(config=config)
+
+            schema = {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": [
+                        "action_type",
+                        "target",
+                        "factor",
+                        "rationale",
+                        "confidence",
+                        "finding_type",
+                        "examples_analyzed",
+                    ],
+                    "properties": {
+                        "action_type": {
+                            "type": "string",
+                            "enum": [
+                                "increase_weight",
+                                "decrease_weight",
+                                "add_rule",
+                                "modify_rule",
+                            ],
+                        },
+                        "target": {"type": "string"},
+                        "factor": {"type": "number", "minimum": 0.1, "maximum": 3.0},
+                        "rationale": {"type": "string"},
+                        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                        "finding_type": {"type": "string"},
+                        "examples_analyzed": {"type": "integer"},
+                    },
+                },
+            }
+
+            response = await gateway.complete_structured(
+                prompt=prompt,
+                schema=schema,
+                temperature=self._llm_config.get("temperature", 0.1),
+            )
+
+            actions = []
+            if isinstance(response, list):
+                for item in response:
+                    actions.append(self.CalibrationAction(**item))
+
+            # Store suggestions in audit table for review
+            for action in actions:
+                await self._store_calibration_suggestion(action)
+
+            return actions
+
+        except Exception as e:
+            logger.error("LLM-assisted calibration failed: %s", e)
+            return []
+
+    async def _store_calibration_suggestion(self, action: CalibrationAction) -> None:
+        """Store LLM calibration suggestion for human review."""
+        if self._conn is None:
+            return
+        try:
+            await self._conn.execute(
+                """
+                INSERT INTO calibration_llm_suggestions
+                    (finding_type, suggested_action_json, model, confidence)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    action.finding_type,
+                    json.dumps(
+                        {
+                            "action_type": action.action_type,
+                            "target": action.target,
+                            "factor": action.factor,
+                            "rationale": action.rationale,
+                            "confidence": action.confidence,
+                            "examples_analyzed": action.examples_analyzed,
+                        }
+                    ),
+                    self._llm_config.get("model", "unknown"),
+                    action.confidence,
+                ),
+            )
+            await self._conn.commit()
+        except Exception as e:
+            logger.warning("Failed to store calibration suggestion: %s", e)
+
+    async def apply_calibration_actions(self, actions: list[CalibrationAction]) -> dict[str, Any]:
+        """Apply approved calibration actions to the current weights."""
+        if self._conn is None:
+            return {"error": "Not connected"}
+
+        current_weights, current_boost = await self.get_adjusted_weights()
+
+        for action in actions:
+            if action.action_type in ("increase_weight", "decrease_weight"):
+                # Apply to severity weights
+                if action.target in current_weights:
+                    current_weights[action.target] *= action.factor
+                # Apply to concern boost
+                elif action.target in current_boost:
+                    current_boost[action.target] *= action.factor
+
+        # Save updated weights
+        weights_json = json.dumps(
+            {
+                "severity_weights": current_weights,
+                "concern_boost": current_boost,
+            }
+        )
+        await self._conn.execute(
+            """
+            UPDATE calibration_state
+            SET version = version + 1,
+                weights_json = ?,
+                last_trained = ?,
+                sample_count = (SELECT COUNT(*) FROM trust_signals)
+            WHERE id = 1
+            """,
+            (weights_json, datetime.now(UTC).isoformat()),
+        )
+        await self._conn.commit()
+
+        return {
+            "applied": len(actions),
+            "new_weights": current_weights,
+            "new_boost": current_boost,
+        }
+
+
+__all__ = [
+    "CalibrationResult",
+    "LLMAssistedCalibrator",
+    "TrustCalibrator",
+]

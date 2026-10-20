@@ -34,12 +34,12 @@ class TestMCPServer:
         assert server.PROTOCOL_VERSION == "2024-11-05"
         assert server.SERVER_INFO["name"] == "verdity"
         assert server.SERVER_INFO["version"] == "0.4.17"
-        assert len(server._tools) == 12
+        assert len(server._tools) == 13
 
     def test_get_tools(self):
         server = MCPServer()
         tools = server.get_tools()
-        assert len(tools) == 12
+        assert len(tools) == 13
         tool_names = [t["name"] for t in tools]
         # Original tools
         assert "review_security" in tool_names
@@ -50,6 +50,7 @@ class TestMCPServer:
         assert "generate_fix" in tool_names
         assert "apply_fix" in tool_names
         assert "get_review_rules" in tool_names
+        assert "llm_enrich_findings" in tool_names
         # New tools
         assert "verdity_review" in tool_names
         assert "verdity_enforce" in tool_names
@@ -285,6 +286,38 @@ class TestMCPServerErrorPaths:
             assert "error" in result
             assert "Rules init failed" in result["error"]
             assert result["tool"] == "get_review_rules"
+
+    @pytest.mark.asyncio
+    async def test_call_tool_llm_enrich_findings_error(self):
+        """Test _llm_enrich_findings handles exceptions."""
+        server = MCPServer()
+        with patch(
+            "verdity.agents.llm_enricher.LLMEnricherAgent", side_effect=Exception("Enricher failed")
+        ):
+            result = await server.call_tool(
+                "llm_enrich_findings",
+                {
+                    "review_run_id": "123e4567-e89b-12d3-a456-426614174000",
+                    "findings": [
+                        {
+                            "finding_id": "123e4567-e89b-12d3-a456-426614174000",
+                            "concern": "security",
+                            "severity": "high",
+                            "file": "test.py",
+                            "line_start": 10,
+                            "line_end": 10,
+                            "summary": "Test finding",
+                            "explanation": "Test explanation",
+                            "confidence": 0.8,
+                        }
+                    ],
+                    "diff": "test diff",
+                    "mode": "explain",
+                },
+            )
+            assert "error" in result
+            # The error could be from validation or from the enricher
+            assert result["tool"] == "llm_enrich_findings"
 
 
 class TestDiffToFiles:

@@ -365,3 +365,168 @@ class TestEmptyCalibrationStateFallback:
             "last_trained": None,
         }
         await c.close()
+
+
+class TestLLMAssistedCalibrator:
+    """Tests for LLMAssistedCalibrator."""
+
+    @pytest.mark.asyncio
+    async def test_init_inherits_from_trust_calibrator(self):
+        """LLMAssistedCalibrator should inherit from TrustCalibrator."""
+        from verdity.trust_calibration import LLMAssistedCalibrator
+
+        c = LLMAssistedCalibrator(db_path=":memory:")
+        await c.connect()
+        assert isinstance(c, TrustCalibrator)
+        await c.close()
+
+    @pytest.mark.asyncio
+    async def test_set_llm_gateway(self):
+        """Test setting LLM gateway."""
+        from unittest.mock import MagicMock
+
+        from verdity.trust_calibration import LLMAssistedCalibrator
+
+        c = LLMAssistedCalibrator(db_path=":memory:")
+        mock_gateway = MagicMock()
+        c.set_llm_gateway(mock_gateway)
+        assert c._llm_gateway is mock_gateway
+        await c.close()
+
+    @pytest.mark.asyncio
+    async def test_analyze_drift_patterns_no_gateway_returns_empty(self):
+        """analyze_drift_patterns returns empty list when no gateway."""
+        from verdity.trust_calibration import LLMAssistedCalibrator
+
+        c = LLMAssistedCalibrator(db_path=":memory:")
+        await c.connect()
+
+        actions = await c.analyze_drift_patterns(
+            finding_type="security-hardcoded-credential",
+            false_positive_examples=[
+                {"file": "test.py", "line": 10, "summary": "test", "confidence": 0.9}
+            ],
+            confirmed_examples=[
+                {"file": "test.py", "line": 20, "summary": "test", "confidence": 0.95}
+            ],
+        )
+
+        assert actions == []
+        await c.close()
+
+    @pytest.mark.asyncio
+    async def test_analyze_drift_patterns_with_mock_gateway(self):
+        """Test analyze_drift_patterns with mocked gateway."""
+        from unittest.mock import AsyncMock
+
+        from verdity.trust_calibration import LLMAssistedCalibrator
+
+        c = LLMAssistedCalibrator(db_path=":memory:")
+        await c.connect()
+
+        mock_gateway = AsyncMock()
+        mock_gateway.complete_structured = AsyncMock(
+            return_value=[
+                {
+                    "action_type": "decrease_weight",
+                    "target": "concern_boost.security",
+                    "factor": 0.8,
+                    "rationale": "High false positive rate",
+                    "confidence": 0.85,
+                    "finding_type": "security-hardcoded-credential",
+                    "examples_analyzed": 2,
+                }
+            ]
+        )
+        c.set_llm_gateway(mock_gateway)
+
+        actions = await c.analyze_drift_patterns(
+            finding_type="security-hardcoded-credential",
+            false_positive_examples=[
+                {"file": "test.py", "line": 10, "summary": "test", "confidence": 0.9}
+            ],
+            confirmed_examples=[
+                {"file": "test.py", "line": 20, "summary": "test", "confidence": 0.95}
+            ],
+        )
+
+        assert len(actions) == 1
+        assert actions[0].action_type == "decrease_weight"
+        assert actions[0].target == "concern_boost.security"
+        assert actions[0].factor == 0.8
+        mock_gateway.complete_structured.assert_called_once()
+        await c.close()
+
+    @pytest.mark.asyncio
+    async def test_apply_calibration_actions(self):
+        """Test apply_calibration_actions updates weights."""
+        from verdity.schemas import ConcernType
+        from verdity.trust_calibration import LLMAssistedCalibrator
+
+        c = LLMAssistedCalibrator(db_path=":memory:")
+        await c.connect()
+
+        actions = [
+            LLMAssistedCalibrator.CalibrationAction(
+                action_type="decrease_weight",
+                target=ConcernType.SECURITY,
+                factor=0.5,
+                rationale="Test",
+                confidence=0.9,
+                finding_type="security",
+                examples_analyzed=10,
+            ),
+        ]
+
+        result = await c.apply_calibration_actions(actions)
+        assert result["applied"] == 1
+        assert "new_weights" in result
+        assert "new_boost" in result
+        # Check that security boost was halved (default 0.15 * 0.5 = 0.075)
+        assert result["new_boost"][ConcernType.SECURITY] == 0.075
+        await c.close()
+
+    @pytest.mark.asyncio
+    async def test_calibration_suggestion_stored(self):
+        """Test that calibration suggestions are stored in audit table."""
+        from unittest.mock import AsyncMock
+
+        from verdity.schemas import ConcernType
+        from verdity.trust_calibration import LLMAssistedCalibrator
+
+        c = LLMAssistedCalibrator(db_path=":memory:")
+        await c.connect()
+
+        mock_gateway = AsyncMock()
+        mock_gateway.complete_structured = AsyncMock(
+            return_value=[
+                {
+                    "action_type": "decrease_weight",
+                    "target": ConcernType.SECURITY,
+                    "factor": 0.8,
+                    "rationale": "Test rationale",
+                    "confidence": 0.85,
+                    "finding_type": "security-test",
+                    "examples_analyzed": 5,
+                }
+            ]
+        )
+        c.set_llm_gateway(mock_gateway)
+
+        await c.analyze_drift_patterns(
+            finding_type="security-test",
+            false_positive_examples=[
+                {"file": "test.py", "line": 10, "summary": "test", "confidence": 0.9}
+            ],
+            confirmed_examples=[
+                {"file": "test.py", "line": 20, "summary": "test", "confidence": 0.95}
+            ],
+        )
+
+        # Check that suggestion was stored
+        rows = await c._conn.execute(
+            "SELECT finding_type, suggested_action_json FROM calibration_llm_suggestions"
+        )
+        assert len(rows) == 1
+        assert rows[0]["finding_type"] == "security-test"
+        await c.close()

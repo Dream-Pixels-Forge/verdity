@@ -39,6 +39,31 @@ class AuditStore:
         CREATE INDEX IF NOT EXISTS idx_entity        ON audit_log(entity_type, entity_id);
         CREATE INDEX IF NOT EXISTS idx_related_run   ON audit_log(related_run_id);
         CREATE INDEX IF NOT EXISTS idx_logged_at     ON audit_log(logged_at);
+
+        CREATE TABLE IF NOT EXISTS llm_enrichments (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            review_run_id TEXT NOT NULL,
+            finding_id    TEXT NOT NULL,
+            mode          TEXT NOT NULL,
+            model         TEXT NOT NULL,
+            backend       TEXT NOT NULL,
+            result_json   TEXT NOT NULL,
+            tokens_used   INTEGER DEFAULT 0,
+            cost_usd      REAL DEFAULT 0.0,
+            created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_enrich_run    ON llm_enrichments(review_run_id);
+        CREATE INDEX IF NOT EXISTS idx_enrich_finding ON llm_enrichments(finding_id);
+
+        CREATE TABLE IF NOT EXISTS calibration_llm_suggestions (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            finding_type        TEXT NOT NULL,
+            suggested_action_json TEXT NOT NULL,
+            model               TEXT NOT NULL,
+            confidence          REAL,
+            applied             BOOLEAN DEFAULT FALSE,
+            created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+        );
     """
 
     def __init__(self, db_path: str = ":memory:") -> None:
