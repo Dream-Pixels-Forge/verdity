@@ -1,0 +1,1066 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Verdity — AI-Powered Pull Request Review System with deterministic confidence scoring, calibrated trust, and full audit integrity.">
+  <meta name="theme-color" content="#0A1F44">
+  <title>Verdity — Deterministic PR Review with Calibrated Trust</title>
+  
+  <!-- Preconnect for fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  
+  <!-- Tailwind CSS via CDN for rapid prototyping -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: { DEFAULT: '#0A1F44', light: '#1E3A6E' },
+            accent: { DEFAULT: '#00D4AA', dim: '#00A888' },
+            surface: '#F8FAFC',
+            'surface-elevated': '#FFFFFF',
+            'text-primary': '#0A1F44',
+            'text-secondary': '#4A5A7A',
+            'text-muted': '#8B9BB5',
+            border: '#E2E8F0',
+            danger: '#EF4444',
+            warning: '#F59E0B',
+            success: '#10B981',
+          },
+          fontFamily: {
+            display: ['JetBrains Mono', 'monospace'],
+            heading: ['Space Grotesk', 'sans-serif'],
+            body: ['IBM Plex Sans', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+          animation: {
+            'fade-up': 'fadeUp 0.6s cubic-bezier(0.4, 0, 0.2, 1) forwards',
+            'fade-in': 'fadeIn 0.4s ease-out forwards',
+            'slide-in-right': 'slideInRight 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards',
+            'accent-line': 'accentLine 0.8s cubic-bezier(0.23, 1, 0.32, 1) forwards',
+            'grid-drift': 'gridDrift 20s linear infinite',
+            'pulse-ring': 'pulseRing 2s ease-out infinite',
+            'float': 'float 6s ease-in-out infinite',
+          },
+          keyframes: {
+            fadeUp: { '0%': { opacity: '0', transform: 'translateY(30px)' }, '100%': { opacity: '1', transform: 'translateY(0)' } },
+            fadeIn: { '0%': { opacity: '0' }, '100%': { opacity: '1' } },
+            slideInRight: { '0%': { opacity: '0', transform: 'translateX(40px)' }, '100%': { opacity: '1', transform: 'translateX(0)' } },
+            accentLine: { '0%': { width: '0%' }, '100%': { width: '100%' } },
+            gridDrift: { '0%': { transform: 'translateY(0)' }, '100%': { transform: 'translateY(-48px)' } },
+            pulseRing: { '0%': { transform: 'scale(0.8)', opacity: '0.6' }, '100%': { transform: 'scale(1.5)', opacity: '0' } },
+            float: { '0%, 100%': { transform: 'translateY(0)' }, '50%': { transform: 'translateY(-10px)' } },
+          },
+        }
+      }
+    </script>
+    
+  <style>
+    /* CSS Custom Properties from DESIGN.md */
+    :root {
+      --color-primary: #0A1F44;
+      --color-primary-light: #1E3A6E;
+      --color-accent: #00D4AA;
+      --color-accent-dim: #00A888;
+      --color-surface: #F8FAFC;
+      --color-surface-elevated: #FFFFFF;
+      --color-text-primary: #0A1F44;
+      --color-text-secondary: #4A5A7A;
+      --color-text-muted: #8B9BB5;
+      --color-border: #E2E8F0;
+      --color-danger: #EF4444;
+      --color-warning: #F59E0B;
+      --color-success: #10B981;
+      
+      --font-display: 'JetBrains Mono', monospace;
+      --font-heading: 'Space Grotesk', sans-serif;
+      --font-body: 'IBM Plex Sans', sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+      
+      --shadow-1: 0 1px 2px rgba(10, 31, 68, 0.04);
+      --shadow-2: 0 4px 12px rgba(10, 31, 68, 0.08);
+      --shadow-3: 0 12px 32px rgba(10, 31, 68, 0.12);
+      --shadow-4: 0 24px 48px rgba(10, 31, 68, 0.16);
+      
+      --radius-sm: 4px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
+      --radius-xl: 16px;
+      --radius-full: 9999px;
+    }
+    
+    /* Base styles */
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { 
+        animation-duration: 0.01ms !important; 
+        transition-duration: 0.01ms !important; 
+        scroll-behavior: auto !important;
+      }
+    }
+    
+    body {
+      font-family: 'IBM Plex Sans', sans-serif;
+      color: var(--color-text-primary);
+      background: var(--color-surface);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+    
+    h1, h2, h3, h4, h5, h6 { font-family: 'Space Grotesk', sans-serif; font-weight: 600; line-height: 1.2; color: var(--color-text-primary); }
+    .font-display { font-family: 'JetBrains Mono', monospace; }
+    .font-mono { font-family: 'JetBrains Mono', monospace; }
+    
+    /* Scroll-driven animations */
+    @supports (animation-timeline: scroll()) {
+      .scroll-reveal { animation: reveal linear; animation-timeline: view(); animation-range: entry 10% entry 90%; }
+      @keyframes reveal { from { opacity: 0; transform: translateY(40px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+      
+      .parallax-slow { animation: parallax linear; animation-timeline: scroll(); }
+      @keyframes parallax { from { transform: translateY(0); } to { transform: translateY(-60px); } }
+      
+      .parallax-fast { animation: parallaxFast linear; animation-timeline: scroll(); }
+      @keyframes parallaxFast { from { transform: translateY(0); } to { transform: translateY(-120px); } }
+    }
+    
+    /* Accent line animation */
+    .accent-line { height: 2px; background: linear-gradient(90deg, var(--color-accent), var(--color-accent-dim)); width: 0; animation: accentLine 1.2s cubic-bezier(0.23, 1, 0.32, 1) forwards; }
+    
+    /* Grid pattern background */
+    .grid-bg { 
+      background-image: 
+        linear-gradient(45deg, rgba(0, 212, 170, 0.03) 1px, transparent 1px),
+        linear-gradient(-45deg, rgba(0, 212, 170, 0.03) 1px, transparent 1px);
+      background-size: 48px 48px;
+      animation: gridDrift 20s linear infinite;
+    }
+    
+    /* Clip-path reveal */
+    .clip-reveal { clip-path: inset(100% 0 0 0); transition: clip-path 0.8s cubic-bezier(0.4, 0, 0.2, 1); }
+    .clip-reveal.visible { clip-path: inset(0 0 0 0); }
+    
+    /* Focus styles */
+    *:focus-visible { outline: 3px solid var(--color-accent); outline-offset: 2px; }
+    
+    /* Code blocks */
+    .code-block { background: var(--color-primary); color: var(--color-surface); padding: 1.5rem; border-radius: 12px; font-family: 'JetBrains Mono', monospace; font-size: 0.875rem; line-height: 1.6; overflow-x: auto; }
+    .code-inline { background: var(--color-surface); color: var(--color-accent); padding: 2px 6px; border-radius: 4px; font-family: 'JetBrains Mono', monospace; font-size: 0.875em; }
+    
+    /* Badge */
+    .badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 9999px; font-size: 0.75rem; font-weight: 500; }
+    .badge-success { background: rgba(16, 185, 129, 0.12); color: #10B981; }
+    .badge-warning { background: rgba(245, 158, 11, 0.12); color: #F59E0B; }
+    .badge-danger { background: rgba(239, 68, 68, 0.12); color: #EF4444; }
+    .badge-info { background: rgba(0, 212, 170, 0.12); color: #00D4AA; }
+    
+    /* Buttons */
+    .btn { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1.5rem; border-radius: 8px; font-size: 0.875rem; font-weight: 500; transition: all 150ms cubic-bezier(0.4, 0, 0.2, 1); cursor: pointer; border: none; font-family: inherit; }
+    .btn-primary { background: var(--color-primary); color: white; }
+    .btn-primary:hover { background: var(--color-primary-light); }
+    .btn-accent { background: var(--color-accent); color: var(--color-primary); }
+    .btn-accent:hover { background: var(--color-accent-dim); }
+    .btn-ghost { background: transparent; color: var(--color-text-primary); border: 1px solid var(--color-border); }
+    .btn-ghost:hover { background: var(--color-surface); border-color: var(--color-text-muted); }
+    
+    /* Cards */
+    .card { background: var(--color-surface-elevated); border: 1px solid var(--color-border); border-radius: 12px; padding: 1.5rem; box-shadow: 0 1px 2px rgba(10, 31, 68, 0.04); transition: all 250ms cubic-bezier(0.4, 0, 0.2, 1); }
+    .card:hover { box-shadow: 0 4px 12px rgba(10, 31, 68, 0.08); border-color: var(--color-text-muted); }
+    
+    /* Navigation */
+    .nav-link { color: var(--color-text-secondary); transition: color 150ms ease; }
+    .nav-link:hover, .nav-link.active { color: var(--color-accent); }
+    
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: var(--color-surface); }
+    ::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--color-text-muted); }
+    
+    /* Selection */
+    ::selection { background: rgba(0, 212, 170, 0.3); color: var(--color-primary); }
+    
+    /* Grid pattern for hero */
+    .hero-grid { background-image: linear-gradient(45deg, rgba(0, 212, 170, 0.03) 1px, transparent 1px), linear-gradient(-45deg, rgba(0, 212, 170, 0.03) 1px, transparent 1px); background-size: 48px 48px; animation: gridDrift 20s linear infinite; }
+    
+    /* Bracket motif */
+    .bracket { color: rgba(0, 212, 170, 0.2); font-family: 'JetBrains Mono', monospace; font-weight: 700; }
+    
+    /* Floating animation for hero elements */
+    .float { animation: float 6s ease-in-out infinite; }
+    
+    /* Pulse ring for loading states */
+    .pulse-ring::after { content: ''; position: absolute; inset: 0; border-radius: 50%; border: 2px solid currentColor; animation: pulseRing 2s ease-out infinite; }
+    
+    /* Accordion for FAQ */
+    details summary { cursor: pointer; list-style: none; }
+    details summary::-webkit-details-marker { display: none; }
+    details summary::after { content: '+'; float: right; transition: transform 200ms ease; }
+    details[open] summary::after { transform: rotate(45deg); }
+    
+    /* Table */
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 0.75rem 1rem; text-align: left; border-bottom: 1px solid var(--color-border); }
+    th { font-weight: 600; color: var(--color-text-primary); }
+    
+    /* Progress indicator */
+    .progress-bar { height: 3px; background: var(--color-border); border-radius: 9999px; overflow: hidden; }
+    .progress-bar > div { height: 100%; background: linear-gradient(90deg, var(--color-accent), var(--color-accent-dim)); border-radius: 9999px; transition: width 0.3s ease; }
+  </style>
+</head>
+<body class="hero-grid">
+  
+  <!-- Progress indicator -->
+  <div class="fixed top-0 left-0 right-0 z-50 h-1 progress-bar" aria-hidden="true">
+    <div id="scrollProgress" style="width: 0%"></div>
+  </div>
+  
+  <!-- Navigation -->
+  <nav class="fixed top-0 left-0 right-0 z-40 backdrop-blur-md bg-white/80 border-b border-border/50" aria-label="Main navigation">
+    <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+      <a href="#" class="flex items-center gap-3 nav-link active" aria-label="Verdity Home">
+        <span class="bracket text-2xl"><</span>
+        <span class="font-display font-bold text-xl text-text-primary">Verdity</span>
+        <span class="bracket text-2xl">></span>
+      </a>
+      <div class="hidden md:flex items-center gap-8">
+        <a href="#features" class="nav-link text-sm font-medium">Features</a>
+        <a href="#how-it-works" class="nav-link text-sm font-medium">How It Works</a>
+        <a href="#architecture" class="nav-link text-sm font-medium">Architecture</a>
+        <a href="#docs" class="nav-link text-sm font-medium">Docs</a>
+        <a href="https://github.com/Dream-Pixels-Forge/verdity" class="btn btn-primary text-sm" target="_blank" rel="noopener">GitHub</a>
+      </div>
+      <button class="md:hidden btn btn-ghost p-2" aria-label="Toggle menu">
+        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
+    </nav>
+    
+    <!-- Progress bar fill script -->
+    <script>
+      const progressBar = document.getElementById('scrollProgress');
+      window.addEventListener('scroll', () => {
+        const scrollTop = window.scrollY;
+        const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+        const scrollPercent = (scrollTop / docHeight) * 100;
+        progressBar.style.width = scrollPercent + '%';
+      });
+    </script>
+
+  <!-- ACT 1: HOOK (0-15%) -->
+  <header class="min-h-screen relative flex items-center justify-center overflow-hidden" id="hero">
+    <!-- Floating decorative elements -->
+    <div class="absolute inset-0 pointer-events-none overflow-hidden">
+      <div class="absolute top-20 left-10 w-32 h-32 border-2 border-accent/10 rounded-xl rotate-12 float animate-float" style="animation-delay: 0s;"></div>
+      <div class="absolute top-40 right-15 w-24 h-24 border-2 border-accent/5 rounded-lg -rotate-6 float animate-float" style="animation-delay: -2s;"></div>
+      <div class="absolute bottom-20 left-20 w-16 h-16 border-2 border-accent/10 rounded-full float animate-float" style="animation-delay: -4s;"></div>
+      <div class="absolute bottom-30 right-25 w-20 h-20 border-2 border-accent/5 rounded-xl rotate-3 float animate-float" style="animation-delay: -1s;"></div>
+      <!-- Accent orbs -->
+      <div class="absolute top-1/3 left-1/4 w-4 h-4 bg-accent/10 rounded-full float animate-float" style="animation-delay: 0s;"></div>
+      <div class="absolute top-2/3 right-1/3 w-3 h-3 bg-accent/10 rounded-full float animate-float" style="animation-delay: -3s;"></div>
+      <div class="absolute bottom-1/4 left-1/2 w-2 h-2 bg-accent/10 rounded-full float animate-float" style="animation-delay: -1.5s;"></div>
+    </div>
+    
+    <div class="relative z-10 max-w-7xl mx-auto px-6 py-20 text-center">
+      <!-- Bracket motif -->
+      <div class="flex items-center justify-center gap-4 mb-8">
+        <span class="bracket text-4xl opacity-0 animate-fade-in" style="animation-delay: 100ms;"><</span>
+        <div class="accent-line w-24 mx-auto"></div>
+        <span class="bracket text-4xl opacity-0 animate-fade-in" style="animation-delay: 200ms;">></div>
+      </div>
+      
+      <!-- Hero title -->
+      <h1 class="font-display font-bold text-5xl md:text-7xl lg:text-8xl leading-[1.1] text-text-primary mb-6 opacity-0 animate-fade-up" style="animation-delay: 300ms;">
+        Verdity
+        <span class="block text-accent font-display font-medium text-2xl md:text-3xl mt-2 opacity-0 animate-fade-up" style="animation-delay: 500ms;">
+          Deterministic PR Review with Calibrated Trust
+        </span>
+      </h1>
+      
+      <!-- Hero subtitle -->
+      <p class="text-lg md:text-xl lg:text-2xl text-text-secondary max-w-3xl mx-auto mb-10 opacity-0 animate-fade-up" style="animation-delay: 700ms;">
+        AI-powered pull request review with <strong class="font-semibold text-text-primary">deterministic confidence scoring</strong>, 
+        <strong class="font-semibold text-text-primary">calibrated trust</strong>, and 
+        <strong class="font-semibold text-text-primary">full audit integrity</strong>.
+        <br class="hidden md:block">
+        Every finding earns its confidence through deterministic evidence.
+      </p>
+      
+      <!-- Badges -->
+      <div class="flex flex-wrap items-center justify-center gap-3 mb-10 opacity-0 animate-fade-up" style="animation-delay: 900ms;">
+        <span class="badge badge-success">1261 Tests Passing</span>
+        <span class="badge badge-info">100% Coverage New Code</span>
+        <span class="badge badge-success">Python 3.11+</span>
+        <span class="badge badge-warning">MIT License</span>
+        <span class="badge badge-info">v0.5.0</span>
+      </div>
+      
+      <!-- CTA Buttons -->
+      <div class="flex flex-wrap items-center justify-center gap-4 mb-16 opacity-0 animate-fade-up" style="animation-delay: 1100ms;">
+        <a href="#get-started" class="btn btn-primary group">
+          Get Started
+          <svg class="w-4 h-4 transition-transform group-hover:translate-x-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/></svg>
+        </a>
+        <a href="https://github.com/Dream-Pixels-Forge/verdity" class="btn btn-ghost" target="_blank" rel="noopener">
+          <svg class="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.305-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/></svg>
+          View on GitHub
+        </a>
+      </div>
+      
+      <!-- Quick stats -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-6 md:gap-8 max-w-4xl mx-auto opacity-0 animate-fade-up" style="animation-delay: 1300ms;">
+        <div class="text-center">
+          <div class="font-display font-bold text-4xl md:text-5xl text-accent">1261</div>
+          <div class="text-sm text-text-muted mt-1">Tests Passing</div>
+        </div>
+        <div class="text-center">
+          <div class="font-display font-bold text-4xl md:text-5xl text-accent">100%</div>
+          <div class="text-sm text-text-muted mt-1">New Code Coverage</div>
+        </div>
+        <div class="text-center">
+          <div class="font-display font-bold text-4xl md:text-5xl text-accent">0.5.0</div>
+          <div class="text-sm text-text-muted mt-1">Latest Version</div>
+        </div>
+        <div class="text-center">
+          <div class="font-display font-bold text-4xl md:text-5xl text-accent">0.4.17</div>
+          <div class="text-sm text-text-muted mt-1">PyPI Published</div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Scroll indicator -->
+    <div class="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 text-text-muted animate-fade-in" style="animation-delay: 1500ms;">
+      <span class="text-xs font-medium tracking-widest uppercase">Scroll to explore</span>
+      <div class="w-px h-12 bg-gradient-to-b from-accent/50 to-transparent animate-pulse"></div>
+    </div>
+  </header>
+
+  <!-- ACT 2: JOURNEY (15-85%) -->
+  
+  <!-- FEATURES SECTION -->
+  <section id="features" class="py-24 md:py-32 relative" aria-labelledby="features-title">
+    <div class="max-w-7xl mx-auto px-6">
+      <!-- Section header -->
+      <div class="text-center mb-16 scroll-reveal">
+        <span class="bracket text-2xl text-accent"><</span>
+        <h2 id="features-title" class="font-display font-bold text-4xl md:text-5xl text-text-primary mt-4 mb-4">Features</h2>
+        <div class="accent-line w-20 mx-auto"></div>
+        <p class="text-lg text-text-secondary max-w-2xl mx-auto mt-6">
+          Built on non-negotiable constraints: deterministic confidence, audit-first design, and calibrated trust.
+        </p>
+      </div>
+      
+      <!-- Feature Grid -->
+      <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <!-- Feature 1 -->
+        <article class="card scroll-reveal" style="animation-delay: 100ms;">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+              <svg class="w-5 h-5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+            </div>
+            <span class="badge badge-info">Constraint #5</span>
+          </div>
+          <h3 class="font-heading text-xl font-semibold mb-2">Deterministic Confidence</h3>
+          <p class="text-text-secondary">Confidence scores computed by deterministic post-processing, never raw LLM self-report. Every finding's confidence is calibrated through the TrustCalibrator using human feedback.</p>
+          <div class="mt-4 p-3 bg-primary/5 rounded-lg border border-primary/10">
+            <code class="code-inline">Constraint #5: confidence computed by deterministic post-processing, never raw LLM self-report</code>
+          </div>
+        </article>
+        
+        <!-- Feature 2 -->
+        <article class="card scroll-reveal" style="animation-delay: 200ms;">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center">
+              <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+            </div>
+            <span class="badge badge-success">Constraint #8</span>
+          </div>
+          <h3 class="font-heading text-xl font-semibold mb-2">Token Economics</h3>
+          <p class="text-text-secondary">Every model/tool call metered through TokenEconomicsService. Per-review-run budgets, per-finding caps, degradation signals before hard limits.</p>
+          <div class="mt-4 p-3 bg-accent/5 rounded-lg border border-accent/10">
+            <code class="code-inline">TokenEconomicsService.record_call()</code>
+          </div>
+        </article>
+        
+        <!-- Feature 3 -->
+        <article class="card scroll-reveal" style="animation-delay: 300ms;">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="w-10 h-10 rounded-lg bg-warning/10 flex items-center justify-center">
+              <svg class="w-5 h-5 text-warning" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            </div>
+            <span class="badge badge-warning">Constraint #9</span>
+          </div>
+          <h3 class="font-heading text-xl font-semibold mb-2">Full Audit Trail</h3>
+          <p class="text-text-secondary">Append-only audit log with SHA-256 integrity checksums. Every finding, routing decision, approval action, and model call logged — no soft deletes, no updates.</p>
+          <div class="mt-4 p-3 bg-warning/5 rounded-lg border border-warning/10">
+            <code class="code-inline">AuditStore.append() → SHA-256 checksum</code>
+          </div>
+        </article>
+        
+        <!-- Feature 4 -->
+        <article class="card scroll-reveal" style="animation-delay: 400ms;">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="w-10 h-10 rounded-lg bg-success/10 flex items-center justify-center">
+              <svg class="w-5 h-5 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+            </div>
+            <span class="badge badge-success">Constraint #9</span>
+          </div>
+          <h3 class="font-heading text-xl font-semibold mb-2">Approval Queue</h3>
+          <p class="text-text-secondary">Sub-threshold findings never auto-post. Human approval required with SLA escalation, dual-secret rotation, and replay protection.</p>
+          <div class="mt-4 p-3 bg-success/5 rounded-lg border border-success/10">
+            <code class="code-inline">ApprovalQueue.enqueue() → SLA tracking</code>
+          </div>
+        </article>
+        
+        <!-- Feature 5 -->
+        <article class="card scroll-reveal" style="animation-delay: 500ms;">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+              <svg class="w-5 h-5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
+            </div>
+            <span class="badge badge-info">MCP Server</span>
+          </div>
+          <h3 class="font-heading text-xl font-semibold mb-2">MCP Server</h3>
+          <p class="text-text-secondary">Model Context Protocol server exposing 8 tools: review_security, review_quality, review_testing, review_documentation, review_full, verdity_review, verdity_enforce, get_review_rules.</p>
+          <div class="mt-4 p-3 bg-primary/5 rounded-lg border border-primary/10">
+            <code class="code-inline">MCPServer.call_tool()</code>
+          </div>
+        </article>
+        
+        <!-- Feature 6 -->
+        <article class="card scroll-reveal" style="animation-delay: 600ms;">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="w-10 h-10 rounded-lg bg-success/10 flex items-center justify-center">
+              <svg class="w-5 h-5 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            </div>
+            <span class="badge badge-success">CLI</span>
+          </div>
+          <h3 class="font-heading text-xl font-semibold mb-2">CLI Commands</h3>
+          <p class="text-text-secondary">Four commands: <code class="code-inline">verdity-review</code>, <code class="code-inline">verdity-enforce</code>, <code class="code-inline">verdity-worker</code>, <code class="code-inline">verdity-enrich</code> — with structured JSON output and atomic file writes.</p>
+          <div class="mt-4 p-3 bg-success/5 rounded-lg border border-success/10">
+            <code class="code-inline">verdity-review run --owner org --repo repo --pr 42</code>
+          </div>
+        </article>
+      </div>
+    </div>
+  </section>
+  
+  <!-- HOW IT WORKS SECTION -->
+  <section id="how-it-works" class="py-24 md:py-32 relative bg-surface-elevated" aria-labelledby="how-title">
+    <div class="max-w-7xl mx-auto px-6">
+      <div class="text-center mb-16 scroll-reveal">
+        <span class="bracket text-2xl text-accent"><</span>
+        <h2 id="how-title" class="font-display font-bold text-4xl md:text-5xl text-text-primary mt-4 mb-4">How It Works</h2>
+        <div class="accent-line w-20 mx-auto"></div>
+        <p class="text-lg text-text-secondary max-w-2xl mx-auto mt-6">
+          From webhook to calibrated finding — the complete Verdity pipeline in five stages.
+        </p>
+      </div>
+      
+      <!-- Pipeline Visualization -->
+      <div class="relative max-w-5xl mx-auto">
+        <!-- Pipeline stages -->
+        <div class="flex flex-col md:flex-row items-center justify-between gap-8 relative">
+          <!-- Connecting line -->
+          <div class="hidden md:block absolute top-1/2 left-0 right-0 h-px bg-border -z-10" style="transform: translateY(-50%);"></div>
+          
+          <!-- Stage 1 -->
+          <div class="relative z-10 flex flex-col items-center text-center scroll-reveal w-full md:w-1/5" style="animation-delay: 100ms;">
+            <div class="w-16 h-16 rounded-full bg-primary flex items-center justify-center mb-4 shadow-3">
+              <span class="font-display font-bold text-2xl text-white">1</div>
+            </div>
+            <h4 class="font-heading text-lg font-semibold mb-2">Ingest</h4>
+            <p class="text-text-secondary text-sm">GitHub webhook → HMAC verify → Event queue</p>
+            <div class="mt-3 p-2 bg-primary/5 rounded-lg text-xs font-mono text-primary">HMAC-SHA256 verified</div>
+          </div>
+          
+          <!-- Stage 2 -->
+          <div class="relative z-10 flex flex-col items-center text-center scroll-reveal w-full md:w-1/5" style="animation-delay: 200ms;">
+            <div class="w-16 h-16 rounded-full bg-primary flex items-center justify-center mb-4 shadow-3">
+              <span class="font-display font-bold text-2xl text-white">2</div>
+            </div>
+            <h4 class="font-heading text-lg font-semibold mb-2">Orchestrate</h4>
+            <p class="text-text-secondary text-sm">Fan-out to 4 specialists in parallel</p>
+            <div class="mt-3 flex gap-1 justify-center">
+              <span class="badge badge-info text-xs">Security</span>
+              <span class="badge badge-info text-xs">Quality</span>
+              <span class="badge badge-info text-xs">Testing</span>
+              <span class="badge badge-info text-xs">Docs</span>
+            </div>
+          </div>
+          
+          <!-- Stage 3 -->
+          <div class="relative z-10 flex flex-col items-center text-center scroll-reveal w-full md:w-1/5" style="animation-delay: 300ms;">
+            <div class="w-16 h-16 rounded-full bg-accent flex items-center justify-center mb-4 shadow-3">
+              <span class="font-display font-bold text-2xl text-primary">3</div>
+            </div>
+            <h4 class="font-heading text-lg font-semibold mb-2">Aggregate</h4>
+            <p class="text-text-secondary text-sm">Dedup, conflict resolution, ranking</p>
+            <div class="mt-3 p-2 bg-accent/5 rounded-lg text-xs font-mono text-accent">Deterministic ranking</div>
+          </div>
+          
+          <!-- Stage 4 -->
+          <div class="relative z-10 flex flex-col items-center text-center scroll-reveal w-full md:w-1/5" style="animation-delay: 400ms;">
+            <div class="w-16 h-16 rounded-full bg-warning flex items-center justify-center mb-4 shadow-3">
+              <span class="font-display font-bold text-2xl text-white">4</div>
+            </div>
+            <h4 class="font-heading text-lg font-semibold mb-2">Route</h4>
+            <p class="text-text-secondary text-sm">Auto-approve / Manual review / Dismiss</p>
+            <div class="mt-3 flex gap-1 justify-center">
+              <span class="badge badge-success text-xs">Auto-approve</span>
+              <span class="badge badge-warning text-xs">Manual</span>
+              <span class="badge badge-danger text-xs">Dismiss</span>
+            </div>
+          </div>
+          
+          <!-- Stage 5 -->
+          <div class="relative z-10 flex flex-col items-center text-center scroll-reveal w-full md:w-1/5" style="animation-delay: 500ms;">
+            <div class="w-16 h-16 rounded-full bg-success flex items-center justify-center mb-4 shadow-3">
+              <span class="font-display font-bold text-2xl text-white">5</div>
+            </div>
+            <h4 class="font-heading text-lg font-semibold mb-2">Post</h4>
+            <p class="text-text-secondary text-sm">GitHub check-run + PR comment + Audit log</p>
+            <div class="mt-3 p-2 bg-success/5 rounded-lg text-xs font-mono text-success">SHA-256 audit trail</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+  
+  <!-- ARCHITECTURE SECTION -->
+  <section id="architecture" class="py-24 md:py-32 relative" aria-labelledby="arch-title">
+    <div class="max-w-7xl mx-auto px-6">
+      <div class="text-center mb-16 scroll-reveal">
+        <span class="bracket text-2xl text-accent"><</span>
+        <h2 id="arch-title" class="font-display font-bold text-4xl md:text-5xl text-text-primary mt-4 mb-4">Architecture</h2>
+        <div class="accent-line w-20 mx-auto"></div>
+        <p class="text-lg text-text-secondary max-w-2xl mx-auto mt-6">
+          Modular, testable, and built on non-negotiable constraints. Every component is independently testable.
+        </p>
+      </div>
+      
+      <!-- Architecture Diagram -->
+      <div class="scroll-reveal">
+        <div class="bg-primary rounded-2xl p-8 md:p-12 text-center relative overflow-hidden">
+          <!-- Background pattern -->
+          <div class="absolute inset-0 grid-bg opacity-50"></div>
+          
+          <div class="relative z-10">
+            <pre class="code-block text-left max-w-4xl mx-auto text-sm overflow-x-auto" style="font-size: 0.75rem;">
+{ "pipeline": "Ingestion → Orchestration → Specialists → Aggregation → Routing → Posting",
+  "constraints": [
+    "1. HMAC-SHA256 verified before parsing",
+    "2. Queue decouples ingestion from processing",
+    "3. Specialists run in parallel, timeout-isolated",
+    "4. Shared semantic index, no private stores",
+    "5. Confidence = deterministic (never LLM)",
+    "6. Verification gate → independent verifier → regression",
+    "7. Sub-threshold → Approval Queue (never auto-post)",
+    "8. Every model call metered via TokenEconomics",
+    "9. Every finding logged to Audit Store (SHA-256)",
+    "10. View Transitions API for page transitions"
+  ],
+  "specialists": {
+    "security": "3-pass: secrets, semantic, diff vulns",
+    "quality": "Complexity, style, patterns",
+    "testing": "Coverage gaps, test quality",
+    "docs": "Docstrings, CHANGELOG, breaking changes"
+  },
+  "gates": {
+    "verification": "compiles → lint → no-new-secrets → verifier",
+    "approval": "SLA escalation, dual-secret rotation",
+    "token_economics": "Per-run budgets, degradation signals"
+  }
+}</pre>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Component Details -->
+      <div class="grid md:grid-cols-3 gap-6 mt-16">
+        <article class="card scroll-reveal">
+          <h4 class="font-heading text-lg font-semibold mb-3 flex items-center gap-2">
+            <span class="bracket text-accent">{</span>
+            <span>Core Modules</span>
+            <span class="bracket text-accent">}</span>
+          </h4>
+          <ul class="space-y-2 text-text-secondary text-sm font-mono">
+            <li><span class="text-accent">orchestrator.py</span> — Durable workflow, scatter-gather</li>
+            <li><span class="text-accent">semantic_index.py</span> — Embeddings + symbol graph</li>
+            <li><span class="text-accent">router.py</span> — Confidence scoring + routing</li>
+            <li><span class="text-accent">approval_queue.py</span> — SLA + approval gates</li>
+            <li><span class="text-accent">token_economics.py</span> — Per-call metering + budgets</li>
+            <li><span class="text-accent">trust_calibration.py</span> — LLM-assisted calibration</li>
+            <li><span class="text-accent">verification_gate.py</span> — Multi-stage verification</li>
+            <li><span class="text-accent">coding_agent.py</span> — Rule-based fix generation</li>
+          </ul>
+        </article>
+        
+        <article class="card scroll-reveal">
+          <h4 class="font-heading text-lg font-semibold mb-3 flex items-center gap-2">
+            <span class="bracket text-accent">{</span>
+            <span>Specialist Agents</span>
+            <span class="bracket text-accent">}</span>
+          </h4>
+          <ul class="space-y-3 text-sm">
+            <li class="flex items-start gap-3 p-3 bg-primary/5 rounded-lg border border-primary/10">
+              <span class="badge badge-info">Security</span>
+              <div>
+                <div class="font-medium text-text-primary">3-Pass Scan</div>
+                <ul class="text-text-secondary text-sm mt-1 space-y-1">
+                  <li>• Secret scanning (entropy + patterns)</li>
+                  <li>• Semantic search (vector similarity)</li>
+                  <li>• Diff vulnerability patterns</li>
+                </ul>
+              </div>
+            </li>
+            <li class="flex items-start gap-3 p-3 bg-accent/5 rounded-lg border border-accent/10">
+              <span class="badge badge-info">Quality</span>
+              <div>
+                <div class="font-medium text-text-primary">Complexity & Patterns</div>
+                <ul class="text-text-secondary text-sm mt-1 space-y-1">
+                  <li>• Cyclomatic complexity detection</li>
+                  <li>• Anti-pattern recognition</li>
+                  <li>• Style violations</li>
+                </ul>
+              </div>
+            </li>
+            <li class="flex items-start gap-3 p-3 bg-success/5 rounded-lg border border-success/10">
+              <span class="badge badge-success">Testing</span>
+              <div>
+                <div class="font-medium text-text-primary">Coverage Analysis</div>
+                <ul class="text-text-secondary text-sm mt-1 space-y-1">
+                  <li>• Missing branch detection</li>
+                  <li>• Test quality scoring</li>
+                  <li>• Mutation testing hints</li>
+                </ul>
+              </div>
+            </li>
+            <li class="flex items-start gap-3 p-3 bg-warning/5 rounded-lg border border-warning/10">
+              <span class="badge badge-warning">Documentation</span>
+              <div>
+                <div class="font-medium text-text-primary">Doc Quality</div>
+                <ul class="text-text-secondary text-sm mt-1 space-y-1">
+                  <li>• Missing docstrings</li>
+                  <li>• Outdated comments</li>
+                  <li>• Breaking change detection</li>
+                </ul>
+              </div>
+            </li>
+          </ul>
+        </article>
+        
+        <article class="card scroll-reveal">
+          <h4 class="font-heading text-lg font-semibold mb-3 flex items-center gap-2">
+            <span class="bracket text-accent">{</span>
+            <span>Data Flow</span>
+            <span class="bracket text-accent">}</span>
+          </h4>
+          <div class="space-y-3">
+            <div class="flex items-center gap-3 p-3 bg-surface rounded-lg">
+              <span class="w-8 h-8 flex items-center justify-center bg-primary text-white rounded-full font-display font-bold text-sm">1</span>
+              <div>
+                <div class="font-medium">Webhook → HMAC Verify → Event Queue</div>
+                <div class="text-text-secondary text-sm">Constant-time HMAC, delivery-ID replay cache (24h TTL)</div>
+              </div>
+            </div>
+            <div class="flex items-center gap-3 p-3 bg-surface rounded-lg">
+              <span class="w-8 h-8 flex items-center justify-center bg-primary text-white rounded-full font-display font-bold text-sm">2</span>
+              <div>
+                <div class="font-medium">Orchestrator → Specialist Fan-out</div>
+                <div class="text-text-secondary text-sm">Parallel execution, timeout isolation, graceful degradation</div>
+              </div>
+            </div>
+            <div class="flex items-center gap-3 p-3 bg-surface rounded-lg">
+              <span class="w-8 h-8 flex items-center justify-center bg-accent text-primary rounded-full font-display font-bold text-sm">3</span>
+              <div>
+                <div class="font-medium">Aggregator → Dedup → Rank → Route</div>
+                <div class="text-text-secondary text-sm">Deterministic conflict resolution, confidence scoring</div>
+              </div>
+            </div>
+            <div class="flex items-center gap-3 p-3 bg-surface rounded-lg">
+              <span class="w-8 h-8 flex items-center justify-center bg-warning text-white rounded-full font-display font-bold text-sm">4</span>
+              <div>
+                <div class="font-medium">Router → Approval Queue / Auto-Post</div>
+                <div class="text-text-secondary text-sm">SLA escalation, dual-secret rotation, replay protection</div>
+              </div>
+            </div>
+            <div class="flex items-center gap-3 p-3 bg-surface rounded-lg">
+              <span class="w-8 h-8 flex items-center justify-center bg-success text-white rounded-full font-display font-bold text-sm">5</span>
+              <div>
+                <div class="font-medium">GitHub Check-Run + PR Comment + Audit</div>
+                <div class="text-text-secondary text-sm">SHA-256 integrity checksums, full audit trail</div>
+              </div>
+            </div>
+          </div>
+        </article>
+      </div>
+    </div>
+  </section>
+  
+  <!-- QUICK START SECTION -->
+  <section id="get-started" class="py-24 md:py-32 relative bg-primary" aria-labelledby="quick-title">
+    <div class="absolute inset-0 grid-bg opacity-20"></div>
+    <div class="absolute inset-0 bg-gradient-to-br from-primary/50 to-primary/80"></div>
+    <div class="relative z-10 max-w-7xl mx-auto px-6 text-center">
+      <div class="scroll-reveal">
+        <span class="bracket text-2xl text-accent"><</span>
+        <h2 id="quick-title" class="font-display font-bold text-4xl md:text-5xl text-white mt-4 mb-4">Quick Start</h2>
+        <div class="accent-line w-20 mx-auto"></div>
+        <p class="text-lg text-primary/80 max-w-2xl mx-auto mt-6">
+          Install, configure, and run your first review in under 5 minutes.
+        </p>
+      </div>
+      
+      <div class="grid md:grid-cols-3 gap-6 mt-16 max-w-5xl mx-auto">
+        <!-- Step 1 -->
+        <article class="card bg-primary/20 border-primary/20 text-white scroll-reveal">
+          <div class="w-12 h-12 rounded-xl bg-accent flex items-center justify-center mb-6">
+            <span class="font-display font-bold text-2xl text-primary">1</span>
+          </div>
+          <h3 class="font-heading text-xl font-semibold mb-3">Install</h3>
+          <p class="text-primary/80 mb-4">Install Verdity with pip. Requires Python 3.11+.</p>
+          <pre class="code-block text-sm"><code>pip install verdity==0.5.0</code></pre>
+          <div class="mt-4 p-3 bg-primary/10 rounded-lg border border-primary/20 text-sm">
+            <strong>Requires:</strong> Python 3.11+, GitHub App credentials
+          </div>
+        </article>
+        
+        <!-- Step 2 -->
+        <article class="card bg-primary/20 border-primary/20 text-white scroll-reveal">
+          <div class="w-12 h-12 rounded-xl bg-accent flex items-center justify-center mb-6">
+            <span class="font-display font-bold text-2xl text-primary">2</span>
+          </div>
+          <h3 class="font-heading text-xl font-semibold mb-3">Configure</h3>
+          <p class="text-primary/80 mb-4">Copy <code class="code-inline">.env.example</code> to <code class="code-inline">.env</code> and add your GitHub App credentials.</p>
+          <pre class="code-block text-sm"><code>cp .env.example .env
+# Edit .env with your credentials:
+WEBHOOK_HMAC_SECRET=...
+GITHUB_APP_ID=123456
+GITHUB_APP_INSTALLATION_ID=789012
+GITHUB_APP_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----..."</code></pre>
+        </article>
+        
+        <!-- Step 3 -->
+        <article class="card bg-primary/20 border-primary/20 text-white scroll-reveal">
+          <div class="w-12 h-12 rounded-xl bg-accent flex items-center justify-center mb-6">
+            <span class="font-display font-bold text-2xl text-primary">3</span>
+          </div>
+          <h3 class="font-heading text-xl font-semibold mb-3">Run</h3>
+          <p class="text-primary/80 mb-4">Start the gateway and worker. Configure GitHub webhook to point to your gateway.</p>
+          <pre class="code-block text-sm"><code># Terminal 1: Start gateway
+uvicorn verdity.gateway.app:app --reload --port 8000
+
+# Terminal 2: Start worker
+verdity-worker
+
+# Terminal 3: Test review
+verdity-review run --owner myorg --repo myrepo --pr 42</code></pre>
+        </article>
+      </div>
+      
+      <!-- Config example -->
+      <div class="scroll-reveal mt-16 max-w-3xl mx-auto">
+        <h3 class="font-heading text-2xl font-semibold mb-4">Configuration (.verdity.yml)</h3>
+        <pre class="code-block"><code>llm:
+  enabled: true
+  default_model: "qwen2.5-7b-instruct"
+  default_backend: "ollama"
+  ollama_url: "http://localhost:11434"
+  
+  enrichment:
+    enabled: true
+    default_mode: "explain"
+    batch_size: 10
+    timeout_seconds: 60
+    async: true
+  
+  calibration_assist:
+    enabled: true
+    trigger_on_drift: true
+    min_samples: 20</pre>
+      </div>
+    </div>
+  </section>
+  
+  <!-- DOCUMENTATION SECTION -->
+  <section id="docs" class="py-24 md:py-32 relative" aria-labelledby="docs-title">
+    <div class="max-w-7xl mx-auto px-6">
+      <div class="text-center mb-16 scroll-reveal">
+        <span class="bracket text-2xl text-accent"><</span>
+        <h2 id="docs-title" class="font-display font-bold text-4xl md:text-5xl text-text-primary mt-4 mb-4">Documentation</h2>
+        <div class="accent-line w-20 mx-auto"></div>
+        <p class="text-lg text-text-secondary max-w-2xl mx-auto mt-6">
+          Comprehensive guides, API reference, and integration examples.
+        </p>
+      </div>
+      
+      <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <a href="#" class="card scroll-reveal group">
+          <div class="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center mb-4 group-hover:bg-primary/20 transition-colors">
+            <svg class="w-6 h-6 text-primary group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+          </div>
+          <h3 class="font-heading text-lg font-semibold mb-2">Installation Guide</h3>
+          <p class="text-text-secondary text-sm mb-4">Step-by-step setup from prerequisites to first review.</p>
+          <span class="font-mono text-sm text-accent group-hover:underline">Read Guide →</span>
+        </a>
+        
+        <a href="#" class="card scroll-reveal group">
+          <div class="w-12 h-12 rounded-xl bg-accent/10 flex items-center justify-center mb-4 group-hover:bg-accent/20 transition-colors">
+            <svg class="w-6 h-6 text-accent group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
+          </div>
+          <h3 class="font-heading text-lg font-semibold mb-2">Configuration</h3>
+          <p class="text-text-secondary text-sm mb-4">Environment variables, .verdity.yml, and advanced options.</p>
+          <span class="font-mono text-sm text-accent group-hover:underline">Read Docs →</span>
+        </a>
+        
+        <a href="#" class="card scroll-reveal group">
+          <div class="w-12 h-12 rounded-xl bg-success/10 flex items-center justify-center mb-4 group-hover:bg-success/20 transition-colors">
+            <svg class="w-6 h-6 text-success group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
+          </div>
+          <h3 class="font-heading text-lg font-semibold mb-2">CLI Reference</h3>
+          <p class="text-text-secondary text-sm mb-4">All commands: verdity-review, verdity-enforce, verdity-enrich, verdity-worker.</p>
+          <span class="font-mono text-sm text-accent group-hover:underline">View Commands →</span>
+        </a>
+        
+        <a href="#" class="card scroll-reveal group">
+          <div class="w-12 h-12 rounded-xl bg-warning/10 flex items-center justify-center mb-4 group-hover:bg-warning/20 transition-colors">
+            <svg class="w-6 h-6 text-warning group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 002-2V5a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2V5a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2V5a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2V5a2 2 0 00-2-2H9a2 2 0 00-2 2z"/></svg>
+          </div>
+          <h3 class="font-heading text-lg font-semibold mb-2">MCP Integration</h3>
+          <p class="text-text-secondary text-sm mb-4">Model Context Protocol server with 8 tools for AI assistants.</p>
+          <span class="font-mono text-sm text-accent group-hover:underline">View Tools →</span>
+        </a>
+        
+        <a href="#" class="card scroll-reveal group">
+          <div class="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center mb-4 group-hover:bg-primary/20 transition-colors">
+            <svg class="w-6 h-6 text-primary group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+          </div>
+          <h3 class="font-heading text-lg font-semibold mb-2">Security Model</h3>
+          <p class="text-text-secondary text-sm mb-4">Threat model, HMAC verification, replay protection, secret management.</p>
+          <span class="font-mono text-sm text-accent group-hover:underline">Read Security →</span>
+        </a>
+        
+        <a href="#" class="card scroll-reveal group">
+          <div class="w-12 h-12 rounded-xl bg-accent/10 flex items-center justify-center mb-4 group-hover:bg-accent/20 transition-colors">
+            <svg class="w-6 h-6 text-accent group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+          </div>
+          <h3 class="font-heading text-lg font-semibold mb-2">API Reference</h3>
+          <p class="text-text-secondary text-sm mb-4">REST endpoints, webhook payloads, MCP tool schemas.</p>
+          <span class="font-mono text-sm text-accent group-hover:underline">View API →</span>
+        </a>
+        
+        <a href="#" class="card scroll-reveal group">
+          <div class="w-12 h-12 rounded-xl bg-success/10 flex items-center justify-center mb-4 group-hover:bg-success/20 transition-colors">
+            <svg class="w-6 h-6 text-success group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
+          </div>
+          <h3 class="font-heading text-lg font-semibold mb-2">Trust Calibration</h3>
+          <p class="text-text-secondary text-sm mb-4">How TrustCalibrator works, drift detection, LLM-assisted analysis.</p>
+          <span class="font-mono text-sm text-accent group-hover:underline">Learn More →</span>
+        </a>
+        
+        <a href="#" class="card scroll-reveal group">
+          <div class="w-12 h-12 rounded-xl bg-danger/10 flex items-center justify-center mb-4 group-hover:bg-danger/20 transition-colors">
+            <svg class="w-6 h-6 text-danger group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+          </div>
+          <h3 class="font-heading text-lg font-semibold mb-2">Troubleshooting</h3>
+          <p class="text-text-secondary text-sm mb-4">Common issues, debugging tips, and FAQ.</p>
+          <span class="font-mono text-sm text-accent group-hover:underline">View FAQ →</span>
+        </a>
+      </div>
+    </div>
+  </section>
+  
+  <!-- ACT 3: RESOLUTION (85-100%) -->
+  
+  <!-- COMMUNITY & CONTRIBUTING -->
+  <section class="py-24 md:py-32 relative bg-surface-elevated" aria-labelledby="community-title">
+    <div class="max-w-7xl mx-auto px-6">
+      <div class="text-center mb-16 scroll-reveal">
+        <span class="bracket text-2xl text-accent"><</span>
+        <h2 id="community-title" class="font-display font-bold text-4xl md:text-5xl text-text-primary mt-4 mb-4">Community</h2>
+        <div class="accent-line w-20 mx-auto"></div>
+        <p class="text-lg text-text-secondary max-w-2xl mx-auto mt-6">
+          Open source, community-driven, and built with the same rigor we apply to every PR.
+        </p>
+      </div>
+      
+      <div class="grid md:grid-cols-3 gap-6">
+        <article class="card scroll-reveal">
+          <div class="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center mb-4">
+            <svg class="w-6 h-6 text-primary" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.87 8.166 6.84 9.5.5.083.678-.213.678-.476v-2.88c-2.81-.38-3.633-1.4-3.633-1.4-.49-1.2-1.2-1.52-1.2-1.52-.99-.51.074-.5.074-.5 1.1.076 1.686 1.07 1.686 1.07.98 1.1 2.58 1.077 3.213.824.1-.648.375-1.318.686-1.618-2.39-.27-4.9-.48-4.9-5.4 0-1.2 1.05-1.5 2.05-1.5.79 0 1.5.2 2.05 1.5 0 4.91-2.605 5.4-4.9 5.4.5.3.678 1.08.75 1.306.16.25.324.57.52 1.05v3.55c0 .276-.18.5-.678.476C19.134 20.166 16 16.42 16 12c0-4.42-2.87-8.166-6.84-9.5z"/></svg>
+          </div>
+          <h3 class="font-heading text-lg font-semibold mb-2">GitHub</h3>
+          <p class="text-text-secondary text-sm mb-4">Star, watch, and contribute on GitHub. Issues and PRs welcome.</p>
+          <a href="https://github.com/Dream-Pixels-Forge/verdity" class="btn btn-primary text-sm" target="_blank" rel="noopener">View Repository</a>
+        </article>
+        
+        <article class="card scroll-reveal">
+          <div class="w-12 h-12 rounded-xl bg-accent/10 flex items-center justify-center mb-4">
+            <svg class="w-6 h-6 text-accent" fill="currentColor" viewBox="0 0 24 24"><path d="M20 4v3.61c-.84.25-1.68.66-2.4 1.2v.01c-.83.7-1.34 1.58-1.34 2.51 0 2.73 2.21 4.94 4.94 4.94 1.64 0 3.11-.79 4.13-1.99l-.88 3.5c.36.27.77.44 1.2.44.75 0 1.35-.61 1.35-1.35V7.37C18 5.83 16.63 4.5 15 4.5c-1.92 0-3.54 1.5-3.54 3.35 0 1.46.87 2.71 2.13 3.32.38.19.77.28 1.15.28.38 0 .76-.09 1.12-.28.27-.38.61-.95 1-1.66C15.76 8.84 18 7.34 18 5.5c0-2.64-2.14-4.78-4.75-4.78H7.21c-2.6 0-4.75 2.13-4.75 4.78 0 1.73.93 3.28 2.36 4.19-.2.16-.41.33-.6.52C2.58 11.56 2 13.27 2 15.12 2 18.37 4.73 21.1 8 22.17c.34.09.69.14 1.04.14h.01c.35 0 .7-.05 1.04-.14 3.27-1.07 6-3.86 6-7.07v-.02c.84-.84 1.21-2.05.88-3.25z"/></svg>
+          </div>
+          <h3 class="font-heading text-lg font-semibold mb-2">Issues & Discussions</h3>
+          <p class="text-text-secondary text-sm mb-4">Report bugs, request features, or join discussions.</p>
+          <a href="https://github.com/Dream-Pixels-Forge/verdity/issues" class="btn btn-ghost text-sm" target="_blank" rel="noopener">View Issues</a>
+        </article>
+        
+        <article class="card scroll-reveal">
+          <div class="w-12 h-12 rounded-xl bg-success/10 flex items-center justify-center mb-4">
+            <svg class="w-6 h-6 text-success" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.87 8.166 6.84 9.5.5.083.678-.213.678-.476v-2.88c-2.81-.38-3.633-1.4-3.633-1.4-.49-1.2-1.2-1.52-1.2-1.52-.99-.51.074-.5.074-.5 1.1.076 1.686 1.07 1.686 1.07.98 1.1 2.58 1.077 3.213.824.1-.648.375-1.318.686-1.618-2.39-.27-4.9-.48-4.9-5.4 0-1.2 1.05-1.5 2.05-1.5.79 0 1.5.2 2.05 1.5 0 4.91-2.605 5.4-4.9 5.4.5.3.678 1.08.75 1.306.16.25.324.57.52 1.05v3.55c0 .276-.18.5-.678.476C19.134 20.166 16 16.42 16 12c0-4.42-2.87-8.166-6.84-9.5z"/></svg>
+          </div>
+          <h3 class="font-heading text-lg font-semibold mb-2">Contributing</h3>
+          <p class="text-text-secondary text-sm mb-4">Read our contributing guide and submit PRs. All changes go through Verdity's own review pipeline.</p>
+          <a href="https://github.com/Dream-Pixels-Forge/verdity/blob/main/CONTRIBUTING.md" class="btn btn-primary text-sm" target="_blank" rel="noopener">Contribute</a>
+        </article>
+      </div>
+      
+      <!-- Stats bar -->
+      <div class="scroll-reveal mt-16 grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
+        <div>
+          <div class="font-display font-bold text-5xl md:text-6xl text-accent">1261</div>
+          <div class="text-text-secondary mt-1">Tests</div>
+        </div>
+        <div>
+          <div class="font-display font-bold text-5xl md:text-6xl text-accent">100%</div>
+          <div class="text-text-secondary mt-1">New Code Coverage</div>
+        </div>
+        <div>
+          <div class="font-display font-bold text-5xl md:text-6xl text-accent">0.5.0</div>
+          <div class="text-text-secondary mt-1">Latest Release</div>
+        </div>
+        <div>
+          <div class="font-display font-bold text-5xl md:text-6xl text-accent">MIT</div>
+          <div class="text-text-secondary mt-1">Open Source</div>
+        </div>
+      </div>
+    </div>
+  </section>
+  
+  <!-- FOOTER -->
+  <footer class="py-16 md:py-20 bg-primary text-primary/80 relative overflow-hidden">
+    <div class="absolute inset-0 grid-bg opacity-10"></div>
+    <div class="absolute inset-0 bg-gradient-to-br from-primary/50 to-primary/80"></div>
+    <div class="relative z-10 max-w-7xl mx-auto px-6">
+      <div class="grid md:grid-cols-4 gap-12 mb-12">
+        <div>
+          <div class="flex items-center gap-3 mb-6">
+            <span class="bracket text-2xl text-accent"><</span>
+            <span class="font-display font-bold text-2xl text-white">Verdity</span>
+            <span class="bracket text-2xl text-accent">></span>
+          </div>
+          <p class="text-primary/60 text-sm leading-relaxed max-w-xs">
+            Deterministic PR review with calibrated trust. Every finding earns its confidence through evidence.
+          </p>
+        </div>
+        
+        <div>
+          <h4 class="font-heading text-lg font-semibold text-white mb-4">Product</h4>
+          <ul class="space-y-2 text-sm">
+            <li><a href="#features" class="hover:text-accent transition-colors">Features</a></li>
+            <li><a href="#how-it-works" class="hover:text-accent transition-colors">How It Works</a></li>
+            <li><a href="#architecture" class="hover:text-accent transition-colors">Architecture</a></li>
+            <li><a href="#docs" class="hover:text-accent transition-colors">Documentation</a></li>
+            <li><a href="https://github.com/Dream-Pixels-Forge/verdity/releases" class="hover:text-accent transition-colors" target="_blank" rel="noopener">Changelog</a></li>
+          </ul>
+        </div>
+        
+        <div>
+          <h4 class="font-heading text-lg font-semibold text-white mb-4">Resources</h4>
+          <ul class="space-y-2 text-sm">
+            <li><a href="https://github.com/Dream-Pixels-Forge/verdity" class="hover:text-accent transition-colors" target="_blank" rel="noopener">GitHub</a></li>
+            <li><a href="https://pypi.org/project/verdity/" class="hover:text-accent transition-colors" target="_blank" rel="noopener">PyPI</a></li>
+            <li><a href="#docs" class="hover:text-accent transition-colors">Documentation</a></li>
+            <li><a href="https://github.com/Dream-Pixels-Forge/verdity/issues" class="hover:text-accent transition-colors" target="_blank" rel="noopener">Issues</a></li>
+            <li><a href="https://github.com/Dream-Pixels-Forge/verdity/discussions" class="hover:text-accent transition-colors" target="_blank" rel="noopener">Discussions</a></li>
+          </ul>
+        </div>
+        
+        <div>
+          <h4 class="font-heading text-lg font-semibold text-white mb-4">Legal</h4>
+          <ul class="space-y-2 text-sm">
+            <li><a href="https://github.com/Dream-Pixels-Forge/verdity/blob/main/LICENSE" class="hover:text-accent transition-colors" target="_blank" rel="noopener">MIT License</a></li>
+            <li><a href="https://github.com/Dream-Pixels-Forge/verdity/blob/main/SECURITY.md" class="hover:text-accent transition-colors" target="_blank" rel="noopener">Security Policy</a></li>
+            <li><a href="https://github.com/Dream-Pixels-Forge/verdity/blob/main/CONTRIBUTING.md" class="hover:text-accent transition-colors" target="_blank" rel="noopener">Contributing</a></li>
+            <li><a href="https://github.com/Dream-Pixels-Forge/verdity/blob/main/CODE_OF_CONDUCT.md" class="hover:text-accent transition-colors" target="_blank" rel="noopener">Code of Conduct</a></li>
+          </ul>
+        </div>
+      </div>
+      
+      <div class="pt-8 border-t border-primary-light/20 flex flex-col md:flex-row items-center justify-between gap-4">
+        <p class="text-sm text-primary/50">
+          © 2025 Dream-Pixels-Forge. Built with deterministic precision.
+        </p>
+        <div class="flex items-center gap-6">
+          <a href="https://github.com/Dream-Pixels-Forge/verdity" class="hover:text-accent transition-colors" target="_blank" rel="noopener" aria-label="GitHub">
+            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.87 8.166 6.84 9.5.5.083.678-.213.678-.476v-2.88c-2.81-.38-3.633-1.4-3.633-1.4-.49-1.2-1.2-1.52-1.2-1.52-.99-.51.074-.5.074-.5 1.1.076 1.686 1.07 1.686 1.07.98 1.1 2.58 1.077 3.213.824.1-.648.375-1.318.686-1.618-2.39-.27-4.9-.48-4.9-5.4 0-1.2 1.05-1.5 2.05-1.5.79 0 1.5.2 2.05 1.5 0 4.91-2.605 5.4-4.9 5.4.5.3.678 1.08.75 1.306.16.25.324.57.52 1.05v3.55c0 .276-.18.5-.678.476C19.134 20.166 16 16.42 16 12c0-4.42-2.87-8.166-6.84-9.5z"/></svg>
+          </a>
+          <a href="https://pypi.org/project/verdity/" class="hover:text-accent transition-colors" target="_blank" rel="noopener" aria-label="PyPI">
+            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.87 8.166 6.84 9.5.5.083.678-.213.678-.476v-2.88c-2.81-.38-3.633-1.4-3.633-1.4-.49-1.2-1.2-1.52-1.2-1.52-.99-.51.074-.5.074-.5 1.1.076 1.686 1.07 1.686 1.07.98 1.1 2.58 1.077 3.213.824.1-.648.375-1.318.686-1.618-2.39-.27-4.9-.48-4.9-5.4 0-1.2 1.05-1.5 2.05-1.5.79 0 1.5.2 2.05 1.5 0 4.91-2.605 5.4-4.9 5.4.5.3.678 1.08.75 1.306.16.25.324.57.52 1.05v3.55c0 .276-.18.5-.678.476C19.134 20.166 16 16.42 16 12c0-4.42-2.87-8.166-6.84-9.5z"/></svg>
+          </a>
+        </div>
+      </div>
+    </div>
+  </footer>
+  
+  <!-- Intersection Observer for scroll animations -->
+  <script>
+    // Intersection Observer for fade-up animations
+    const observerOptions = {
+      threshold: 0.1,
+      rootMargin: '0px 0px -50px 0px'
+    };
+    
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('visible');
+          observer.unobserve(entry.target);
+        }
+      });
+    }, observerOptions);
+    
+    document.querySelectorAll('.scroll-reveal').forEach(el => observer.observe(el));
+    
+    // Clip-path reveal observer
+    const clipObserver = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('visible');
+          clipObserver.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.2 });
+    
+    document.querySelectorAll('.clip-reveal').forEach(el => clipObserver.observe(el));
+    
+    // Smooth scroll for anchor links
+    document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+      anchor.addEventListener('click', function(e) {
+        e.preventDefault();
+        const target = document.querySelector(this.getAttribute('href'));
+        if (target) {
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      });
+    });
+    
+    // Copy code blocks
+    document.querySelectorAll('.code-block').forEach(block => {
+      const btn = document.createElement('button');
+      btn.className = 'absolute top-2 right-2 p-1.5 bg-white/10 hover:bg-white/20 rounded text-xs text-white/70 transition-colors';
+      btn.textContent = 'Copy';
+      btn.addEventListener('click', () => {
+        navigator.clipboard.writeText(block.querySelector('code').textContent);
+        btn.textContent = 'Copied!';
+        setTimeout(() => btn.textContent = 'Copy', 2000);
+      });
+      block.style.position = 'relative';
+      block.appendChild(btn);
+    });
+  </script>
+</body>
+</html>
