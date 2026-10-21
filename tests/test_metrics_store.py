@@ -549,3 +549,45 @@ class TestBranchCoverage:
         assert "summary" in dash
         assert "daily_reviews" in dash
         assert dash["summary"]["review_count"] == 1
+
+
+class TestMetricsStoreGuards:
+    """Guards that must refuse rather than silently misbehave."""
+
+    @pytest.mark.asyncio
+    async def test_record_confidence_histogram_requires_connection(self):
+        from verdity.metrics_store import MetricsStore
+
+        store = MetricsStore(db_path=":memory:")
+
+        with pytest.raises(RuntimeError, match="not connected"):
+            await store.record_confidence_histogram(repo_id="a/b", confidence=0.9)
+
+    @pytest.mark.asyncio
+    async def test_rejects_out_of_range_confidence(self):
+        """A confidence outside [0,1] is a programming error and must raise.
+
+        Silently clamping or storing it would skew the trust histogram that
+        every downstream confidence decision is derived from.
+        """
+        from verdity.metrics_store import MetricsStore
+
+        store = MetricsStore(db_path=":memory:")
+        await store.connect()
+        try:
+            with pytest.raises(ValueError, match=r"\[0.0, 1.0\]"):
+                await store.record_confidence_histogram(repo_id="a/b", confidence=1.5)
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_repo_dashboard_requires_connection(self):
+        """get_repo_dashboard must refuse when the store is closed."""
+        from verdity.metrics_store import MetricsStore
+
+        store = MetricsStore(db_path=":memory:")
+        await store.connect()
+        await store.close()
+
+        with pytest.raises(RuntimeError, match="not connected"):
+            await store.get_repo_dashboard(repo_id="a/b", days=7)

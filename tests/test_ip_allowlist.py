@@ -340,3 +340,94 @@ class TestIPAllowlistConfig:
 
         networks = _parse_ip_allowlist(" 192.30.252.0/22 , 185.199.108.0/22 ")
         assert len(networks) == 2
+
+
+class TestParseIpAllowlistEdgeCases:
+    """The branches _parse_ip_allowlist documents but never exercised.
+
+    The docstring promises support for "192.168.1.0/24,10.0.0.1", but every
+    other test passed CIDR ranges only, so the bare-IP, IPv6, and
+    malformed-input paths ran for the first time here.
+
+    Note: ipaddress.ip_network() accepts a bare "10.0.0.1" and normalises it
+    to /32 itself, so there was a second, unreachable "single IP" fallback
+    behind it. That dead branch has been removed.
+    """
+
+    def test_bare_ipv4_is_normalised_to_a_single_host(self):
+        """A bare IPv4 address needs no prefix; ip_network supplies /32."""
+        import ipaddress
+
+        from verdity.gateway.app import _parse_ip_allowlist
+
+        networks = _parse_ip_allowlist("10.0.0.1")
+
+        assert networks == [ipaddress.IPv4Network("10.0.0.1/32")]
+
+    def test_bare_ipv6_is_normalised_to_a_single_host(self):
+        """A bare IPv6 address must become /128, not raise."""
+        import ipaddress
+
+        from verdity.gateway.app import _parse_ip_allowlist
+
+        networks = _parse_ip_allowlist("2001:db8::1")
+
+        assert networks == [ipaddress.IPv6Network("2001:db8::1/128")]
+
+    def test_ipv6_cidr_is_accepted(self):
+        import ipaddress
+
+        from verdity.gateway.app import _parse_ip_allowlist
+
+        networks = _parse_ip_allowlist("2001:db8::/32")
+
+        assert networks == [ipaddress.IPv6Network("2001:db8::/32")]
+
+    def test_malformed_entry_is_skipped_not_fatal(self):
+        """A typo in one entry must not discard the whole allowlist."""
+        from verdity.gateway.app import _parse_ip_allowlist
+
+        networks = _parse_ip_allowlist("10.0.0.1,not-an-ip,192.168.0.0/24")
+
+        assert len(networks) == 2
+
+    def test_empty_segments_are_skipped(self):
+        """Trailing/duplicated commas should not create empty networks."""
+        from verdity.gateway.app import _parse_ip_allowlist
+
+        networks = _parse_ip_allowlist("10.0.0.1,,192.168.0.0/24,")
+
+        assert len(networks) == 2
+
+    def test_empty_input_returns_empty_list(self):
+        from verdity.gateway.app import _parse_ip_allowlist
+
+        assert _parse_ip_allowlist("") == []
+        assert _parse_ip_allowlist("   ") == []
+
+    def test_mixed_family_and_bare_ips(self):
+        from verdity.gateway.app import _parse_ip_allowlist
+
+        networks = _parse_ip_allowlist("10.0.0.1, 2001:db8::/32, 192.168.0.0/24")
+        assert len(networks) == 3
+
+
+class TestIsIpAllowedEdgeCases:
+    """_is_ip_allowed() must reject a malformed client IP rather than crash."""
+
+    def test_malformed_client_ip_is_denied(self):
+        """An unparseable X-Forwarded-For value must not grant access."""
+        from verdity.gateway.app import _is_ip_allowed, _parse_ip_allowlist
+
+        networks = _parse_ip_allowlist("10.0.0.0/8")
+
+        assert _is_ip_allowed("not-an-ip", networks) is False
+        assert _is_ip_allowed("", networks) is False
+
+    def test_ipv6_client_matches_ipv6_network(self):
+        from verdity.gateway.app import _is_ip_allowed, _parse_ip_allowlist
+
+        networks = _parse_ip_allowlist("2001:db8::/32")
+
+        assert _is_ip_allowed("2001:db8::5", networks) is True
+        assert _is_ip_allowed("2001:dead::5", networks) is False

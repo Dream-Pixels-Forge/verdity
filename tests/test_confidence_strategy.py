@@ -11,9 +11,11 @@ Covers:
 
 from __future__ import annotations
 
+import contextlib
 import uuid
 
 import pytest
+import pytest_asyncio
 
 from verdity.metrics_store import MetricsStore
 from verdity.orchestrator import Orchestrator
@@ -449,8 +451,6 @@ class TestOrchestratorNightlyRecalibration:
         await asyncio.sleep(0.3)
 
         task.cancel()
-        import contextlib
-
         with contextlib.suppress(asyncio.CancelledError):
             await task
 
@@ -772,3 +772,221 @@ async def test_gate_issue40_confidence_strategy():
     assert 0.0 <= score <= 1.0
 
     print("All Issue #40 gate checks passed!")
+
+
+class TestRecalibrateTrustBranches:
+    """The guard/branch paths in Orchestrator.recalibrate_trust().
+
+    The happy path is well covered; these are the early-return and
+    outcome-mapping branches that decide whether recalibration happens at all.
+    """
+
+    @pytest_asyncio.fixture
+    async def setup_orchestrator(self):
+        """Local copy: the sibling class's fixture is not visible here."""
+        from verdity.audit_store import AuditStore
+        from verdity.event_queue import EventQueue
+        from verdity.metrics_store import MetricsStore
+        from verdity.orchestrator import Orchestrator
+        from verdity.semantic_index import SemanticIndex
+        from verdity.token_economics import TokenEconomicsService
+
+        audit_store = AuditStore(db_path=":memory:")
+        await audit_store.connect()
+        metrics_store = MetricsStore(db_path=":memory:")
+        await metrics_store.connect()
+        event_queue = EventQueue(db_path=":memory:")
+        await event_queue.connect()
+        semantic_index = SemanticIndex(db_path=":memory:")
+        await semantic_index.connect()
+        token_economics = TokenEconomicsService()
+
+        orchestrator = Orchestrator(
+            queue=event_queue,
+            semantic_index=semantic_index,
+            token_economics=token_economics,
+            audit_store=audit_store,
+            metrics_store=metrics_store,
+        )
+
+        yield orchestrator, metrics_store, audit_store
+
+        await audit_store.close()
+        await metrics_store.close()
+        await event_queue.close()
+        await semantic_index.close()
+
+    @pytest.mark.asyncio
+    async def test_returns_none_without_metrics_store(self, setup_orchestrator):
+        """With no metrics store there is nothing to recalibrate from."""
+        orchestrator, _, _ = setup_orchestrator
+        orchestrator._metrics = None
+
+        result = await orchestrator.recalibrate_trust(min_samples=5)
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_below_min_samples(self, setup_orchestrator):
+        """Too few outcomes must skip recalibration rather than act on noise."""
+        orchestrator, metrics_store, _ = setup_orchestrator
+
+        for _ in range(2):
+            await metrics_store.record_finding_outcome(
+                finding_id=str(uuid.uuid4()),
+                repo_id="acme/widgets",
+                pr_number=1,
+                final_outcome="confirmed",
+                confidence=0.9,
+                severity="high",
+                concern="security",
+            )
+
+        result = await orchestrator.recalibrate_trust(min_samples=50)
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_maps_every_known_outcome(self, setup_orchestrator):
+        """auto_fixed/false_positive/wont_fix/confirmed all map to calibrator outcomes."""
+        from unittest.mock import AsyncMock, patch
+
+        orchestrator, metrics_store, _ = setup_orchestrator
+
+        outcomes = [
+            {
+                "final_outcome": "auto_fixed",
+                "repo_id": "a/b",
+                "confidence": 0.9,
+                "severity": "high",
+                "concern": "security",
+            },
+            {
+                "final_outcome": "false_positive",
+                "repo_id": "a/b",
+                "confidence": 0.2,
+                "severity": "low",
+                "concern": "code_quality",
+            },
+            {
+                "final_outcome": "wont_fix",
+                "repo_id": "a/b",
+                "confidence": 0.5,
+                "severity": "medium",
+                "concern": "testing",
+            },
+            {
+                "final_outcome": "confirmed",
+                "repo_id": "a/b",
+                "confidence": 0.7,
+                "severity": "medium",
+                "concern": "documentation",
+            },
+        ]
+
+        with patch.object(metrics_store, "get_all_outcomes", AsyncMock(return_value=outcomes)):
+            with patch("verdity.orchestrator.TrustCalibrator") as mock_cal:
+                instance = mock_cal.return_value
+                instance.connect = AsyncMock()
+                instance.close = AsyncMock()
+                instance.record_outcome = AsyncMock()
+                instance.recalibrate = AsyncMock(
+                    return_value=type(
+                        "R", (), {"sample_count": 4, "changed": False, "calibration_version": 2}
+                    )()
+                )
+                await orchestrator.recalibrate_trust(min_samples=4)
+
+        recorded = [c.kwargs["outcome"] for c in instance.record_outcome.call_args_list]
+        assert recorded == ["confirmed", "false_positive", "wont_fix", "confirmed"]
+
+    @pytest.mark.asyncio
+    async def test_skips_unknown_outcomes(self, setup_orchestrator):
+        """An unrecognised outcome must be skipped, not recorded or crash."""
+        from unittest.mock import AsyncMock, patch
+
+        orchestrator, metrics_store, _ = setup_orchestrator
+
+        outcomes = [
+            {
+                "final_outcome": "teleported",
+                "repo_id": "a/b",
+                "confidence": 0.5,
+                "severity": "medium",
+                "concern": "security",
+            },
+            {
+                "final_outcome": "confirmed",
+                "repo_id": "a/b",
+                "confidence": 0.7,
+                "severity": "medium",
+                "concern": "security",
+            },
+        ]
+
+        with patch.object(metrics_store, "get_all_outcomes", AsyncMock(return_value=outcomes)):
+            with patch("verdity.orchestrator.TrustCalibrator") as mock_cal:
+                instance = mock_cal.return_value
+                instance.connect = AsyncMock()
+                instance.close = AsyncMock()
+                instance.record_outcome = AsyncMock()
+                instance.recalibrate = AsyncMock(
+                    return_value=type(
+                        "R", (), {"sample_count": 1, "changed": False, "calibration_version": 2}
+                    )()
+                )
+                await orchestrator.recalibrate_trust(min_samples=2)
+
+        recorded = [c.kwargs["outcome"] for c in instance.record_outcome.call_args_list]
+        assert recorded == ["confirmed"]
+
+    @pytest.mark.asyncio
+    async def test_nightly_loop_survives_recalibration_error(self, setup_orchestrator):
+        """A failing recalibration must be logged, not kill the nightly task."""
+        import asyncio as _asyncio
+
+        orchestrator, _, _ = setup_orchestrator
+
+        calls = []
+
+        async def _boom(*args, **kwargs):
+            calls.append(1)
+            if len(calls) == 1:
+                raise RuntimeError("transient failure")
+
+        orchestrator.recalibrate_trust = _boom
+
+        task = await orchestrator.start_nightly_recalibration(interval_seconds=0)
+        await _asyncio.sleep(0.05)
+        task.cancel()
+        with contextlib.suppress(_asyncio.CancelledError):
+            await task
+
+        # It retried rather than dying on the first exception.
+        assert len(calls) >= 2
+
+
+class TestCheckDriftGuards:
+    """check_drift() must refuse or decline rather than guess on no data."""
+
+    @pytest.mark.asyncio
+    async def test_requires_connection(self):
+        from verdity.trust_calibration import TrustCalibrator
+
+        calibrator = TrustCalibrator(db_path=":memory:")
+
+        with pytest.raises(RuntimeError, match="not connected"):
+            await calibrator.check_drift()
+
+    @pytest.mark.asyncio
+    async def test_returns_false_below_min_samples(self):
+        """Too few signals means no drift verdict, not a guess."""
+        from verdity.trust_calibration import TrustCalibrator
+
+        calibrator = TrustCalibrator(db_path=":memory:")
+        await calibrator.connect()
+        try:
+            drifted = await calibrator.check_drift(min_samples_for_check=20)
+            assert drifted is False
+        finally:
+            await calibrator.close()

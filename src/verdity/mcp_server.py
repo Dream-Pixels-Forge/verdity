@@ -565,6 +565,69 @@ class MCPServer:
                     "required": ["repo_path"],
                 },
             },
+            {
+                "name": "llm_enrich_findings",
+                "description": "Enrich existing findings with LLM-generated explanations, fixes, and risk assessments. Requires review_run_id from a previous review.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "review_run_id": {
+                            "type": "string",
+                            "description": "UUID of the review run to enrich",
+                        },
+                        "findings": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "finding_id": {"type": "string"},
+                                    "concern": {"type": "string"},
+                                    "severity": {"type": "string"},
+                                    "file": {"type": "string"},
+                                    "line_start": {"type": "integer"},
+                                    "line_end": {"type": "integer"},
+                                    "summary": {"type": "string"},
+                                    "explanation": {"type": "string"},
+                                    "confidence": {"type": "number"},
+                                },
+                                "required": [
+                                    "finding_id",
+                                    "concern",
+                                    "severity",
+                                    "file",
+                                    "line_start",
+                                    "line_end",
+                                    "summary",
+                                    "explanation",
+                                    "confidence",
+                                ],
+                            },
+                            "description": "List of findings to enrich",
+                        },
+                        "diff": {
+                            "type": "string",
+                            "description": "Full diff text for context",
+                        },
+                        "mode": {
+                            "type": "string",
+                            "enum": ["explain", "fix", "risk", "all"],
+                            "default": "explain",
+                            "description": "Enrichment mode",
+                        },
+                        "model": {
+                            "type": "string",
+                            "description": "LLM model to use (e.g., qwen2.5-7b-instruct)",
+                        },
+                        "backend": {
+                            "type": "string",
+                            "enum": ["ollama", "vllm", "llamacpp", "openai"],
+                            "default": "ollama",
+                            "description": "LLM backend",
+                        },
+                    },
+                    "required": ["review_run_id", "findings", "diff"],
+                },
+            },
         ]
 
     async def initialize(self) -> None:
@@ -680,6 +743,8 @@ class MCPServer:
                 return await self._apply_fix(arguments)
             if name == "get_review_rules":
                 return await self._get_review_rules(arguments)
+            if name == "llm_enrich_findings":
+                return await self._llm_enrich_findings(arguments)
             return {"error": f"Tool not implemented: {name}"}
         except Exception as e:
             logger.exception("Error calling tool %s", name)
@@ -1147,6 +1212,108 @@ class MCPServer:
 
         rules = ReviewRules(repo_path)
         return rules.get_rules(file_path)
+
+    async def _llm_enrich_findings(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Enrich findings with LLM-generated explanations, fixes, and risk assessments."""
+        import uuid
+
+        from .agents.llm_enricher import EnrichmentMode, LLMEnricherAgent
+        from .audit_store import AuditStore
+        from .llm_gateway import GatewayConfig, LocalLLMGateway
+        from .schemas import ConcernType, Finding, Severity, SpecialistContext
+        from .token_economics import TokenEconomicsService
+
+        review_run_id = args.get("review_run_id")
+        findings_data = args.get("findings", [])
+        diff = args.get("diff", "")
+        mode_str = args.get("mode", "explain")
+        model = args.get("model", "qwen2.5-7b-instruct")
+        backend = args.get("backend", "ollama")
+
+        if not review_run_id or not findings_data or not diff:
+            return {"error": "review_run_id, findings, and diff are required"}
+
+        try:
+            mode = EnrichmentMode(mode_str)
+        except ValueError:
+            return {"error": f"Invalid mode: {mode_str}. Must be one of: explain, fix, risk, all"}
+
+        # Parse findings
+        findings = []
+        for f in findings_data:
+            concern = ConcernType(f["concern"])
+            severity = Severity(f["severity"])
+            finding = Finding(
+                finding_id=uuid.UUID(f["finding_id"]) if "-" in f["finding_id"] else uuid.uuid4(),
+                concern=concern,
+                severity=severity,
+                file=f["file"],
+                line_start=f["line_start"],
+                line_end=f["line_end"],
+                summary=f["summary"],
+                explanation=f["explanation"],
+                suggested_fix_diff=None,
+                confidence=f["confidence"],
+                evidence=[],
+                agent_version="mcp-enrich",
+                prompt_hash="",
+            )
+            findings.append(finding)
+
+        # Create gateway
+        config = GatewayConfig(model=model, backend=backend)
+        gateway = LocalLLMGateway(config=config)
+
+        # Create context
+        ctx = SpecialistContext(
+            review_run_id=uuid.UUID(review_run_id),
+            repo_owner="mcp",
+            repo_name="client",
+            base_sha="",
+            head_sha="",
+            diff_files=[],
+            policy=None,
+        )
+
+        # Run enrichment
+        token_economics = TokenEconomicsService()
+        audit_store = AuditStore()
+        await audit_store.connect()
+
+        enricher = LLMEnricherAgent(gateway=gateway)
+        results = await enricher.enrich_findings(
+            findings=findings,
+            diff=diff,
+            context=ctx,
+            mode=mode,
+            token_economics=token_economics,
+            audit_store=audit_store,
+        )
+
+        await audit_store.close()
+        await gateway.close()
+
+        # Format results
+        enriched = []
+        for r in results:
+            enriched.append(
+                {
+                    "finding_id": r.finding_id,
+                    "mode": r.mode.value,
+                    "model": r.model,
+                    "backend": r.backend,
+                    "explanation": r.explanation,
+                    "confidence_adjustment_rationale": r.confidence_adjustment_rationale,
+                    "fix_diff": r.fix_diff,
+                    "fix_explanation": r.fix_explanation,
+                    "risk_score": r.risk_score,
+                    "cwe_ids": r.cwe_ids,
+                    "exploitability": r.exploitability,
+                    "blast_radius": r.blast_radius,
+                }
+            )
+
+        return {"enriched_findings": enriched, "count": len(enriched)}
 
 
 def create_mcp_server(

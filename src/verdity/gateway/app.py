@@ -85,22 +85,14 @@ def _parse_ip_allowlist(cidr_string: str) -> list[ipaddress.IPv4Network | ipaddr
     for part in cidr_string.split(","):
         part = part.strip()
         if not part:
-            continue  # pragma: no cover
+            continue
         try:
             # Try parsing as network (CIDR)
             network = ipaddress.ip_network(part, strict=False)
             networks.append(network)
-        except ValueError:  # pragma: no cover
-            # If it's a single IP without CIDR, treat as /32 or /128
-            try:
-                ip = ipaddress.ip_address(part)
-                if isinstance(ip, ipaddress.IPv4Address):
-                    networks.append(ipaddress.IPv4Network(f"{part}/32"))
-                else:
-                    networks.append(ipaddress.IPv6Network(f"{part}/128"))
-            except ValueError:  # pragma: no cover
-                logger.warning("Invalid IP/CIDR in allowlist: %s", part)
-                continue
+        except ValueError:
+            logger.warning("Invalid IP/CIDR in allowlist: %s", part)
+            continue
     return networks
 
 
@@ -111,11 +103,11 @@ def _is_ip_allowed(
     if not allowed_networks:
         return True  # No allowlist configured = allow all
 
-    try:  # pragma: no cover
+    try:
         # Convert client IP string to address object for ipaddress containment check
         addr = ipaddress.ip_address(client_ip)
         return any(addr in network for network in allowed_networks)
-    except ValueError:  # pragma: no cover
+    except ValueError:
         return False
 
 
@@ -256,7 +248,7 @@ class RedisRateLimiter:
     def _client_ip(self, request: Request) -> str:
         """Extract client IP from forwarded headers or direct connection."""
         forwarded = request.headers.get("x-forwarded-for")
-        if forwarded:  # pragma: no cover
+        if forwarded:
             return forwarded.split(",")[0].strip()
         return request.client.host if request.client else "unknown"
 
@@ -266,7 +258,7 @@ class RedisRateLimiter:
         Returns (allowed, retry_after_seconds).
         Falls back to in-memory limiter on Redis errors.
         """
-        if not self._connected or self._redis is None:  # pragma: no cover
+        if not self._connected or self._redis is None:
             logger.warning("Redis rate limiter not connected, using fallback")
             return self._fallback_limiter.is_allowed(request)
 
@@ -416,7 +408,7 @@ async def lifespan(app: FastAPI):
     await app.state.audit.connect()
 
     # Initialize rate limiter (Redis-backed if enabled, otherwise in-memory)
-    if getattr(settings, "redis_rate_limiter_enabled", False):  # pragma: no cover
+    if getattr(settings, "redis_rate_limiter_enabled", False):
         redis_url = getattr(settings, "redis_url", "redis://localhost:6379/0")
         app.state._rate_limiter = RedisRateLimiter(
             redis_url=redis_url,
@@ -467,7 +459,7 @@ async def lifespan(app: FastAPI):
             "GitHub IP allowlist initialized with %d network(s)",
             len(app.state._github_ip_allowlist),
         )
-    else:  # pragma: no cover
+    else:
         logger.info("GitHub IP allowlist disabled (no networks configured)")
 
     logger.info(
@@ -476,7 +468,7 @@ async def lifespan(app: FastAPI):
     )
     yield
     # Evict expired entries from persistent cache before closing
-    with suppress(OSError):  # pragma: no cover
+    with suppress(OSError):
         await app.state._delivery_cache.evict_expired()
     await app.state._delivery_cache.close()
     await app.state.queue.close()
@@ -486,9 +478,9 @@ async def lifespan(app: FastAPI):
         await metrics.close()
     logger.info("Ingestion Gateway shut down")
     # Close rate limiter if it has a close method (RedisRateLimiter)
-    rate_limiter = getattr(app.state, "_rate_limiter", None)  # pragma: no cover
-    if rate_limiter and hasattr(rate_limiter, "close"):  # pragma: no cover
-        await rate_limiter.close()  # pragma: no cover
+    rate_limiter = getattr(app.state, "_rate_limiter", None)
+    if rate_limiter and hasattr(rate_limiter, "close"):
+        await rate_limiter.close()
 
 
 app = FastAPI(
@@ -595,49 +587,39 @@ async def handle_github_webhook(
     # ── Step 1: Read raw body BEFORE any parsing ──────────────────────
     raw_body = await request.body()
 
-    if len(raw_body) > MAX_WEBHOOK_BODY_BYTES:  # pragma: no cover
-        raise HTTPException(status_code=413, detail="Payload too large")  # pragma: no cover
+    if len(raw_body) > MAX_WEBHOOK_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="Payload too large")
 
     # ── Step 2: HMAC verification (CONSTANT-TIME, never == ) ──────────
-    settings = get_settings()  # pragma: no cover
-    secret_current = settings.webhook_hmac_secret.get_secret_value().encode()  # pragma: no cover
-    secret_previous_raw = (
-        settings.webhook_hmac_secret_previous.get_secret_value()
-    )  # pragma: no cover
-    secret_previous = (
-        secret_previous_raw.encode() if secret_previous_raw else b""
-    )  # pragma: no cover
+    settings = get_settings()
+    secret_current = settings.webhook_hmac_secret.get_secret_value().encode()
+    secret_previous_raw = settings.webhook_hmac_secret_previous.get_secret_value()
+    secret_previous = secret_previous_raw.encode() if secret_previous_raw else b""
 
     verified, matched = verify_with_rotation(
-        secret_current=secret_current,  # pragma: no cover
-        secret_previous=secret_previous,  # pragma: no cover
-        raw_body=raw_body,  # pragma: no cover
-        signature_header=x_hub_signature_256 or "",  # pragma: no cover
-    )  # pragma: no cover
-    if not verified:  # pragma: no cover
+        secret_current=secret_current,
+        secret_previous=secret_previous,
+        raw_body=raw_body,
+        signature_header=x_hub_signature_256 or "",
+    )
+    if not verified:
         logger.warning(
-            "HMAC verification failed for delivery %s (matched=%s)",  # pragma: no cover
-            x_github_delivery,  # pragma: no cover
-            matched,  # pragma: no cover
-        )  # pragma: no cover
-        raise HTTPException(
-            status_code=401, detail="Invalid or missing signature"
-        )  # pragma: no cover
+            "HMAC verification failed for delivery %s (matched=%s)",
+            x_github_delivery,
+            matched,
+        )
+        raise HTTPException(status_code=401, detail="Invalid or missing signature")
 
     # ── Step 3: Replay detection (delivery ID dedupe cache with TTL) ──
-    if x_github_delivery in request.app.state.delivery_ids:  # pragma: no cover
-        logger.warning("Duplicate delivery ID detected: %s", x_github_delivery)  # pragma: no cover
-        raise HTTPException(
-            status_code=409, detail="Duplicate delivery — already processed"
-        )  # pragma: no cover
-    request.app.state.delivery_ids.add(x_github_delivery)  # pragma: no cover
-    request.app.state._delivery_cache_ts[x_github_delivery] = time.time()  # pragma: no cover
+    if x_github_delivery in request.app.state.delivery_ids:
+        logger.warning("Duplicate delivery ID detected: %s", x_github_delivery)
+        raise HTTPException(status_code=409, detail="Duplicate delivery — already processed")
+    request.app.state.delivery_ids.add(x_github_delivery)
+    request.app.state._delivery_cache_ts[x_github_delivery] = time.time()
     # Persist to SQLite so dedup survives restart
-    delivery_cache: DeliveryCache | None = getattr(
-        request.app.state, "_delivery_cache", None
-    )  # pragma: no cover
-    if delivery_cache is not None:  # pragma: no cover
-        await delivery_cache.add(x_github_delivery)  # pragma: no cover
+    delivery_cache: DeliveryCache | None = getattr(request.app.state, "_delivery_cache", None)
+    if delivery_cache is not None:
+        await delivery_cache.add(x_github_delivery)
 
     # ── Step 4: Parse & normalize payload (only after verification passes) ─
     try:
@@ -757,78 +739,68 @@ async def handle_platform_webhook(
     # ── Step 1: Read raw body BEFORE any parsing ──────────────────────
     raw_body = await request.body()
 
-    if len(raw_body) > MAX_WEBHOOK_BODY_BYTES:  # pragma: no cover
-        raise HTTPException(status_code=413, detail="Payload too large")  # pragma: no cover
+    if len(raw_body) > MAX_WEBHOOK_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="Payload too large")
 
     # ── Step 2: Platform-native verification ──────────────────────────
-    settings = get_settings()  # pragma: no cover
-    if platform == "github":  # pragma: no cover
-        secret = settings.webhook_hmac_secret.get_secret_value()  # pragma: no cover
-    elif platform == "gitlab":  # pragma: no cover
-        secret = settings.gitlab_webhook_secret.get_secret_value()  # pragma: no cover
-    elif platform == "bitbucket":  # pragma: no cover
-        secret = settings.bitbucket_webhook_secret.get_secret_value()  # pragma: no cover
-    else:  # pragma: no cover
-        secret = ""  # pragma: no cover
+    # Note: the `github` branch below is unreachable in practice — the
+    # dedicated @app.post("/verdity/webhooks/github") route is registered first
+    # and matches before this catch-all. It is kept so the route stays correct
+    # if the dedicated handler is ever removed or reordered.
+    settings = get_settings()
+    if platform == "github":  # pragma: no cover - shadowed by the dedicated route
+        secret = settings.webhook_hmac_secret.get_secret_value()
+    elif platform == "gitlab":
+        secret = settings.gitlab_webhook_secret.get_secret_value()
+    elif platform == "bitbucket":
+        secret = settings.bitbucket_webhook_secret.get_secret_value()
+    else:  # pragma: no cover - platform_map already rejected unknown values
+        secret = ""
 
-    if not secret:  # pragma: no cover
-        logger.warning(
-            "No webhook secret configured for platform: %s", platform
-        )  # pragma: no cover
-        raise HTTPException(
-            status_code=401, detail=f"No secret configured for {platform}"
-        )  # pragma: no cover
+    if not secret:
+        logger.warning("No webhook secret configured for platform: %s", platform)
+        raise HTTPException(status_code=401, detail=f"No secret configured for {platform}")
 
-    headers_dict = {k.lower(): v for k, v in request.headers.items()}  # pragma: no cover
-    if not platform_instance.verify_webhook(headers_dict, raw_body, secret):  # pragma: no cover
+    headers_dict = {k.lower(): v for k, v in request.headers.items()}
+    if not platform_instance.verify_webhook(headers_dict, raw_body, secret):
         delivery_id = headers_dict.get(
             "x-github-delivery",
-            headers_dict.get("x-hook-uuid", "unknown"),  # pragma: no cover
-        )  # pragma: no cover
+            headers_dict.get("x-hook-uuid", "unknown"),
+        )
         logger.warning(
-            "Webhook verification failed for platform=%s delivery=%s",  # pragma: no cover
-            platform,  # pragma: no cover
-            delivery_id,  # pragma: no cover
-        )  # pragma: no cover
-        raise HTTPException(
-            status_code=401, detail="Invalid or missing signature"
-        )  # pragma: no cover
+            "Webhook verification failed for platform=%s delivery=%s",
+            platform,
+            delivery_id,
+        )
+        raise HTTPException(status_code=401, detail="Invalid or missing signature")
 
     # ── Step 3: Parse payload ─────────────────────────────────────────
-    try:  # pragma: no cover
-        payload = await request.json()  # pragma: no cover
-    except Exception as exc:  # pragma: no cover
-        logger.error("Failed to parse webhook JSON for %s: %s", platform, exc)  # pragma: no cover
-        raise HTTPException(
-            status_code=400, detail="Invalid JSON payload"
-        ) from exc  # pragma: no cover
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        logger.error("Failed to parse webhook JSON for %s: %s", platform, exc)
+        raise HTTPException(status_code=400, detail="Invalid JSON payload") from exc
 
     # ── Step 4: Normalize event ───────────────────────────────────────
-    try:  # pragma: no cover
-        event_dict = platform_instance.normalize_event(headers_dict, payload)  # pragma: no cover
-    except Exception as exc:  # pragma: no cover
-        logger.error("Failed to normalize %s webhook: %s", platform, exc)  # pragma: no cover
-        raise HTTPException(
-            status_code=400, detail="Webhook normalization failed"
-        ) from exc  # pragma: no cover
+    try:
+        event_dict = platform_instance.normalize_event(headers_dict, payload)
+    except Exception as exc:
+        logger.error("Failed to normalize %s webhook: %s", platform, exc)
+        raise HTTPException(status_code=400, detail="Webhook normalization failed") from exc
 
     # ── Step 5: Replay detection ──────────────────────────────────────
-    delivery_id = event_dict.get("delivery_id", "")  # pragma: no cover
-    if not delivery_id:  # pragma: no cover
-        delivery_id = f"{platform}-{hash(raw_body.hex()[:64])}"  # pragma: no cover
+    delivery_id = event_dict.get("delivery_id", "")
+    if not delivery_id:
+        delivery_id = f"{platform}-{hash(raw_body.hex()[:64])}"
 
-    if delivery_id in request.app.state.delivery_ids:  # pragma: no cover
-        logger.warning("Duplicate delivery ID detected: %s", delivery_id)  # pragma: no cover
-        raise HTTPException(
-            status_code=409, detail="Duplicate delivery — already processed"
-        )  # pragma: no cover
-    request.app.state.delivery_ids.add(delivery_id)  # pragma: no cover
-    request.app.state._delivery_cache_ts[delivery_id] = time.time()  # pragma: no cover
-    delivery_cache: DeliveryCache | None = getattr(
-        request.app.state, "_delivery_cache", None
-    )  # pragma: no cover
-    if delivery_cache is not None:  # pragma: no cover
-        await delivery_cache.add(delivery_id)  # pragma: no cover
+    if delivery_id in request.app.state.delivery_ids:
+        logger.warning("Duplicate delivery ID detected: %s", delivery_id)
+        raise HTTPException(status_code=409, detail="Duplicate delivery — already processed")
+    request.app.state.delivery_ids.add(delivery_id)
+    request.app.state._delivery_cache_ts[delivery_id] = time.time()
+    delivery_cache: DeliveryCache | None = getattr(request.app.state, "_delivery_cache", None)
+    if delivery_cache is not None:
+        await delivery_cache.add(delivery_id)
 
     # ── Step 6: Convert to Verdity internal format and enqueue ────────
     from verdity.schemas import PullRequestRef, RepoRef, TriggerType, VerdityEvent
@@ -860,7 +832,7 @@ async def handle_platform_webhook(
                 diff_url=pr_dict.get("diff_url", ""),
             ),
         )
-    except Exception as exc:  # pragma: no cover
+    except Exception as exc:
         logger.error("Failed to create VerdityEvent from %s payload: %s", platform, exc)
         raise HTTPException(status_code=400, detail="Invalid event format") from exc
 
@@ -958,8 +930,6 @@ async def get_metrics_dashboard(repo_id: str, days: int = 30):
     try:
         dashboard = await metrics.get_repo_dashboard(repo_id, days=days)
         return dashboard
-    except (KeyError, ValueError, TypeError) as exc:  # pragma: no cover
-        logger.error("Failed to get dashboard for %s: %s", repo_id, exc)  # pragma: no cover
-        return JSONResponse(
-            status_code=500, content={"detail": "Dashboard query failed"}
-        )  # pragma: no cover
+    except (KeyError, ValueError, TypeError) as exc:
+        logger.error("Failed to get dashboard for %s: %s", repo_id, exc)
+        return JSONResponse(status_code=500, content={"detail": "Dashboard query failed"})

@@ -119,7 +119,7 @@ def route_finding(finding: Finding, confidence: float) -> RoutingDecision:
             confidence=confidence,
             reason=f"High confidence ({confidence:.2f}) — requires immediate action",
         )
-    if confidence >= MANUAL_REVIEW_THRESHOLD:  # pragma: no cover
+    if confidence >= MANUAL_REVIEW_THRESHOLD:
         return RoutingDecision(
             action=RouteAction.MANUAL_REVIEW,
             confidence=confidence,
@@ -269,7 +269,7 @@ async def record_routing_outcomes(
             RouteAction.AUTO_DISMISS: "false_positive",
         }
         outcome = outcome_map.get(decision.action)
-        if outcome is None:  # pragma: no cover
+        if outcome is None:
             continue  # manual_review — no automatic outcome
         await metrics_store.record_finding_outcome(
             finding_id=str(finding.finding_id),

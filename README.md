@@ -8,6 +8,19 @@
 
 > **Verdity** — from *verdict* + *fidelity/integrity*. Every finding is a **verdict** (structured, evidence-backed, confidence-scored), delivered with **integrity** (calibrated, gated, auditable, never auto-posted without earning it).
 
+## ✨ New in v0.5.0: LLM-Enhanced Review
+
+Verdity now supports **optional LLM-powered enrichment** for findings — enabling per-finding explanations, concrete code fixes, risk assessments, and calibration assistance — all while preserving the non-negotiable constraint that **confidence scores remain deterministic at runtime**.
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| **LLM Gateway** | Unified multi-backend interface (Ollama, vLLM, llama.cpp, OpenAI) with structured JSON output | ✅ |
+| **LLM Enricher Agent** | Async enrichment: explain, fix, risk, all modes; batched by concern type | ✅ |
+| **MCP Tool: `llm_enrich_findings`** | Enrich findings via MCP with explain/fix/risk/all modes | ✅ |
+| **LLM-Assisted Calibrator** | Analyzes drift patterns, suggests weight adjustments (never per-finding) | ✅ |
+| **CLI: `verdity-enrich`** | Command-line enrichment for findings | ✅ |
+| **DB Schema** | `llm_enrichments` + `calibration_llm_suggestions` tables | ✅ |
+
 ## ⚠️ Security Notice
 
 This system handles **source code, secrets, and security findings**. See [SECURITY.md](dev-notes/SECURITY.md) for the full threat model and hardening guide. Key controls:
@@ -78,6 +91,10 @@ This system handles **source code, secrets, and security findings**. See [SECURI
 | **HMAC Verify** | `hmac_verify.py` | Constant-time signature verification with dual-secret rotation. |
 | **Webhook Normalizer** | `webhook_normalizer.py` | GitHub event → `VerdityEvent` schema. |
 | **Audit Store** | `audit_store.py` | Append-only log with SHA-256 integrity checksums per record. |
+| **LLM Gateway** | `llm_gateway.py` | Multi-backend LLM interface (Ollama, vLLM, llama.cpp, OpenAI) with structured JSON output, retries, token metering. |
+| **LLM Enricher Agent** | `agents/llm_enricher.py` | Async enrichment: explain, fix, risk, all modes; batched by concern type; secret redaction. |
+| **LLM-Assisted Calibrator** | `trust_calibration.py` | Offline LLM analysis of drift patterns; suggests weight adjustments (never per-finding). |
+| **CLI: verdity-enrich** | `cli/enrich.py` | Command-line tool for enriching findings with LLM-generated explanations, fixes, risk assessments. |
 
 ---
 
@@ -104,7 +121,7 @@ Violating any of these is a **build failure**, not a style choice.
 ```
 verdity/
 ├── src/verdity/
-│   ├── __init__.py                 # Package root, version 0.3.0
+│   ├── __init__.py                 # Package root, version 0.5.0
 │   ├── config.py                   # pydantic-settings; all secrets from env/KMS
 │   ├── async_sqlite.py             # stdlib sqlite3 wrapped with asyncio
 │   ├── schemas/
@@ -242,7 +259,7 @@ open htmlcov/index.html
 
 ### Test Coverage
 
-**100% coverage enforced** across all 342 tests in 15 test files.
+**100% coverage enforced** across all 1261 tests in 18 test files.
 
 | Module | Coverage |
 |--------|----------|
@@ -267,6 +284,13 @@ AUDIT_SQLITE_PATH=/var/lib/verdity/audit.db
 
 Test databases are automatically created in a temp directory and cleaned up after each test run.
 
+### New Database Tables (v0.5.0)
+
+| Table | Description |
+|-------|-------------|
+| `llm_enrichments` | Stores LLM enrichment results per finding (explanation, fix diff, risk assessment) |
+| `calibration_llm_suggestions` | Stores LLM-suggested calibration actions for human review and application |
+
 ---
 
 ## Build Phases
@@ -282,7 +306,7 @@ Test databases are automatically created in a temp directory and cleaned up afte
 | 7 | Budget Enforcer + Degradation Signals | ✅ Complete |
 | 8 | Hardening + STRIDE Threat Model Validation | ✅ Complete |
 
-**Total: 342 tests passing, 100% coverage enforced.**
+**Total: 1261 tests passing, 100% coverage enforced.**
 
 ---
 

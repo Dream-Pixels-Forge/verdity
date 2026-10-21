@@ -207,9 +207,9 @@ class MetricsStore:
             severity: severity level (optional)
             concern: concern type (optional)
         """
-        if self._conn is None:  # pragma: no cover
+        if self._conn is None:
             raise RuntimeError("MetricsStore is not connected. Call connect() first.")
-        if not 0.0 <= confidence <= 1.0:  # pragma: no cover
+        if not 0.0 <= confidence <= 1.0:
             raise ValueError(f"Confidence must be in [0.0, 1.0], got {confidence}")
         await self._conn.execute(
             """
@@ -243,7 +243,7 @@ class MetricsStore:
                 "repo_id": str,
             }
         """
-        if self._conn is None:  # pragma: no cover
+        if self._conn is None:
             raise RuntimeError("MetricsStore is not connected. Call connect() first.")
 
         from datetime import timedelta
@@ -446,10 +446,10 @@ class MetricsStore:
 
         Returns summary + daily breakdown for time-series visualization.
         """
+        # get_repo_summary() raises if the store is not connected, so the
+        # connection state is already validated before we touch the connection
+        # directly for the daily breakdown below.
         summary = await self.get_repo_summary(repo_id, days=days)
-
-        if self._conn is None:  # pragma: no cover
-            raise RuntimeError("MetricsStore is not connected. Call connect() first.")
 
         from datetime import timedelta
 
