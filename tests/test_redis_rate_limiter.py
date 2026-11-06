@@ -186,10 +186,18 @@ class TestRedisRateLimiterConfig:
 
     def test_redis_rate_limiter_disabled_by_default(self):
         """Redis rate limiter should be disabled by default."""
+        import os
+
         from verdity.config import get_settings
 
-        settings = get_settings()
-        assert settings.redis_rate_limiter_enabled is False
+        os.environ["WEBHOOK_HMAC_SECRET"] = "test-secret"
+        get_settings.cache_clear()
+        try:
+            settings = get_settings()
+            assert settings.redis_rate_limiter_enabled is False
+        finally:
+            del os.environ["WEBHOOK_HMAC_SECRET"]
+            get_settings.cache_clear()
 
     def test_redis_rate_limiter_enabled_via_env(self):
         """Redis rate limiter can be enabled via environment variable."""
@@ -197,12 +205,14 @@ class TestRedisRateLimiterConfig:
 
         from verdity.config import get_settings
 
+        os.environ["WEBHOOK_HMAC_SECRET"] = "test-secret"
         os.environ["REDIS_RATE_LIMITER_ENABLED"] = "true"
         get_settings.cache_clear()
         try:
             settings = get_settings()
             assert settings.redis_rate_limiter_enabled is True
         finally:
+            del os.environ["WEBHOOK_HMAC_SECRET"]
             del os.environ["REDIS_RATE_LIMITER_ENABLED"]
             get_settings.cache_clear()
 
@@ -212,11 +222,13 @@ class TestRedisRateLimiterConfig:
 
         from verdity.config import get_settings
 
+        os.environ["WEBHOOK_HMAC_SECRET"] = "test-secret"
         os.environ["REDIS_URL"] = "redis://custom:6379/1"
         get_settings.cache_clear()
         try:
             settings = get_settings()
             assert settings.redis_url == "redis://custom:6379/1"
         finally:
+            del os.environ["WEBHOOK_HMAC_SECRET"]
             del os.environ["REDIS_URL"]
             get_settings.cache_clear()
