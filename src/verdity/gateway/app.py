@@ -27,6 +27,7 @@ Security hardening (Phase 12 - Issue #41):
 
 from __future__ import annotations
 
+import hmac
 import ipaddress
 import logging
 import re
@@ -900,31 +901,30 @@ async def health():
     return {"status": "ok", "service": "verdity-gateway"}
 
 
-@app.get("/verdity/metrics/{repo_id:path}")
-async def get_metrics(repo_id: str, days: int = 30):
-    """Return aggregated engineering metrics for a repo.
-
-    Query params:
-      days: number of days to look back (default 30)
-    """
-    metrics: MetricsStore | None = getattr(app.state, "metrics", None)
-    if metrics is None:
-        return JSONResponse(status_code=503, content={"detail": "Metrics store unavailable"})
-    try:
-        summary = await metrics.get_repo_summary(repo_id, days=days)
-        return summary
-    except (KeyError, ValueError, TypeError) as exc:
-        logger.error("Failed to get metrics for %s: %s", repo_id, exc)
-        return JSONResponse(status_code=500, content={"detail": "Metrics query failed"})
-
-
 @app.get("/verdity/metrics/{repo_id:path}/dashboard")
-async def get_metrics_dashboard(repo_id: str, days: int = 30):
+async def get_metrics_dashboard(repo_id: str, days: int = 30, request: Request = ...):
     """Return chart-ready engineering metrics dashboard for a repo.
 
     Includes summary + daily breakdown for time-series visualization.
     """
-    metrics: MetricsStore | None = getattr(app.state, "metrics", None)
+    from verdity.config import get_settings
+
+    settings = get_settings()
+    token = settings.metrics_api_token.get_secret_value()
+    if not token:
+        return JSONResponse(status_code=503, content={"detail": "Metrics API not configured"})
+
+    auth_header = request.headers.get("authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing Authorization header")
+    provided_token = auth_header[len("Bearer ") :]
+    if not hmac.compare_digest(token, provided_token):
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    if days < 1 or days > 365:
+        raise HTTPException(status_code=400, detail="days must be between 1 and 365")
+
+    metrics: MetricsStore | None = getattr(request.app.state, "metrics", None)
     if metrics is None:
         return JSONResponse(status_code=503, content={"detail": "Metrics store unavailable"})
     try:
@@ -933,3 +933,38 @@ async def get_metrics_dashboard(repo_id: str, days: int = 30):
     except (KeyError, ValueError, TypeError) as exc:
         logger.error("Failed to get dashboard for %s: %s", repo_id, exc)
         return JSONResponse(status_code=500, content={"detail": "Dashboard query failed"})
+
+
+@app.get("/verdity/metrics/{repo_id:path}")
+async def get_metrics(repo_id: str, days: int = 30, request: Request = ...):
+    """Return aggregated engineering metrics for a repo.
+
+    Query params:
+      days: number of days to look back (default 30)
+    """
+    from verdity.config import get_settings
+
+    settings = get_settings()
+    token = settings.metrics_api_token.get_secret_value()
+    if not token:
+        return JSONResponse(status_code=503, content={"detail": "Metrics API not configured"})
+
+    auth_header = request.headers.get("authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing Authorization header")
+    provided_token = auth_header[len("Bearer ") :]
+    if not hmac.compare_digest(token, provided_token):
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    if days < 1 or days > 365:
+        raise HTTPException(status_code=400, detail="days must be between 1 and 365")
+
+    metrics: MetricsStore | None = getattr(request.app.state, "metrics", None)
+    if metrics is None:
+        return JSONResponse(status_code=503, content={"detail": "Metrics store unavailable"})
+    try:
+        summary = await metrics.get_repo_summary(repo_id, days=days)
+        return summary
+    except (KeyError, ValueError, TypeError) as exc:
+        logger.error("Failed to get metrics for %s: %s", repo_id, exc)
+        return JSONResponse(status_code=500, content={"detail": "Metrics query failed"})

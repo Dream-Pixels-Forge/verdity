@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import uuid
 from collections.abc import AsyncGenerator
 
@@ -49,6 +50,7 @@ async def gw_client() -> AsyncGenerator[AsyncClient, None]:
     os.environ["GITHUB_APP_PRIVATE_KEY"] = (
         "-----BEGIN RSA PRIVATE KEY-----\ntest\n-----END RSA PRIVATE KEY-----"
     )
+    os.environ["METRICS_API_TOKEN"] = "gw-metrics-token"
     get_settings.cache_clear()
 
     # Patch RepoRef constructor so the gateway's missing-id construction succeeds.
@@ -467,7 +469,10 @@ async def test_metrics_endpoint_unavailable_when_metrics_missing(gw_client):
     saved = getattr(app.state, "metrics", None)
     app.state.metrics = None
     try:
-        resp = await gw_client.get("/verdity/metrics/acme/widgets")
+        resp = await gw_client.get(
+            "/verdity/metrics/acme/widgets",
+            headers={"Authorization": "Bearer gw-metrics-token"},
+        )
         assert resp.status_code == 503
     finally:
         app.state.metrics = saved
@@ -476,7 +481,10 @@ async def test_metrics_endpoint_unavailable_when_metrics_missing(gw_client):
 @pytest.mark.asyncio
 async def test_metrics_endpoint_success(gw_client):
     """Happy path returns a summary dict."""
-    resp = await gw_client.get("/verdity/metrics/acme/widgets")
+    resp = await gw_client.get(
+        "/verdity/metrics/acme/widgets",
+        headers={"Authorization": "Bearer gw-metrics-token"},
+    )
     assert resp.status_code == 200
     data = resp.json()
     assert "review_count" in data
@@ -491,7 +499,10 @@ async def test_metrics_endpoint_failure_returns_500(gw_client):
     app.state.metrics = MagicMock()  # type: ignore[assignment]
     app.state.metrics.get_repo_summary = AsyncMock(side_effect=ValueError("oops"))
     try:
-        resp = await gw_client.get("/verdity/metrics/acme/widgets")
+        resp = await gw_client.get(
+            "/verdity/metrics/acme/widgets",
+            headers={"Authorization": "Bearer gw-metrics-token"},
+        )
         assert resp.status_code == 500
     finally:
         app.state.metrics = saved
@@ -502,7 +513,10 @@ async def test_dashboard_endpoint_unavailable(gw_client):
     saved = getattr(app.state, "metrics", None)
     app.state.metrics = None
     try:
-        resp = await gw_client.get("/verdity/metrics/acme/widgets/dashboard")
+        resp = await gw_client.get(
+            "/verdity/metrics/acme/widgets/dashboard",
+            headers={"Authorization": "Bearer gw-metrics-token"},
+        )
         assert resp.status_code == 503
     finally:
         app.state.metrics = saved
@@ -512,7 +526,10 @@ async def test_dashboard_endpoint_unavailable(gw_client):
 async def test_dashboard_endpoint_success(gw_client):
     # The path {repo_id:path}/dashboard matches "acme/widgets/dashboard"
     # which has the dashboard suffix in the repo_id. Use a different path.
-    resp = await gw_client.get("/verdity/metrics/acme/widgets")
+    resp = await gw_client.get(
+        "/verdity/metrics/acme/widgets",
+        headers={"Authorization": "Bearer gw-metrics-token"},
+    )
     assert resp.status_code == 200
     data = resp.json()
     assert "review_count" in data
@@ -521,10 +538,10 @@ async def test_dashboard_endpoint_success(gw_client):
 @pytest.mark.asyncio
 async def test_dashboard_endpoint_real(gw_client):
     """Hit the actual /dashboard sub-route."""
-    # Path matching: /verdity/metrics/{repo_id:path}/dashboard
-    # The :path converter allows slashes, so the route matches "repo/dashboard".
-    # FastAPI splits on the literal "/dashboard" suffix.
-    resp = await gw_client.get("/verdity/metrics/single-repo/dashboard")
+    resp = await gw_client.get(
+        "/verdity/metrics/single-repo/dashboard",
+        headers={"Authorization": "Bearer gw-metrics-token"},
+    )
     assert resp.status_code == 200
 
 
@@ -536,13 +553,10 @@ async def test_dashboard_endpoint_failure_returns_500(gw_client):
     app.state.metrics = MagicMock()  # type: ignore[assignment]
     app.state.metrics.get_repo_dashboard = AsyncMock(side_effect=ValueError("oops"))
     try:
-        # Hit the dashboard endpoint with a mocked metrics
-        resp = await gw_client.get("/verdity/metrics/some-repo/with-dash")
-        # The endpoint matches /verdity/metrics/{repo_id:path}/dashboard
-        # but our test path doesn't end with /dashboard explicitly.
-        # So it routes to the metrics endpoint. Mock accordingly:
-        app.state.metrics.get_repo_summary = AsyncMock(side_effect=ValueError("oops2"))
-        resp = await gw_client.get("/verdity/metrics/some-repo")
+        resp = await gw_client.get(
+            "/verdity/metrics/some-repo",
+            headers={"Authorization": "Bearer gw-metrics-token"},
+        )
         assert resp.status_code == 500
     finally:
         app.state.metrics = saved
@@ -812,7 +826,10 @@ async def test_dashboard_endpoint_failure_returns_500_via_path(gw_client):
     original = app.state.metrics.get_repo_dashboard
     app.state.metrics.get_repo_dashboard = AsyncMock(side_effect=KeyError("missing"))
     try:
-        resp = await gw_client.get("/verdity/metrics/single-repo/dashboard")
+        resp = await gw_client.get(
+            "/verdity/metrics/single-repo/dashboard",
+            headers={"Authorization": "Bearer gw-metrics-token"},
+        )
         # Path matching: single-repo/dashboard → hits the dashboard endpoint
         # which raises KeyError → caught → returns 500
         assert resp.status_code in (200, 500)
@@ -828,7 +845,10 @@ async def test_dashboard_endpoint_type_error_returns_500(gw_client):
     original = app.state.metrics.get_repo_dashboard
     app.state.metrics.get_repo_dashboard = AsyncMock(side_effect=TypeError("oops"))
     try:
-        resp = await gw_client.get("/verdity/metrics/some-repo-name/dashboard")
+        resp = await gw_client.get(
+            "/verdity/metrics/some-repo-name/dashboard",
+            headers={"Authorization": "Bearer gw-metrics-token"},
+        )
         assert resp.status_code in (200, 500)
     finally:
         app.state.metrics.get_repo_dashboard = original
@@ -957,10 +977,17 @@ async def test_dashboard_endpoint_direct_call(gw_client):
     in FastAPI due to :path converter being greedy, so we bypass routing
     by calling the underlying function directly.
     """
+    from unittest.mock import MagicMock
+
     from verdity.gateway.app import get_metrics_dashboard
 
+    # Mock request so the endpoint can read headers
+    mock_request = MagicMock()
+    mock_request.headers = {"authorization": "Bearer gw-metrics-token"}
+    mock_request.app.state.metrics = app.state.metrics
+
     # Directly invoke the dashboard function
-    result = await get_metrics_dashboard(repo_id="test-repo", days=30)
+    result = await get_metrics_dashboard(repo_id="test-repo", days=30, request=mock_request)
     assert isinstance(result, dict)
     assert "summary" in result
 
@@ -968,14 +995,17 @@ async def test_dashboard_endpoint_direct_call(gw_client):
 @pytest.mark.asyncio
 async def test_dashboard_endpoint_metrics_none_direct_call(gw_client):
     """Direct call to get_metrics_dashboard with metrics=None returns 503 (line 664)."""
-    from unittest.mock import patch
+    from unittest.mock import MagicMock, patch
 
     from verdity.gateway.app import get_metrics_dashboard
+
+    mock_request = MagicMock()
+    mock_request.headers = {"authorization": "Bearer gw-metrics-token"}
 
     with patch("verdity.gateway.app.getattr") as mock_getattr:
         # getattr(app.state, "metrics", None) returns None
         mock_getattr.return_value = None
-        result = await get_metrics_dashboard(repo_id="test-repo", days=30)
+        result = await get_metrics_dashboard(repo_id="test-repo", days=30, request=mock_request)
         # Returns JSONResponse with 503 status
         assert result.status_code == 503
 
@@ -1191,8 +1221,14 @@ class TestDashboardQueryFailure:
         metrics = MagicMock()
         metrics.get_repo_dashboard = AsyncMock(side_effect=KeyError("missing"))
 
+        mock_request = MagicMock()
+        mock_request.headers = {"authorization": "Bearer gw-metrics-token"}
+        mock_request.app.state.metrics = metrics
+
         with patch.object(gateway_module.app.state, "metrics", metrics, create=True):
-            resp = await gateway_module.get_metrics_dashboard(repo_id="o/r", days=7)
+            resp = await gateway_module.get_metrics_dashboard(
+                repo_id="o/r", days=7, request=mock_request
+            )
 
         assert resp.status_code == 500
         assert "Dashboard query failed" in resp.body.decode()
@@ -1284,3 +1320,151 @@ class TestUnifiedWebhookPayloadLimit:
             await gateway_module.handle_platform_webhook("gitlab", request)
 
         assert exc.value.status_code == 413
+
+
+# ── SG-04: Metrics auth + route ordering ───────────────────────────────
+# (gw_client fixture sets METRICS_API_TOKEN="gw-metrics-token" for all tests below)
+
+
+@pytest.mark.asyncio
+async def test_metrics_requires_bearer_token(gw_client):
+    """Unauthenticated GET to metrics returns 401 when token is configured."""
+    resp = await gw_client.get("/verdity/metrics/acme/widgets")
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_metrics_rejects_wrong_token(gw_client):
+    """Wrong Bearer token returns 401."""
+    resp = await gw_client.get(
+        "/verdity/metrics/acme/widgets",
+        headers={"Authorization": "Bearer wrong-token"},
+    )
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_metrics_accepts_correct_token(gw_client):
+    """Correct Bearer token returns 200 with metrics data."""
+    resp = await gw_client.get(
+        "/verdity/metrics/acme/widgets",
+        headers={"Authorization": "Bearer gw-metrics-token"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "review_count" in data
+
+
+@pytest.mark.asyncio
+async def test_metrics_no_token_configured_returns_503():
+    """When metrics_api_token is empty, metrics endpoints return 503."""
+    from unittest.mock import patch
+
+    from httpx import ASGITransport, AsyncClient
+
+    from verdity.config import get_settings
+    from verdity.gateway.app import app
+
+    with patch.dict(os.environ, {"METRICS_API_TOKEN": ""}, clear=False):
+        get_settings.cache_clear()
+        transport = ASGITransport(app=app)
+        client = AsyncClient(transport=transport, base_url="http://test")
+        try:
+            resp = await client.get("/verdity/metrics/acme/widgets")
+            assert resp.status_code == 503
+        finally:
+            await client.aclose()
+    get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_metrics_days_validation_min(gw_client):
+    """days below 1 returns 400."""
+    resp = await gw_client.get(
+        "/verdity/metrics/acme/widgets",
+        params={"days": 0},
+        headers={"Authorization": "Bearer gw-metrics-token"},
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_metrics_days_validation_max(gw_client):
+    """days above 365 returns 400."""
+    resp = await gw_client.get(
+        "/verdity/metrics/acme/widgets",
+        params={"days": 366},
+        headers={"Authorization": "Bearer gw-metrics-token"},
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_dashboard_requires_bearer_token(gw_client):
+    """Unauthenticated GET to dashboard returns 401 when token is configured."""
+    resp = await gw_client.get("/verdity/metrics/single-repo/dashboard")
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_dashboard_rejects_wrong_token(gw_client):
+    """Wrong Bearer token on dashboard returns 401."""
+    resp = await gw_client.get(
+        "/verdity/metrics/single-repo/dashboard",
+        headers={"Authorization": "Bearer wrong-token"},
+    )
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_dashboard_accepts_correct_token(gw_client):
+    """Correct Bearer token on dashboard returns 200."""
+    resp = await gw_client.get(
+        "/verdity/metrics/single-repo/dashboard",
+        headers={"Authorization": "Bearer gw-metrics-token"},
+    )
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_dashboard_no_token_configured_returns_503():
+    """When metrics_api_token is empty, dashboard endpoint returns 503."""
+    from unittest.mock import patch
+
+    from httpx import ASGITransport, AsyncClient
+
+    from verdity.config import get_settings
+    from verdity.gateway.app import app
+
+    with patch.dict(os.environ, {"METRICS_API_TOKEN": ""}, clear=False):
+        get_settings.cache_clear()
+        transport = ASGITransport(app=app)
+        client = AsyncClient(transport=transport, base_url="http://test")
+        try:
+            resp = await client.get("/verdity/metrics/single-repo/dashboard")
+            assert resp.status_code == 503
+        finally:
+            await client.aclose()
+    get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_dashboard_days_validation_min(gw_client):
+    """days below 1 on dashboard returns 400."""
+    resp = await gw_client.get(
+        "/verdity/metrics/single-repo/dashboard",
+        params={"days": 0},
+        headers={"Authorization": "Bearer gw-metrics-token"},
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_dashboard_days_validation_max(gw_client):
+    """days above 365 on dashboard returns 400."""
+    resp = await gw_client.get(
+        "/verdity/metrics/single-repo/dashboard",
+        params={"days": 366},
+        headers={"Authorization": "Bearer gw-metrics-token"},
+    )
+    assert resp.status_code == 400
