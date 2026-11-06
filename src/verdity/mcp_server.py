@@ -1219,6 +1219,7 @@ class MCPServer:
 
         from .agents.llm_enricher import EnrichmentMode, LLMEnricherAgent
         from .audit_store import AuditStore
+        from .config import get_settings
         from .llm_gateway import GatewayConfig, LocalLLMGateway
         from .schemas import ConcernType, Finding, Severity, SpecialistContext
         from .token_economics import TokenEconomicsService
@@ -1238,81 +1239,118 @@ class MCPServer:
         except ValueError:
             return {"error": f"Invalid mode: {mode_str}. Must be one of: explain, fix, risk, all"}
 
-        # Parse findings
+        # Parse findings with validation
         findings = []
+        finding_id_map = {}  # Maps original string IDs to result IDs for caller matching
         for f in findings_data:
-            concern = ConcernType(f["concern"])
-            severity = Severity(f["severity"])
-            finding = Finding(
-                finding_id=uuid.UUID(f["finding_id"]) if "-" in f["finding_id"] else uuid.uuid4(),
-                concern=concern,
-                severity=severity,
-                file=f["file"],
-                line_start=f["line_start"],
-                line_end=f["line_end"],
-                summary=f["summary"],
-                explanation=f["explanation"],
-                suggested_fix_diff=None,
-                confidence=f["confidence"],
-                evidence=[],
-                agent_version="mcp-enrich",
-                prompt_hash="",
-            )
-            findings.append(finding)
+            try:
+                # Validate required fields exist
+                required_fields = ["concern", "severity", "file", "summary"]
+                missing = [k for k in required_fields if k not in f]
+                if missing:
+                    return {"error": f"Missing required fields: {', '.join(missing)}"}
+
+                # Validate concern and severity enums
+                try:
+                    concern = ConcernType(f["concern"])
+                except ValueError:
+                    return {"error": f"Invalid concern type: {f['concern']}"}
+
+                try:
+                    severity = Severity(f["severity"])
+                except ValueError:
+                    return {"error": f"Invalid severity: {f['severity']}"}
+
+                # Parse finding_id - keep original string if not a valid UUID
+                original_finding_id = f.get("finding_id", "")
+                try:
+                    parsed_id = uuid.UUID(original_finding_id)
+                except (ValueError, AttributeError):
+                    # Not a valid UUID, keep the string as-is
+                    parsed_id = uuid.uuid4()
+                    finding_id_map[original_finding_id] = original_finding_id
+
+                finding = Finding(
+                    finding_id=parsed_id,
+                    concern=concern,
+                    severity=severity,
+                    file=f.get("file", ""),
+                    line_start=f.get("line_start", 0),
+                    line_end=f.get("line_end", 0),
+                    summary=f.get("summary", ""),
+                    explanation=f.get("explanation", ""),
+                    suggested_fix_diff=None,
+                    confidence=f.get("confidence", 0.5),
+                    evidence=[],
+                    agent_version="mcp-enrich",
+                    prompt_hash="",
+                )
+                findings.append(finding)
+            except (KeyError, TypeError) as e:
+                return {"error": f"Invalid finding structure: {e}"}
 
         # Create gateway
         config = GatewayConfig(model=model, backend=backend)
         gateway = LocalLLMGateway(config=config)
 
         # Create context
-        ctx = SpecialistContext(
-            review_run_id=uuid.UUID(review_run_id),
-            repo_owner="mcp",
-            repo_name="client",
-            base_sha="",
-            head_sha="",
-            diff_files=[],
-        )
+        try:
+            ctx = SpecialistContext(
+                review_run_id=uuid.UUID(review_run_id),
+                repo_owner="mcp",
+                repo_name="client",
+                base_sha="",
+                head_sha="",
+                diff_files=[],
+            )
+        except ValueError:
+            return {"error": f"Invalid review_run_id: {review_run_id}"}
 
-        # Run enrichment
+        # Get settings for audit store path
+        settings = get_settings()
+
+        # Run enrichment with proper cleanup
         token_economics = TokenEconomicsService()
-        audit_store = AuditStore()
-        await audit_store.connect()
+        audit_store = AuditStore(db_path=settings.audit_sqlite_path)
 
-        enricher = LLMEnricherAgent(gateway=gateway)
-        results = await enricher.enrich_findings(
-            findings=findings,
-            diff=diff,
-            context=ctx,
-            mode=mode,
-            token_economics=token_economics,
-            audit_store=audit_store,
-        )
+        try:
+            await audit_store.connect()
 
-        await audit_store.close()
-        await gateway.close()
-
-        # Format results
-        enriched = []
-        for r in results:
-            enriched.append(
-                {
-                    "finding_id": r.finding_id,
-                    "mode": r.mode.value,
-                    "model": r.model,
-                    "backend": r.backend,
-                    "explanation": r.explanation,
-                    "confidence_adjustment_rationale": r.confidence_adjustment_rationale,
-                    "fix_diff": r.fix_diff,
-                    "fix_explanation": r.fix_explanation,
-                    "risk_score": r.risk_score,
-                    "cwe_ids": r.cwe_ids,
-                    "exploitability": r.exploitability,
-                    "blast_radius": r.blast_radius,
-                }
+            enricher = LLMEnricherAgent(gateway=gateway)
+            results = await enricher.enrich_findings(
+                findings=findings,
+                diff=diff,
+                context=ctx,
+                mode=mode,
+                token_economics=token_economics,
+                audit_store=audit_store,
             )
 
-        return {"enriched_findings": enriched, "count": len(enriched)}
+            # Format results
+            enriched = []
+            for r in results:
+                enriched.append(
+                    {
+                        "finding_id": r.finding_id,
+                        "mode": r.mode.value,
+                        "model": r.model,
+                        "backend": r.backend,
+                        "explanation": r.explanation,
+                        "confidence_adjustment_rationale": r.confidence_adjustment_rationale,
+                        "fix_diff": r.fix_diff,
+                        "fix_explanation": r.fix_explanation,
+                        "risk_score": r.risk_score,
+                        "cwe_ids": r.cwe_ids,
+                        "exploitability": r.exploitability,
+                        "blast_radius": r.blast_radius,
+                    }
+                )
+
+            return {"enriched_findings": enriched, "count": len(enriched)}
+
+        finally:
+            await audit_store.close()
+            await gateway.close()
 
 
 def create_mcp_server(
