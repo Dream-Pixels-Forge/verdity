@@ -7,12 +7,13 @@ from __future__ import annotations
 import uuid
 
 import pytest
+import pytest_asyncio
 
 from verdity.budget_enforcer import BudgetEnforcer, DegradationSignal
 from verdity.token_economics import TokenEconomicsService
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def te_service():
     te = TokenEconomicsService(db_path=":memory:")
     await te.connect()

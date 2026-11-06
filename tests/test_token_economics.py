@@ -5,6 +5,7 @@ Tests for Token Economics Service.
 from __future__ import annotations
 
 import pytest
+import pytest_asyncio
 
 from verdity.token_economics import TokenEconomicsService, estimate_cost
 
@@ -75,7 +76,7 @@ async def test_zero_budget_means_unlimited(token_economics: TokenEconomicsServic
     assert result["within_budget"] is True
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def token_economics():
     svc = TokenEconomicsService(db_path=":memory:")
     await svc.connect()

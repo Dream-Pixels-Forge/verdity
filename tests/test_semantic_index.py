@@ -5,6 +5,7 @@ Tests for the Semantic Index Service (Phase 2).
 from __future__ import annotations
 
 import pytest
+import pytest_asyncio
 
 from verdity.semantic_index import (
     CodeChunk,
@@ -13,7 +14,7 @@ from verdity.semantic_index import (
 )
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def index() -> SemanticIndex:
     idx = SemanticIndex(db_path=":memory:")
     await idx.connect()

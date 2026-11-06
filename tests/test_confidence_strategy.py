@@ -127,7 +127,7 @@ class TestFindingConfidenceSignals:
 class TestTrustCalibratorDriftDetection:
     """Test TrustCalibrator.check_drift() method for calibration drift detection."""
 
-    @pytest.fixture
+    @pytest_asyncio.fixture
     async def calibrator(self):
         """Create a TrustCalibrator for testing."""
         c = TrustCalibrator(db_path=":memory:")
@@ -227,7 +227,7 @@ class TestTrustCalibratorDriftDetection:
 class TestMetricsStoreConfidenceHistogram:
     """Test MetricsStore.record_confidence_histogram() for confidence distribution tracking."""
 
-    @pytest.fixture
+    @pytest_asyncio.fixture
     async def store(self):
         """Create an in-memory MetricsStore for testing."""
         s = MetricsStore(db_path=":memory:")
@@ -342,7 +342,7 @@ class TestMetricsStoreConfidenceHistogram:
 class TestOrchestratorNightlyRecalibration:
     """Test Orchestrator nightly recalibration job."""
 
-    @pytest.fixture
+    @pytest_asyncio.fixture
     async def setup_orchestrator(self):
         """Create an orchestrator with mocked dependencies."""
         from verdity.audit_store import AuditStore

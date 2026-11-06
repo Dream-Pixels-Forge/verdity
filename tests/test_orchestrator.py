@@ -7,6 +7,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
+import pytest_asyncio
 
 from verdity.audit_store import AuditStore
 from verdity.event_queue import EventQueue
@@ -32,7 +33,7 @@ from verdity.semantic_index import SemanticIndex
 from verdity.token_economics import TokenEconomicsService
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def services():
     """Create all shared services for testing."""
     queue = EventQueue(db_path=":memory:")

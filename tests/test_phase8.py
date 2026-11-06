@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+import pytest_asyncio
 
 from verdity.agents.security import SecurityAgent
 from verdity.approval_queue import ApprovalQueueStore
@@ -475,7 +476,7 @@ class TestSTRIDEChecklist:
 # ═══════════════════════════════════════════════════════════════════════
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def full_pipeline():
     """Build the full pipeline for integration testing."""
     from verdity.agents.code_quality import CodeQualityAgent

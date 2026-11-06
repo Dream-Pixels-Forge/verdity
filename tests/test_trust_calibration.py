@@ -8,11 +8,12 @@ over time, adjusting severity weights and concern boost based on outcome data.
 from __future__ import annotations
 
 import pytest
+import pytest_asyncio
 
 from verdity.trust_calibration import CalibrationResult, TrustCalibrator
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def calibrator():
     """Create a TrustCalibrator for testing."""
     c = TrustCalibrator(db_path=":memory:")

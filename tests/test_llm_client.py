@@ -42,6 +42,7 @@ def _mock_response(content: str, model: str = "gpt-4o-mini") -> dict:
 class TestGatePhase12:
     """Phase 12 gate: LLM-enhanced security scan finds issues regex misses."""
 
+    @pytest.mark.asyncio
     async def test_gate_phase12_llm(self):
         """
         Gate criterion: Security agent with use_llm=True finds at least one
@@ -255,6 +256,7 @@ class TestLLMClient:
         client = LLMClient(api_key="")
         assert client.enabled is False
 
+    @pytest.mark.asyncio
     async def test_complete_raises_without_api_key(self):
         client = LLMClient()
         with pytest.raises(RuntimeError, match="no API key configured"):
@@ -263,6 +265,7 @@ class TestLLMClient:
                 messages=[{"role": "user", "content": "test"}],
             )
 
+    @pytest.mark.asyncio
     async def test_complete_success(self):
         client = LLMClient(api_key="test-key")
         mock_response = _mock_response('{"result": "ok"}')
@@ -287,6 +290,7 @@ class TestLLMClient:
             assert result.input_tokens > 0
             assert result.output_tokens > 0
 
+    @pytest.mark.asyncio
     async def test_complete_metered_through_token_economics(self):
         te = MagicMock()
         te.record_call = AsyncMock(return_value=0.0)
@@ -323,6 +327,7 @@ class TestLLMClient:
             assert call_kwargs["model"] == "gpt-4o-mini"
             assert call_kwargs["repo_owner"] == "owner"
 
+    @pytest.mark.asyncio
     async def test_complete_structured_success(self):
         client = LLMClient(api_key="test-key")
         finding_json = json.dumps(
@@ -367,6 +372,7 @@ class TestLLMClient:
 
             assert isinstance(result, dict | list)
 
+    @pytest.mark.asyncio
     async def test_complete_structured_retries_on_bad_json(self):
         client = LLMClient(api_key="test-key")
 
@@ -407,6 +413,7 @@ class TestLLMClient:
             assert result == {"name": "test"}
             assert call_count == 2
 
+    @pytest.mark.asyncio
     async def test_complete_structured_raises_after_max_retries(self):
         client = LLMClient(api_key="test-key")
         bad_response = _mock_response("Not JSON at all")
@@ -429,6 +436,7 @@ class TestLLMClient:
                     max_retries=1,
                 )
 
+    @pytest.mark.asyncio
     async def test_complete_http_error(self):
         client = LLMClient(api_key="test-key")
 

@@ -7,6 +7,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
+import pytest_asyncio
 
 from verdity.approval_queue import ApprovalQueueStore
 from verdity.router import (
@@ -115,7 +116,7 @@ class TestComputeBatchRouting:
         assert RouteAction.AUTO_DISMISS in actions
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def approval_store():
     store = ApprovalQueueStore(db_path=":memory:")
     await store.connect()

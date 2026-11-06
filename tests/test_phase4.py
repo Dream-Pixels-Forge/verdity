@@ -7,6 +7,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
+import pytest_asyncio
 
 from verdity.agents.code_quality import CodeQualityAgent
 from verdity.agents.documentation import DocumentationAgent
@@ -27,7 +28,7 @@ from verdity.semantic_index import SemanticIndex
 from verdity.token_economics import TokenEconomicsService
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def services():
     audit = AuditStore(db_path=":memory:")
     await audit.connect()

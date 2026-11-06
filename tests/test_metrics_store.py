@@ -7,11 +7,12 @@ from __future__ import annotations
 import uuid
 
 import pytest
+import pytest_asyncio
 
 from verdity.metrics_store import MetricsStore
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def store():
     """Create an in-memory MetricsStore for testing."""
     s = MetricsStore(db_path=":memory:")
