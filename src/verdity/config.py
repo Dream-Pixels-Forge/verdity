@@ -150,6 +150,12 @@ class Settings(BaseSettings):
         description="Enable Redis-backed rate limiter (requires redis.asyncio). "
         "When false, uses in-memory rate limiter.",
     )
+    # Metrics API bearer token — empty means the endpoint is disabled (503).
+    metrics_api_token: SecretStr = Field(
+        default="",
+        description="Bearer token required for /verdity/metrics/* endpoints. "
+        "Empty string disables authentication and returns 503.",
+    )
     redis_url: str = Field(
         default="redis://localhost:6379/0",
         description="Redis connection URL for rate limiter and queue.",
