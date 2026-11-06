@@ -3,6 +3,14 @@ CLI command for LLM-based finding enrichment.
 
 Usage:
     verdity-enrich --run-id <uuid> --mode explain|fix|risk|all --model <name>
+
+When neither --findings-file nor --diff-file is given, stdin must be a single
+JSON document of the form::
+
+    {"findings": [...], "diff": "..."}
+
+If only one of --findings-file or --diff-file is given, the other is read from
+stdin.
 """
 
 from __future__ import annotations
@@ -18,6 +26,18 @@ from verdity.audit_store import AuditStore
 from verdity.llm_gateway import GatewayConfig, LocalLLMGateway
 from verdity.schemas import ReviewPolicy, SpecialistContext
 from verdity.token_economics import TokenEconomicsService
+
+
+def _parse_stdin_findings(raw: str) -> list[dict]:
+    """Parse findings from stdin — accepts a bare JSON array or a document with 'findings' key."""
+    data = json.loads(raw)
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict) and "findings" in data:
+        return data["findings"]
+    raise ValueError(
+        "stdin must contain either a JSON array of findings or a document with 'findings' key"
+    )
 
 
 async def enrich_findings_command(args: argparse.Namespace) -> int:
@@ -39,23 +59,36 @@ async def enrich_findings_command(args: argparse.Namespace) -> int:
         )
         return 1
 
-    # Read findings from file or stdin
-    if args.findings_file:
+    # Read findings and diff from file or stdin
+    if args.findings_file and args.diff_file:
+        # Both from files — read each independently
         with open(args.findings_file) as f:
             findings_data = json.load(f)
-    else:
-        # Read from stdin
-        findings_data = json.load(sys.stdin)
-
-    # Read diff from file or stdin
-    if args.diff_file:
+        with open(args.diff_file) as f:
+            diff = f.read()
+    elif args.findings_file:
+        # Findings from file, diff from stdin
+        with open(args.findings_file) as f:
+            findings_data = json.load(f)
+        diff = sys.stdin.read()
+    elif args.diff_file:
+        # Findings from stdin (could be a bare array or a JSON object)
+        raw = sys.stdin.read()
+        findings_data = _parse_stdin_findings(raw)
         with open(args.diff_file) as f:
             diff = f.read()
     else:
-        diff = sys.stdin.read()
+        # Neither file given — expect a single JSON document: {"findings": [...], "diff": "..."}
+        raw = sys.stdin.read()
+        payload = json.loads(raw)
+        findings_data = payload["findings"]
+        diff = payload.get("diff", "")
 
     if not diff:
-        print("Error: diff is required (provide via --diff-file or stdin)", file=sys.stderr)
+        print(
+            "Error: diff is required (provide via --diff-file or as 'diff' in stdin JSON)",
+            file=sys.stderr,
+        )
         return 1
 
     # Create gateway config
@@ -150,7 +183,11 @@ async def enrich_findings_command(args: argparse.Namespace) -> int:
             item["blast_radius"] = r.blast_radius
         output.append(item)
 
-    print(json.dumps(output, indent=2))
+    if args.output_file:
+        with open(args.output_file, "w") as f:
+            json.dump(output, f, indent=2)
+    else:
+        print(json.dumps(output, indent=2))
     return 0
 
 
@@ -221,6 +258,11 @@ def main() -> int:
         "--output-file",
         help="Write JSON output to file instead of stdout",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Re-raise exceptions instead of catching them",
+    )
 
     args = parser.parse_args()
 
@@ -230,6 +272,8 @@ def main() -> int:
         print("\nInterrupted", file=sys.stderr)
         return 130
     except Exception as e:
+        if args.debug:
+            raise
         print(f"Error: {e}", file=sys.stderr)
         return 1
 

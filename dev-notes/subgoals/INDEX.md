@@ -2,7 +2,7 @@
 
 Work through these **one at a time, in order**. Each subgoal has its own branch, its own failing-test-first plan, and its own Definition of Done. Don't start the next one until the current one is merged.
 
-**Baseline (2026-11-06):** 1261 tests pass · coverage 97.63% (the 100% gate fails) · ruff clean.
+**Baseline (2026-11-06):** 1305 tests pass · 100% coverage · ruff clean.
 
 ## Rules for every subgoal
 1. Branch from an up-to-date `master` using the name given in the file (`fix/…`, `feat/…`, `chore/…`).

@@ -633,6 +633,7 @@ class TestEnrichFindingsCommand:
             }
         ]
         diff = "diff content"
+        stdin_payload = {"findings": findings_data, "diff": diff}
 
         with patch("verdity.cli.enrich.LocalLLMGateway") as mock_gateway_class:
             mock_gateway = AsyncMock()
@@ -667,14 +668,10 @@ class TestEnrichFindingsCommand:
                     mock_audit_class.return_value = mock_audit
 
                     with patch("verdity.cli.enrich.TokenEconomicsService"):
-                        # Read from stdin
-                        with patch("sys.stdin") as mock_stdin:
-                            mock_stdin.read = MagicMock(
-                                side_effect=[json.dumps(findings_data), diff]
-                            )
-                            mock_args.findings_file = None
-                            mock_args.diff_file = None
+                        import io
 
+                        stdin = io.StringIO(json.dumps(stdin_payload))
+                        with patch("sys.stdin", stdin):
                             result = await enrich_findings_command(mock_args)
                             assert result == 0
 
@@ -766,7 +763,387 @@ class TestEnrichFindingsCommand:
                             Path(diff_path).unlink()
 
 
-class TestMainExceptionHandling:
+class TestStdinContract:
+    """Test stdin handling when neither --findings-file nor --diff-file is given."""
+
+    def test_parse_stdin_findings_bare_list(self):
+        """_parse_stdin_findings accepts a bare JSON array."""
+        from verdity.cli.enrich import _parse_stdin_findings
+
+        result = _parse_stdin_findings(json.dumps([{"concern": "security", "severity": "high"}]))
+        assert len(result) == 1
+        assert result[0]["concern"] == "security"
+
+    def test_parse_stdin_findings_document_with_findings_key(self):
+        """_parse_stdin_findings accepts a dict with 'findings' key."""
+        from verdity.cli.enrich import _parse_stdin_findings
+
+        result = _parse_stdin_findings(json.dumps({"findings": [{"concern": "bug"}], "diff": ""}))
+        assert len(result) == 1
+        assert result[0]["concern"] == "bug"
+
+    def test_parse_stdin_findings_invalid_raises(self):
+        """_parse_stdin_findings raises ValueError for invalid input."""
+        from verdity.cli.enrich import _parse_stdin_findings
+
+        with pytest.raises(ValueError, match="stdin must contain"):
+            _parse_stdin_findings(json.dumps({"not_findings": []}))
+
+    @pytest.mark.asyncio
+    async def test_stdin_single_json_document(self):
+        """When neither file is given, stdin should accept a JSON document with findings+diff."""
+        mock_args = argparse.Namespace()
+        mock_args.run_id = "d88f3e3a-7b2c-4d8a-9e1f-5a6b7c8d9e0f"
+        mock_args.mode = "explain"
+        mock_args.model = "qwen2.5-7b-instruct"
+        mock_args.backend = "ollama"
+        mock_args.base_url = None
+        mock_args.temperature = 0.0
+        mock_args.max_tokens = 4096
+        mock_args.findings_file = None
+        mock_args.diff_file = None
+        mock_args.repo_owner = "test-owner"
+        mock_args.repo_name = "test-repo"
+        mock_args.db_path = ":memory:"
+        mock_args.output_file = None
+        mock_args.debug = False
+
+        stdin_payload = {
+            "findings": [
+                {
+                    "finding_id": "d88f3e3a-7b2c-4d8a-9e1f-5a6b7c8d9e0f",
+                    "concern": "security",
+                    "severity": "high",
+                    "file": "auth/login.py",
+                    "line_start": 15,
+                    "line_end": 15,
+                    "summary": "Test",
+                    "explanation": "Test",
+                    "confidence": 0.5,
+                    "agent_version": "test",
+                    "prompt_hash": "",
+                }
+            ],
+            "diff": "diff content",
+        }
+
+        with patch("verdity.cli.enrich.LocalLLMGateway") as mock_gateway_class:
+            mock_gateway = AsyncMock()
+            mock_gateway_class.return_value = mock_gateway
+
+            with patch("verdity.cli.enrich.LLMEnricherAgent") as mock_enricher_class:
+                mock_enricher = AsyncMock()
+                mock_enricher.enrich_findings = AsyncMock(
+                    return_value=[
+                        MagicMock(
+                            finding_id="d88f3e3a-7b2c-4d8a-9e1f-5a6b7c8d9e0f",
+                            mode=MagicMock(value="explain"),
+                            model="qwen2.5-7b-instruct",
+                            backend="ollama",
+                            explanation="LLM explanation",
+                            confidence_adjustment_rationale=None,
+                            fix_diff=None,
+                            fix_explanation=None,
+                            risk_score=None,
+                            cwe_ids=None,
+                            exploitability=None,
+                            blast_radius=None,
+                        )
+                    ]
+                )
+                mock_enricher_class.return_value = mock_enricher
+
+                with patch("verdity.cli.enrich.AuditStore") as mock_audit_class:
+                    mock_audit = AsyncMock()
+                    mock_audit.connect = AsyncMock()
+                    mock_audit.close = AsyncMock()
+                    mock_audit_class.return_value = mock_audit
+
+                    with patch("verdity.cli.enrich.TokenEconomicsService"):
+                        import io
+
+                        stdin = io.StringIO(json.dumps(stdin_payload))
+                        with patch("sys.stdin", stdin):
+                            result = await enrich_findings_command(mock_args)
+                            assert result == 0
+
+
+class TestFindingsFileDiffStdin:
+    """Test combined file + stdin paths."""
+
+    @pytest.mark.asyncio
+    async def test_findings_from_file_diff_from_stdin(self, tmp_path):
+        """When --findings-file is given without --diff-file, diff comes from stdin."""
+        mock_args = argparse.Namespace()
+        mock_args.run_id = "d88f3e3a-7b2c-4d8a-9e1f-5a6b7c8d9e0f"
+        mock_args.mode = "explain"
+        mock_args.model = "qwen2.5-7b-instruct"
+        mock_args.backend = "ollama"
+        mock_args.base_url = None
+        mock_args.temperature = 0.0
+        mock_args.max_tokens = 4096
+        mock_args.findings_file = None
+        mock_args.diff_file = None
+        mock_args.repo_owner = "test-owner"
+        mock_args.repo_name = "test-repo"
+        mock_args.db_path = ":memory:"
+        mock_args.output_file = None
+        mock_args.debug = False
+
+        findings_data = [
+            {
+                "finding_id": "d88f3e3a-7b2c-4d8a-9e1f-5a6b7c8d9e0f",
+                "concern": "security",
+                "severity": "high",
+                "file": "auth/login.py",
+                "line_start": 15,
+                "line_end": 15,
+                "summary": "Test",
+                "explanation": "Test",
+                "confidence": 0.5,
+                "agent_version": "test",
+                "prompt_hash": "",
+            }
+        ]
+
+        findings_path = tmp_path / "findings.json"
+        findings_path.write_text(json.dumps(findings_data))
+        mock_args.findings_file = str(findings_path)
+
+        with patch("verdity.cli.enrich.LocalLLMGateway") as mock_gateway_class:
+            mock_gateway_class.return_value = AsyncMock()
+            with patch("verdity.cli.enrich.LLMEnricherAgent") as mock_enricher_class:
+                mock_enricher = AsyncMock()
+                mock_enricher.enrich_findings = AsyncMock(
+                    return_value=[
+                        MagicMock(
+                            finding_id="d88f3e3a-7b2c-4d8a-9e1f-5a6b7c8d9e0f",
+                            mode=MagicMock(value="explain"),
+                            model="qwen2.5-7b-instruct",
+                            backend="ollama",
+                            explanation="LLM explanation",
+                            confidence_adjustment_rationale=None,
+                            fix_diff=None,
+                            fix_explanation=None,
+                            risk_score=None,
+                            cwe_ids=None,
+                            exploitability=None,
+                            blast_radius=None,
+                        )
+                    ]
+                )
+                mock_enricher_class.return_value = mock_enricher
+                with patch("verdity.cli.enrich.AuditStore") as mock_audit_class:
+                    mock_audit = AsyncMock()
+                    mock_audit.connect = AsyncMock()
+                    mock_audit.close = AsyncMock()
+                    mock_audit_class.return_value = mock_audit
+                    with patch("verdity.cli.enrich.TokenEconomicsService"):
+                        import io
+
+                        stdin = io.StringIO("diff from stdin")
+                        with patch("sys.stdin", stdin):
+                            result = await enrich_findings_command(mock_args)
+                            assert result == 0
+
+    @pytest.mark.asyncio
+    async def test_diff_from_file_findings_from_stdin(self, tmp_path):
+        """When --diff-file is given without --findings-file, findings come from stdin."""
+        mock_args = argparse.Namespace()
+        mock_args.run_id = "d88f3e3a-7b2c-4d8a-9e1f-5a6b7c8d9e0f"
+        mock_args.mode = "explain"
+        mock_args.model = "qwen2.5-7b-instruct"
+        mock_args.backend = "ollama"
+        mock_args.base_url = None
+        mock_args.temperature = 0.0
+        mock_args.max_tokens = 4096
+        mock_args.findings_file = None
+        mock_args.diff_file = None
+        mock_args.repo_owner = "test-owner"
+        mock_args.repo_name = "test-repo"
+        mock_args.db_path = ":memory:"
+        mock_args.output_file = None
+        mock_args.debug = False
+
+        diff_path = tmp_path / "diff.txt"
+        diff_path.write_text("diff content")
+        mock_args.diff_file = str(diff_path)
+
+        findings_data = [
+            {
+                "finding_id": "d88f3e3a-7b2c-4d8a-9e1f-5a6b7c8d9e0f",
+                "concern": "security",
+                "severity": "high",
+                "file": "auth/login.py",
+                "line_start": 15,
+                "line_end": 15,
+                "summary": "Test",
+                "explanation": "Test",
+                "confidence": 0.5,
+                "agent_version": "test",
+                "prompt_hash": "",
+            }
+        ]
+
+        with patch("verdity.cli.enrich.LocalLLMGateway") as mock_gateway_class:
+            mock_gateway_class.return_value = AsyncMock()
+            with patch("verdity.cli.enrich.LLMEnricherAgent") as mock_enricher_class:
+                mock_enricher = AsyncMock()
+                mock_enricher.enrich_findings = AsyncMock(
+                    return_value=[
+                        MagicMock(
+                            finding_id="d88f3e3a-7b2c-4d8a-9e1f-5a6b7c8d9e0f",
+                            mode=MagicMock(value="explain"),
+                            model="qwen2.5-7b-instruct",
+                            backend="ollama",
+                            explanation="LLM explanation",
+                            confidence_adjustment_rationale=None,
+                            fix_diff=None,
+                            fix_explanation=None,
+                            risk_score=None,
+                            cwe_ids=None,
+                            exploitability=None,
+                            blast_radius=None,
+                        )
+                    ]
+                )
+                mock_enricher_class.return_value = mock_enricher
+                with patch("verdity.cli.enrich.AuditStore") as mock_audit_class:
+                    mock_audit = AsyncMock()
+                    mock_audit.connect = AsyncMock()
+                    mock_audit.close = AsyncMock()
+                    mock_audit_class.return_value = mock_audit
+                    with patch("verdity.cli.enrich.TokenEconomicsService"):
+                        import io
+
+                        stdin = io.StringIO(json.dumps(findings_data))
+                        with patch("sys.stdin", stdin):
+                            result = await enrich_findings_command(mock_args)
+                            assert result == 0
+
+
+class TestOutputFile:
+    """Test --output-file writes results to file instead of stdout."""
+
+    @pytest.mark.asyncio
+    async def test_output_file_writes_to_file_and_not_stdout(self, tmp_path):
+        """--output-file should write JSON to the given path and print nothing to stdout."""
+        mock_args = argparse.Namespace()
+        mock_args.run_id = "d88f3e3a-7b2c-4d8a-9e1f-5a6b7c8d9e0f"
+        mock_args.mode = "explain"
+        mock_args.model = "qwen2.5-7b-instruct"
+        mock_args.backend = "ollama"
+        mock_args.base_url = None
+        mock_args.temperature = 0.0
+        mock_args.max_tokens = 4096
+        mock_args.findings_file = None
+        mock_args.diff_file = None
+        mock_args.repo_owner = "test-owner"
+        mock_args.repo_name = "test-repo"
+        mock_args.db_path = ":memory:"
+        mock_args.output_file = str(tmp_path / "result.json")
+        mock_args.debug = False
+
+        stdin_payload = {
+            "findings": [
+                {
+                    "finding_id": "d88f3e3a-7b2c-4d8a-9e1f-5a6b7c8d9e0f",
+                    "concern": "security",
+                    "severity": "high",
+                    "file": "auth/login.py",
+                    "line_start": 15,
+                    "line_end": 15,
+                    "summary": "Test",
+                    "explanation": "Test",
+                    "confidence": 0.5,
+                    "agent_version": "test",
+                    "prompt_hash": "",
+                }
+            ],
+            "diff": "diff content",
+        }
+
+        with patch("verdity.cli.enrich.LocalLLMGateway") as mock_gateway_class:
+            mock_gateway = AsyncMock()
+            mock_gateway_class.return_value = mock_gateway
+
+            with patch("verdity.cli.enrich.LLMEnricherAgent") as mock_enricher_class:
+                mock_enricher = AsyncMock()
+                mock_enricher.enrich_findings = AsyncMock(
+                    return_value=[
+                        MagicMock(
+                            finding_id="d88f3e3a-7b2c-4d8a-9e1f-5a6b7c8d9e0f",
+                            mode=MagicMock(value="explain"),
+                            model="qwen2.5-7b-instruct",
+                            backend="ollama",
+                            explanation="LLM explanation",
+                            confidence_adjustment_rationale=None,
+                            fix_diff=None,
+                            fix_explanation=None,
+                            risk_score=None,
+                            cwe_ids=None,
+                            exploitability=None,
+                            blast_radius=None,
+                        )
+                    ]
+                )
+                mock_enricher_class.return_value = mock_enricher
+
+                with patch("verdity.cli.enrich.AuditStore") as mock_audit_class:
+                    mock_audit = AsyncMock()
+                    mock_audit.connect = AsyncMock()
+                    mock_audit.close = AsyncMock()
+                    mock_audit_class.return_value = mock_audit
+
+                    with patch("verdity.cli.enrich.TokenEconomicsService"):
+                        import io
+                        from io import StringIO
+
+                        stdin = io.StringIO(json.dumps(stdin_payload))
+                        stdout_capture = StringIO()
+
+                        with patch("sys.stdin", stdin):
+                            with patch("sys.stdout", stdout_capture):
+                                result = await enrich_findings_command(mock_args)
+
+                        assert result == 0
+                        output_path = Path(mock_args.output_file)
+                        assert output_path.exists()
+                        written = json.loads(output_path.read_text())
+                        assert len(written) == 1
+                        assert written[0]["explanation"] == "LLM explanation"
+                        # Nothing printed to stdout when --output-file is used
+                        assert stdout_capture.getvalue() == ""
+
+
+class TestDebugFlag:
+    """Test --debug flag re-raises exceptions."""
+
+    def test_debug_flag_re_raises(self):
+        """With --debug, exceptions should propagate instead of being caught."""
+        import sys
+        from io import StringIO
+
+        old_argv = sys.argv
+        old_stderr = sys.stderr
+        sys.argv = [
+            "verdity-enrich",
+            "--run-id",
+            "123e4567-e89b-12d3-a456-426614174000",
+            "--debug",
+        ]
+        stderr_capture = StringIO()
+        sys.stderr = stderr_capture
+
+        try:
+            with patch("verdity.cli.enrich.asyncio.run") as mock_run:
+                mock_run.side_effect = RuntimeError("boom")
+                with pytest.raises(RuntimeError, match="boom"):
+                    main()
+        finally:
+            sys.argv = old_argv
+            sys.stderr = old_stderr
+
     """Test main() exception handling paths."""
 
     def test_main_keyboard_interrupt(self):
