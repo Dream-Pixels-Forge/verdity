@@ -19,8 +19,8 @@ Work through these **one at a time, in order**. Each subgoal has its own branch,
 
 | # | Subgoal | Severity | Size | Depends on | Status |
 |---|---------|----------|------|------------|--------|
-| 01 | [Baseline: dev env, hygiene, packaging](SG-01-baseline-and-hygiene.md) | Low (enabler) | S | — | ☐ |
-| 02 | [MCP `llm_enrich_findings` crash](SG-02-mcp-llm-enrich-crash.md) | High · confirmed | S | 01 | ☐ |
+| 01 | [Baseline: dev env, hygiene, packaging](SG-01-baseline-and-hygiene.md) | Low (enabler) | S | — | ☑ |
+| 02 | [MCP `llm_enrich_findings` crash](SG-02-mcp-llm-enrich-crash.md) | High · confirmed | S | 01 | ☑ #65 |
 | 03 | [`verdity-enrich` CLI stdin / `--output-file`](SG-03-cli-enrich.md) | Medium | S | 02 | ☐ |
 | 04 | [Metrics routes: shadowed dashboard + auth](SG-04-metrics-endpoints.md) | High · confirmed | S | 01 | ☐ |
 | 05 | [Await Redis rate limiter in middleware](SG-05-redis-rate-limiter-await.md) | High · confirmed | XS | 01 | ☐ |

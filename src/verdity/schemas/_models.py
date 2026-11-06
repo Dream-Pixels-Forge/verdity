@@ -101,6 +101,12 @@ class ReviewPolicy(BaseModel):
     adversarial_review_depth: str = "lite"  # "lite" | "full"
 
 
+class FindingParseError(Exception):
+    """Error raised when parsing finding data fails validation."""
+
+    pass
+
+
 class SpecialistContext(BaseModel):
     """Bundle of context passed to every specialist agent."""
 

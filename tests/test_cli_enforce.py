@@ -12,6 +12,8 @@ Covers:
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -553,7 +555,6 @@ class TestCliPackageHasNoEagerReexports:
 
     def test_package_import_does_not_import_submodules(self):
         """A fresh `import verdity.cli` must pull in neither submodule."""
-        import subprocess
         import sys
 
         code = (
@@ -566,12 +567,12 @@ class TestCliPackageHasNoEagerReexports:
             capture_output=True,
             text=True,
             check=True,
+            env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parent.parent / "src")},
         )
         assert out.stdout.strip() == "False False"
 
     def test_python_dash_m_emits_no_runpy_warning(self):
         """`python -m verdity.cli.<mod> --help` must not warn about double import."""
-        import subprocess
         import sys
 
         for module in ("verdity.cli.enforce", "verdity.cli.review"):
