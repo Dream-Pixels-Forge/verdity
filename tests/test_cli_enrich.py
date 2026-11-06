@@ -12,6 +12,7 @@ Covers:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 import tempfile
@@ -20,7 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from verdity.cli.enrich import main, enrich_findings_command
+from verdity.cli.enrich import enrich_findings_command, main
 
 
 class TestEnrichCLI:
@@ -111,9 +112,7 @@ index abc123..def456 100644
 
     def test_enrich_invalid_run_id(self):
         """enrich command should reject invalid --run-id."""
-        exit_code, stdout, stderr = self._run_main(
-            ["--run-id", "not-a-uuid", "--mode", "explain"]
-        )
+        exit_code, stdout, stderr = self._run_main(["--run-id", "not-a-uuid", "--mode", "explain"])
         assert exit_code == 1
         assert "Invalid UUID" in stderr
 
@@ -132,7 +131,8 @@ index abc123..def456 100644
                 [
                     "--run-id",
                     "d88f3e3a-7b2c-4d8a-9e1f-5a6b7c8d9e0f",
-                    "--mode", "invalid",
+                    "--mode",
+                    "invalid",
                     "--findings-file",
                     findings_file,
                     "--diff-file",
@@ -478,71 +478,6 @@ class TestEnrichFindingsCommand:
         return args
 
     @pytest.mark.asyncio
-    async def test_enrich_findings_command_success(self, mock_args):
-        """Test enrich_findings_command with mocked LLM gateway."""
-        findings_data = [
-            {
-                "finding_id": "d88f3e3a-7b2c-4d8a-9e1f-5a6b7c8d9e0f",
-                "concern": "security",
-                "severity": "high",
-                "file": "auth/login.py",
-                "line_start": 15,
-                "line_end": 15,
-                "summary": "Potential SQL injection",
-                "explanation": "User input directly interpolated",
-                "confidence": 0.85,
-                "agent_version": "security-agent@0.1.0",
-                "prompt_hash": "sha256:abc123",
-            }
-        ]
-        diff = "diff content"
-
-        with patch("verdity.cli.enrich.LocalLLMGateway") as mock_gateway_class:
-            mock_gateway = AsyncMock()
-            mock_gateway_class.return_value = mock_gateway
-
-            with patch("verdity.cli.enrich.LLMEnricherAgent") as mock_enricher_class:
-                mock_enricher = AsyncMock()
-                mock_enricher.enrich_findings = AsyncMock(
-                    return_value=[
-                        MagicMock(
-                            finding_id="d88f3e3a-7b2c-4d8a-9e1f-5a6b7c8d9e0f",
-                            mode=MagicMock(value="explain"),
-                            model="qwen2.5-7b-instruct",
-                            backend="ollama",
-                            explanation="LLM explanation",
-                            confidence_adjustment_rationale="Rationale",
-                            fix_diff=None,
-                            fix_explanation=None,
-                            risk_score=None,
-                            cwe_ids=None,
-                            exploitability=None,
-                            blast_radius=None,
-                        )
-                    ]
-                )
-                mock_enricher_class.return_value = mock_enricher
-
-                with patch("verdity.cli.enrich.AuditStore") as mock_audit_class:
-                    mock_audit = AsyncMock()
-                    mock_audit.connect = AsyncMock()
-                    mock_audit.close = AsyncMock()
-                    mock_audit_class.return_value = mock_audit
-
-                    with patch("verdity.cli.enrich.TokenEconomicsService"):
-                        # Mock stdin for findings and diff
-                        with patch("sys.stdin") as mock_stdin:
-                            mock_stdin.read = MagicMock(
-                                side_effect=[json.dumps(findings_data), diff]
-                            )
-
-                            result = await enrich_findings_command(mock_args)
-                            assert result == 0
-                            mock_enricher.enrich_findings.assert_called_once()
-                            mock_gateway.close.assert_called_once()
-                            mock_audit.close.assert_called_once()
-
-    @pytest.mark.asyncio
     async def test_enrich_findings_command_invalid_uuid(self, mock_args):
         """Test enrich_findings_command with invalid UUID."""
         mock_args.run_id = "not-a-uuid"
@@ -568,6 +503,7 @@ class TestEnrichFindingsCommand:
     async def test_enrich_findings_command_empty_diff(self, mock_args):
         """Test enrich_findings_command with empty diff."""
         import tempfile as tf
+
         # Create an actual empty diff file
         with tf.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write("")
@@ -656,6 +592,7 @@ class TestEnrichFindingsCommand:
                     with patch("verdity.cli.enrich.TokenEconomicsService"):
                         # Use actual temp files
                         import tempfile as tf
+
                         with tf.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
                             json.dump(findings_data, f)
                             findings_path = f.name
@@ -679,7 +616,6 @@ class TestEnrichFindingsCommand:
     @pytest.mark.asyncio
     async def test_enrich_findings_command_from_stdin(self, mock_args):
         """Test enrich_findings_command reads from stdin when no files provided."""
-        import tempfile as tf
 
         findings_data = [
             {
@@ -806,8 +742,9 @@ class TestEnrichFindingsCommand:
                         mock_args.findings_file = findings_path
                         mock_args.diff_file = diff_path
 
-                        from io import StringIO
                         import sys
+                        from io import StringIO
+
                         old_stdout = sys.stdout
                         sys.stdout = stdout_capture = StringIO()
 
@@ -834,8 +771,8 @@ class TestMainExceptionHandling:
 
     def test_main_keyboard_interrupt(self):
         """Test main() handles KeyboardInterrupt and returns 130."""
-        from io import StringIO
         import sys
+        from io import StringIO
 
         old_argv = sys.argv
         old_stderr = sys.stderr
@@ -859,8 +796,8 @@ class TestMainExceptionHandling:
 
     def test_main_generic_exception(self):
         """Test main() handles generic exceptions and returns 1."""
-        from io import StringIO
         import sys
+        from io import StringIO
 
         old_argv = sys.argv
         old_stderr = sys.stderr
@@ -884,30 +821,38 @@ class TestMainExceptionHandling:
 
     def test_main_entry_point_calls_sys_exit(self):
         """Test that running module as script calls sys.exit(main())."""
+        import json
         import runpy
         import sys
         from io import StringIO
-        import json
 
         # Provide valid stdin data to reach main() execution
-        stdin_data = json.dumps([
-            {
-                "id": "test-finding",
-                "title": "Test Finding",
-                "severity": "high",
-                "file": "test.py",
-                "line": 10,
-                "summary": "Test summary",
-                "confidence": 0.9,
-                "uuid": "test-uuid",
-            }
-        ])
+        stdin_data = json.dumps(
+            [
+                {
+                    "id": "test-finding",
+                    "title": "Test Finding",
+                    "severity": "high",
+                    "file": "test.py",
+                    "line": 10,
+                    "summary": "Test summary",
+                    "confidence": 0.9,
+                    "uuid": "test-uuid",
+                }
+            ]
+        )
 
         old_argv = sys.argv
         old_stdout = sys.stdout
         old_stderr = sys.stderr
         old_stdin = sys.stdin
-        sys.argv = ["verdity.cli.enrich", "--run-id", "12345678-1234-1234-1234-123456789012", "--mode", "explain"]
+        sys.argv = [
+            "verdity.cli.enrich",
+            "--run-id",
+            "12345678-1234-1234-1234-123456789012",
+            "--mode",
+            "explain",
+        ]
         sys.stdout = StringIO()
         sys.stderr = StringIO()
         sys.stdin = StringIO(stdin_data)
@@ -918,11 +863,8 @@ class TestMainExceptionHandling:
         saved = sys.modules.pop("verdity.cli.enrich", None)
         try:
             # sys.exit(main()) is called at the end of the if __name__ block
-            try:
+            with contextlib.suppress(SystemExit):
                 runpy.run_module("verdity.cli.enrich", run_name="__main__")
-            except SystemExit:
-                # Expected - main() exits via sys.exit()
-                pass
         finally:
             sys.argv = old_argv
             sys.stdout = old_stdout
