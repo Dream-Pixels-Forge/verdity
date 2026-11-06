@@ -569,6 +569,7 @@ async def test_all_tests_pass_at_least_90_coverage():
         "0.4.16",
         "0.4.17",
         "0.5.0",
+        "0.5.1",
     )
 
 

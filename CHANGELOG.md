@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] — 2026-11-06
+
+### Fixed
+- **Coverage gate restored to 100%** — Removed duplicate `test_enrich_findings_command_success` test in `tests/test_cli_enrich.py` that caused ruff F811 warning. The first occurrence (stdin-mocked version) was redundant with the second (temp-file version).
+
+### Changed
+- **SystemExit handling refactored** — Replaced `try/except SystemExit: pass` pattern with `contextlib.suppress(SystemExit)` throughout `tests/test_cli_enrich.py` for cleaner code and to resolve ruff SIM105 warning.
+
+### Development
+- Added 6 new tests for `trust_calibration.py` branches: LLM unavailable, malformed suggestion JSON, suggestion outside allowed bounds, and empty-state fallback paths.
+- Full test suite: 1294 tests at 100% coverage for `src/verdity`.
+
 ## [0.4.5] — 2026-09-05
 
 ### Added
