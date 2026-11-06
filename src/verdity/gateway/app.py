@@ -34,6 +34,7 @@ import re
 import time
 from collections import defaultdict
 from contextlib import asynccontextmanager, suppress
+from typing import Protocol
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
@@ -56,6 +57,22 @@ DELIVERY_CACHE_TTL_SECONDS = 24 * 3600  # 24 hours
 _eviction_interval_seconds = 300  # evict every 5 minutes
 RATE_LIMIT_MAX_REQUESTS = 100  # per IP per window
 RATE_LIMIT_WINDOW_SECONDS = 60  # sliding window in seconds
+
+
+class _RateLimiterProtocol(Protocol):
+    """Protocol for rate limiter types (sync or async).
+
+    Both in-memory and Redis limiters must support async is_allowed()
+    for use in the middleware.
+    """
+
+    async def is_allowed(self, request: Request) -> tuple[bool, float]:
+        """Check if the request is within the rate limit.
+
+        Returns (allowed, retry_after_seconds).
+        """
+        ...
+
 
 # Default GitHub webhook IP ranges (from GitHub's meta API)
 # https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries#validating-webhook-deliveries
@@ -142,7 +159,7 @@ class _RateLimiter:
         while timestamps and timestamps[0] < cutoff:
             timestamps.pop(0)
 
-    def is_allowed(self, request: Request) -> tuple[bool, float]:
+    async def is_allowed(self, request: Request) -> tuple[bool, float]:
         """Check if the request is within the rate limit.
 
         Returns (allowed, retry_after_seconds).
@@ -261,7 +278,7 @@ class RedisRateLimiter:
         """
         if not self._connected or self._redis is None:
             logger.warning("Redis rate limiter not connected, using fallback")
-            return self._fallback_limiter.is_allowed(request)
+            return await self._fallback_limiter.is_allowed(request)
 
         ip = self._client_ip(request)
         key = f"rate_limit:{ip}"
@@ -283,9 +300,9 @@ class RedisRateLimiter:
             return allowed, retry_after
         except Exception as exc:
             logger.warning("Redis rate limiter error, falling back: %s", exc)
-            # Try to reconnect on next request
+            # Mark as disconnected for auto-reconnect; fallbackLimiter is async
             self._connected = False
-            return self._fallback_limiter.is_allowed(request)
+            return await self._fallback_limiter.is_allowed(request)
 
 
 class DeliveryCache:
@@ -516,9 +533,9 @@ async def security_middleware(request: Request, call_next):
 async def rate_limit_middleware(request: Request, call_next):
     """Rate-limit POST /verdity/webhooks/github by client IP."""
     if request.method == "POST" and request.url.path == "/verdity/webhooks/github":
-        limiter: _RateLimiter | None = getattr(request.app.state, "_rate_limiter", None)
+        limiter: _RateLimiterProtocol | None = getattr(request.app.state, "_rate_limiter", None)
         if limiter is not None:
-            allowed, retry_after = limiter.is_allowed(request)
+            allowed, retry_after = await limiter.is_allowed(request)
             if not allowed:
                 response = JSONResponse(
                     status_code=429,

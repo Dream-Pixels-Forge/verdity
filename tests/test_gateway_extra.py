@@ -1079,15 +1079,15 @@ class TestRedisRateLimiterClientIp:
     @pytest.mark.asyncio
     async def test_falls_back_to_memory_when_not_connected(self):
         """An unconnected limiter must serve requests, not reject everything."""
-        from unittest.mock import MagicMock
+        from unittest.mock import AsyncMock, MagicMock
 
         limiter = self._limiter()
         limiter._connected = False
         limiter._redis = None
-        # The in-memory _RateLimiter.is_allowed is *synchronous*, and the Redis
-        # limiter returns its tuple directly from an async def.
+        # The in-memory _RateLimiter.is_allowed is now async, returning a coroutine.
+        # Mock fallback returns async tuple directly.
         fallback = MagicMock()
-        fallback.is_allowed = MagicMock(return_value=(True, 0.0))
+        fallback.is_allowed = AsyncMock(return_value=(True, 0.0))
         limiter._fallback_limiter = fallback
 
         allowed, retry_after = await limiter.is_allowed(self._request())
@@ -1468,3 +1468,162 @@ async def test_dashboard_days_validation_max(gw_client):
         headers={"Authorization": "Bearer gw-metrics-token"},
     )
     assert resp.status_code == 400
+
+
+# ── SG-05: Redis Rate Limiter Middleware Tests ─────────────────────────
+
+
+class TestRateLimiterMiddlewareAwait:
+    """Tests for SG-05: Rate limiter middleware awaits async is_allowed.
+
+    When REDIS_RATE_LIMITER_ENABLED=true, the middleware should use
+    RedisRateLimiter which has async is_allowed(). The middleware must
+    await the call properly or it crashes with TypeError.
+
+    The fix makes _RateLimiter.is_allowed async so both in-memory and
+    Redis limiters share the same Protocol interface.
+    """
+
+    @pytest_asyncio.fixture
+    async def gw_client_with_rate_limiter(self):
+        """Set up gateway with a rate limiter."""
+        import os
+
+        from verdity.config import get_settings
+        from verdity.gateway.app import _parse_ip_allowlist
+
+        get_settings.cache_clear()
+        os.environ["WEBHOOK_HMAC_SECRET"] = "test-hmac-secret-key-for-dev-only"
+        os.environ["WEBHOOK_HMAC_SECRET_PREVIOUS"] = ""
+        os.environ["METRICS_API_TOKEN"] = "gw-metrics-token"
+        get_settings.cache_clear()
+
+        # Patch RepoRef constructor so the gateway's missing-id construction succeeds.
+        original_init = RepoRef.__init__
+
+        def patched_init(self, owner, name, **kwargs):
+            kwargs.setdefault("id", 0)
+            original_init(self, owner=owner, name=name, **kwargs)
+
+        RepoRef.__init__ = patched_init
+
+        app.state.delivery_ids = set()
+        app.state._delivery_cache_ts = {}
+        app.state._last_eviction = 0.0
+        app.state._rate_limiter = _RateLimiter()
+        app.state._github_ip_allowlist = _parse_ip_allowlist("")
+        app.state._delivery_cache = DeliveryCache(db_path=":memory:")
+        await app.state._delivery_cache.connect()
+        app.state.queue = EventQueue(db_path=":memory:")
+        app.state.audit = AuditStore(db_path=":memory:")
+        app.state.metrics = MetricsStore(db_path=":memory:")
+        await app.state.queue.connect()
+        await app.state.audit.connect()
+        await app.state.metrics.connect()
+
+        transport = ASGITransport(app=app)
+        client = AsyncClient(transport=transport, base_url="http://test")
+        try:
+            yield client
+        finally:
+            await client.aclose()
+            await app.state.queue.close()
+            await app.state.audit.close()
+            await app.state.metrics.close()
+            await app.state._delivery_cache.close()
+            RepoRef.__init__ = original_init
+            get_settings.cache_clear()
+            for key in ["WEBHOOK_HMAC_SECRET", "WEBHOOK_HMAC_SECRET_PREVIOUS", "METRICS_API_TOKEN"]:
+                os.environ.pop(key, None)
+            get_settings.cache_clear()
+
+    @pytest.mark.asyncio
+    async def test_rate_limiter_middleware_no_crash(self, gw_client_with_rate_limiter):
+        """Middleware should not crash with TypeError when rate limiter is async.
+
+        Regression test for SG-05: without await, RedisRateLimiter.is_allowed
+        (which is async) would return a coroutine object instead of a tuple,
+        causing TypeError: cannot unpack non-iterable coroutine object.
+        """
+        client = gw_client_with_rate_limiter
+        body = json.dumps(
+            {
+                "action": "opened",
+                "pull_request": {
+                    "number": 1,
+                    "head": {"sha": "abc", "ref": "feature/test"},
+                    "base": {"sha": "def", "ref": "main"},
+                    "title": "T",
+                    "body": "",
+                    "user": {"login": "u"},
+                },
+                "repository": {"name": "r", "owner": {"login": "o"}, "id": 1},
+                "sender": {"login": "u"},
+            },
+            separators=(",", ":"),
+        ).encode()
+        sig = _sign("test-hmac-secret-key-for-dev-only", body)
+        resp = await client.post(
+            "/verdity/webhooks/github",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": sig,
+                "X-GitHub-Event": "pull_request",
+                "X-GitHub-Delivery": str(uuid.uuid4()),
+            },
+        )
+        # Should get 202 (accepted) — if middleware crashed we'd get 500
+        assert resp.status_code == 202
+
+    @pytest.mark.asyncio
+    async def test_rate_limiter_middleware_rejects_request(self, gw_client_with_rate_limiter):
+        """When rate limiter returns allowed=False, request is rate limited with 429."""
+        client = gw_client_with_rate_limiter
+        limiter = app.state._rate_limiter
+
+        # Exhaust the rate limit (100 requests per window)
+        from starlette.requests import Request
+
+        fake_request = Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/verdity/webhooks/github",
+                "headers": [],
+                "client": ("127.0.0.1", 12345),
+            }
+        )
+        for _ in range(100):
+            await limiter.is_allowed(fake_request)
+
+        # Now send the actual webhook — should be rate limited
+        body = json.dumps(
+            {
+                "action": "opened",
+                "pull_request": {
+                    "number": 1,
+                    "head": {"sha": "abc", "ref": "feature/test"},
+                    "base": {"sha": "def", "ref": "main"},
+                    "title": "T",
+                    "body": "",
+                    "user": {"login": "u"},
+                },
+                "repository": {"name": "r", "owner": {"login": "o"}, "id": 1},
+                "sender": {"login": "u"},
+            },
+            separators=(",", ":"),
+        ).encode()
+        sig = _sign("test-hmac-secret-key-for-dev-only", body)
+        resp = await client.post(
+            "/verdity/webhooks/github",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": sig,
+                "X-GitHub-Event": "pull_request",
+                "X-GitHub-Delivery": str(uuid.uuid4()),
+            },
+        )
+        assert resp.status_code == 429
+        assert resp.headers.get("Retry-After") is not None
