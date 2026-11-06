@@ -1272,7 +1272,6 @@ class MCPServer:
             base_sha="",
             head_sha="",
             diff_files=[],
-            policy=None,
         )
 
         # Run enrichment

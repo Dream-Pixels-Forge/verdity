@@ -517,10 +517,6 @@ class LLMAssistedCalibrator(TrustCalibrator):
 
         This runs OFFLINE as a calibration assistant, never per-finding.
         """
-        if not self._llm_gateway:
-            logger.warning("No LLM gateway configured, skipping LLM-assisted calibration")
-            return []
-
         # Prepare context for LLM
         fp_count = len(false_positive_examples)
         confirmed_count = len(confirmed_examples)
@@ -634,6 +630,9 @@ class LLMAssistedCalibrator(TrustCalibrator):
 
             return actions
 
+        except ImportError:
+            logger.warning("No LLM gateway configured, skipping LLM-assisted calibration")
+            return []
         except Exception as e:
             logger.error("LLM-assisted calibration failed: %s", e)
             return []

@@ -278,6 +278,146 @@ class TestMCPServerErrorPaths:
         assert result["tool"] == "apply_fix"
 
     @pytest.mark.asyncio
+    async def test_call_tool_llm_enrich_findings_missing_params(self):
+        """Test _llm_enrich_findings returns error when required params missing."""
+        server = MCPServer()
+
+        # Missing review_run_id
+        result = await server.call_tool(
+            "llm_enrich_findings",
+            {
+                "findings": [
+                    {
+                        "finding_id": "123e4567-e89b-12d3-a456-426614174000",
+                        "concern": "security",
+                        "severity": "high",
+                        "file": "test.py",
+                        "line_start": 10,
+                        "line_end": 10,
+                        "summary": "Test finding",
+                        "explanation": "Test explanation",
+                        "confidence": 0.8,
+                    }
+                ],
+                "diff": "test diff",
+                "mode": "explain",
+            },
+        )
+        assert "error" in result
+        assert "required" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_call_tool_llm_enrich_findings_invalid_mode(self):
+        """Test _llm_enrich_findings returns error for invalid mode."""
+        server = MCPServer()
+
+        result = await server.call_tool(
+            "llm_enrich_findings",
+            {
+                "review_run_id": "123e4567-e89b-12d3-a456-426614174000",
+                "findings": [
+                    {
+                        "finding_id": "123e4567-e89b-12d3-a456-426614174000",
+                        "concern": "security",
+                        "severity": "high",
+                        "file": "test.py",
+                        "line_start": 10,
+                        "line_end": 10,
+                        "summary": "Test finding",
+                        "explanation": "Test explanation",
+                        "confidence": 0.8,
+                    }
+                ],
+                "diff": "test diff",
+                "mode": "invalid_mode",
+            },
+        )
+        assert "error" in result
+        assert "Invalid mode" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_call_tool_llm_enrich_findings_success(self):
+        """Test _llm_enrich_findings success path with all fields."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        server = MCPServer()
+
+        mock_result = MagicMock()
+        mock_result.finding_id = "123e4567-e89b-12d3-a456-426614174000"
+        mock_result.mode.value = "all"
+        mock_result.model = "qwen2.5-7b-instruct"
+        mock_result.backend = "ollama"
+        mock_result.explanation = "LLM explanation"
+        mock_result.confidence_adjustment_rationale = "Confidence rationale"
+        mock_result.fix_diff = "def fixed(): pass"
+        mock_result.fix_explanation = "Fixed by..."
+        mock_result.risk_score = 0.8
+        mock_result.cwe_ids = ["CWE-89", "CWE-79"]
+        mock_result.exploitability = "easy"
+        mock_result.blast_radius = "local"
+
+        with patch("verdity.agents.llm_enricher.LLMEnricherAgent") as mock_enricher_class:
+            mock_enricher = AsyncMock()
+            mock_enricher.enrich_findings = AsyncMock(return_value=[mock_result])
+            mock_enricher_class.return_value = mock_enricher
+
+            with patch("verdity.audit_store.AuditStore") as mock_audit_class:
+                mock_audit = AsyncMock()
+                mock_audit.connect = AsyncMock()
+                mock_audit.close = AsyncMock()
+                mock_audit_class.return_value = mock_audit
+
+                with patch("verdity.token_economics.TokenEconomicsService"):
+                    # Patch LocalLLMGateway with proper async close
+                    mock_gateway_instance = MagicMock()
+                    mock_gateway_instance.close = AsyncMock()
+                    with patch("verdity.llm_gateway.LocalLLMGateway", return_value=mock_gateway_instance):
+                        # Patch SpecialistContext at its source module
+                        with patch(
+                            "verdity.schemas._models.SpecialistContext"
+                        ) as mock_context_class:
+                            mock_context_class.return_value = MagicMock(
+                                review_run_id="123e4567-e89b-12d3-a456-426614174000",
+                                repo_owner="mcp",
+                                repo_name="client",
+                            )
+
+                            result = await server.call_tool(
+                                "llm_enrich_findings",
+                                {
+                                    "review_run_id": "123e4567-e89b-12d3-a456-426614174000",
+                                    "findings": [
+                                        {
+                                            "finding_id": "123e4567-e89b-12d3-a456-426614174000",
+                                            "concern": "security",
+                                            "severity": "high",
+                                            "file": "test.py",
+                                            "line_start": 10,
+                                            "line_end": 10,
+                                            "summary": "Test finding",
+                                            "explanation": "Test explanation",
+                                            "confidence": 0.8,
+                                        }
+                                    ],
+                                    "diff": "test diff",
+                                    "mode": "all",
+                                    "model": "qwen2.5-7b-instruct",
+                                    "backend": "ollama",
+                                },
+                            )
+
+        assert "error" not in result
+        assert "enriched_findings" in result
+        assert result["count"] == 1
+        enriched = result["enriched_findings"][0]
+        assert enriched["fix_diff"] == "def fixed(): pass"
+        assert enriched["fix_explanation"] == "Fixed by..."
+        assert enriched["risk_score"] == 0.8
+        assert enriched["cwe_ids"] == ["CWE-89", "CWE-79"]
+        assert enriched["exploitability"] == "easy"
+        assert enriched["blast_radius"] == "local"
+
+    @pytest.mark.asyncio
     async def test_call_tool_get_review_rules_exception(self):
         """Test call_tool catches exceptions from _get_review_rules."""
         server = MCPServer()
