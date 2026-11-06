@@ -575,7 +575,8 @@ class TestLLMAssistedCalibrator:
     @pytest.mark.asyncio
     async def test_analyze_drift_patterns_import_error_returns_empty(self):
         """Test analyze_drift_patterns returns empty on ImportError (no LLM gateway)."""
-        from unittest.mock import AsyncMock, patch
+        from unittest.mock import patch
+
         from verdity.trust_calibration import LLMAssistedCalibrator
 
         c = LLMAssistedCalibrator(db_path=":memory:")
@@ -587,7 +588,9 @@ class TestLLMAssistedCalibrator:
             actions = await c.analyze_drift_patterns(
                 finding_type="security-hardcoded-credential",
                 false_positive_examples=[],
-                confirmed_examples=[{"file": "test.py", "line": 10, "summary": "test", "confidence": 0.95}],
+                confirmed_examples=[
+                    {"file": "test.py", "line": 10, "summary": "test", "confidence": 0.95}
+                ],
             )
 
         assert actions == []
@@ -604,9 +607,7 @@ class TestLLMAssistedCalibrator:
         await c.connect()
 
         mock_gateway = AsyncMock()
-        mock_gateway.complete_structured = AsyncMock(
-            side_effect=Exception("LLM service down")
-        )
+        mock_gateway.complete_structured = AsyncMock(side_effect=Exception("LLM service down"))
         c.set_llm_gateway(mock_gateway)
 
         actions = await c.analyze_drift_patterns(
@@ -699,7 +700,8 @@ class TestLLMAssistedCalibrator:
     async def test_apply_calibration_actions_target_in_weights(self):
         """Test apply_calibration_actions adjusts target in current_weights."""
         import pytest
-        from verdity.schemas import ConcernType, Severity
+
+        from verdity.schemas import Severity
         from verdity.trust_calibration import LLMAssistedCalibrator
 
         c = LLMAssistedCalibrator(db_path=":memory:")

@@ -371,7 +371,9 @@ class TestMCPServerErrorPaths:
                     # Patch LocalLLMGateway with proper async close
                     mock_gateway_instance = MagicMock()
                     mock_gateway_instance.close = AsyncMock()
-                    with patch("verdity.llm_gateway.LocalLLMGateway", return_value=mock_gateway_instance):
+                    with patch(
+                        "verdity.llm_gateway.LocalLLMGateway", return_value=mock_gateway_instance
+                    ):
                         # Patch SpecialistContext at its source module
                         with patch(
                             "verdity.schemas._models.SpecialistContext"

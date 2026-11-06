@@ -6,8 +6,6 @@
 
 # Verdity — from *verdict* + *fidelity/integrity*. Every finding is a **verdict** (structured, evidence-backed, confidence-scored), delivered with **integrity** (calibrated, gated, auditable, never auto-posted without earning it).
 
-> **Verdity** — from *verdict* + *fidelity/integrity*. Every finding is a **verdict** (structured, evidence-backed, confidence-scored), delivered with **integrity** (calibrated, gated, auditable, never auto-posted without earning it).
-
 ## ✨ New in v0.5.0: LLM-Enhanced Review
 
 Verdity now supports **optional LLM-powered enrichment** for findings — enabling per-finding explanations, concrete code fixes, risk assessments, and calibration assistance — all while preserving the non-negotiable constraint that **confidence scores remain deterministic at runtime**.

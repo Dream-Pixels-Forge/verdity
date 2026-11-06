@@ -12,26 +12,29 @@
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
 
   <style>
+    /* ── Tokens (docs/DESIGN.md v1.1 — single source of truth) ── */
     :root {
-      --ink: #0A0A0A;
-      --paper: #FFFFFF;
-      --bone: #FAFAFA;
-      --ash: #666666;
-      --smoke: #A3A3A3;
-      --flare: #FF5A1F;
+      --ink: #0A0A0A;          /* background */
+      --surface: #141414;      /* raised: cards, terminals */
+      --surface-alt: #1C1C1C;  /* highest: inline code, inputs */
+      --text: #FFFFFF;         /* white is TEXT ONLY */
+      --text-soft: #EDEDED;    /* terminal body */
+      --text-muted: #A3A3A3;   /* 7.85:1 on ink */
+      --flare: #FF5A1F;        /* the only hue */
       --flare-deep: #D24309;
-      --green: #22C55E;
-      --red: #F87171;
+      --border-ui: #666666;    /* essential boundaries, 3.45:1 */
+      --hairline: #2E2E2E;     /* decorative separators */
+      --pass: #22C55E;
+      --review: #F59E0B;
+      --crit: #F87171;
 
       --font-mono: 'JetBrains Mono', 'SF Mono', monospace;
-      --font-heading: 'Space Grotesk', sans-serif;
-      --font-body: 'IBM Plex Sans', sans-serif;
+      --font-heading: 'Space Grotesk', 'Inter', sans-serif;
+      --font-body: 'IBM Plex Sans', 'Inter', sans-serif;
 
-      --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-      --ease-snap: cubic-bezier(0.9, 0, 0.1, 1);
-      --dur-fast: 150ms;
-      --dur-base: 250ms;
-      --dur-slow: 450ms;
+      --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+      --ease-standard: cubic-bezier(0.65, 0, 0.35, 1);
+      --ease-slam: cubic-bezier(0.9, 0, 0.1, 1);
     }
 
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -39,20 +42,19 @@
 
     body {
       font-family: var(--font-body);
-      background: var(--paper);
-      color: var(--ink);
+      background: var(--ink);
+      color: var(--text);
       line-height: 1.6;
       -webkit-font-smoothing: antialiased;
     }
 
-    ::selection { background: var(--flare); color: var(--paper); }
-
+    ::selection { background: var(--flare); color: var(--ink); }
     :focus-visible { outline: 3px solid var(--flare); outline-offset: 2px; }
 
     h1, h2, h3 { font-family: var(--font-heading); line-height: 1.1; letter-spacing: -0.02em; }
     .mono { font-family: var(--font-mono); }
 
-    /* ── Reduced motion ─────────────────────────── */
+    /* ── Reduced motion: reveals instant, loops stop ── */
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after {
         animation-duration: 0.01ms !important;
@@ -60,21 +62,23 @@
         scroll-behavior: auto !important;
       }
       .reveal { opacity: 1 !important; transform: none !important; }
+      .verdict-line::after { transform: scaleX(1) !important; }
+      .scroll-hint::after { animation: none !important; }
     }
 
-    /* ── Scroll progress ────────────────────────── */
+    /* ── Progress bar (flare accent) ── */
     .progress {
       position: fixed; top: 0; left: 0; height: 3px; width: 0%;
       background: var(--flare); z-index: 100;
       transition: width 80ms linear;
     }
 
-    /* ── Nav ────────────────────────────────────── */
+    /* ── Nav ── */
     nav {
       position: fixed; top: 0; left: 0; right: 0; z-index: 90;
-      background: rgba(255,255,255,0.92);
+      background: rgba(10, 10, 10, 0.9);
       backdrop-filter: blur(12px);
-      border-bottom: 1px solid var(--ink);
+      border-bottom: 1px solid var(--hairline);
     }
     .nav-inner {
       max-width: 72rem; margin: 0 auto; padding: 1rem 1.5rem;
@@ -82,30 +86,29 @@
     }
     .brand {
       font-family: var(--font-mono); font-weight: 800; font-size: 1.25rem;
-      color: var(--ink); text-decoration: none; display: flex; align-items: center; gap: 2px;
+      color: var(--text); text-decoration: none; display: flex; align-items: center;
     }
     .brand .bracket { color: var(--flare); font-weight: 700; }
     .nav-links { display: flex; gap: 2rem; align-items: center; }
-    .nav-links a {
-      color: var(--ash); text-decoration: none; font-size: 0.9rem; font-weight: 500;
-      transition: color var(--dur-fast) ease;
+    .nav-links a:not(.nav-cta) {
+      color: var(--text-muted); text-decoration: none; font-size: 0.9rem; font-weight: 500;
+      transition: color 150ms var(--ease-standard);
     }
-    .nav-links a:hover { color: var(--flare); }
+    .nav-links a:not(.nav-cta):hover { color: var(--text); }
     .nav-cta {
-      background: var(--ink); color: var(--paper); padding: 0.55rem 1.25rem;
-      font-family: var(--font-mono); font-size: 0.85rem; font-weight: 600;
-      text-decoration: none; border-radius: 8px;
-      transition: background var(--dur-fast) ease, transform var(--dur-fast) ease;
+      background: var(--flare); color: var(--ink); padding: 0.65rem 1.35rem;
+      font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700;
+      text-decoration: none; border-radius: 8px; min-height: 44px; display: inline-flex; align-items: center;
+      transition: transform 50ms var(--ease-enter), background 150ms var(--ease-standard);
     }
-    .nav-cta:hover { background: var(--flare); transform: translateY(-1px); }
+    .nav-cta:hover { background: var(--flare-deep); transform: translateY(-1px); }
     @media (max-width: 768px) { .nav-links a:not(.nav-cta) { display: none; } }
 
-    /* ── Hero ───────────────────────────────────── */
+    /* ── Hero ── */
     .hero {
       min-height: 100vh;
       display: flex; flex-direction: column; justify-content: center;
       padding: 8rem 1.5rem 6rem;
-      background: var(--ink); color: var(--paper);
       position: relative; overflow: hidden;
     }
     .hero-grid-lines {
@@ -118,91 +121,85 @@
     .hero-inner { max-width: 72rem; margin: 0 auto; width: 100%; position: relative; z-index: 2; }
     .hero-kicker {
       font-family: var(--font-mono); color: var(--flare);
-      font-size: 0.9rem; font-weight: 600; letter-spacing: 0.1em;
+      font-size: 0.9rem; font-weight: 700; letter-spacing: 0.1em;
       text-transform: uppercase; margin-bottom: 1.5rem;
       display: flex; align-items: center; gap: 0.75rem;
     }
-    .hero-kicker::before { content: ''; width: 2.5rem; height: 2px; background: var(--flare); }
+    .hero-kicker::before { content: ''; width: 2.5rem; height: 2px; background: var(--flare); flex-shrink: 0; }
     .hero h1 {
       font-family: var(--font-mono);
       font-size: clamp(2.75rem, 8vw, 5.5rem);
       font-weight: 800; letter-spacing: -0.03em; line-height: 1.02;
-      margin-bottom: 0;
     }
     .hero h1 .verdict-line { position: relative; display: inline-block; }
     .hero h1 .verdict-line::after {
       content: ''; position: absolute; left: 0; bottom: 0.05em;
       height: 0.09em; width: 100%; background: var(--flare);
       transform-origin: left; transform: scaleX(0);
-      animation: slam 0.6s var(--ease-snap) 0.7s forwards;
+      animation: slam 0.6s var(--ease-slam) 0.7s forwards;
     }
     @keyframes slam { to { transform: scaleX(1); } }
     .hero-sub {
-      font-size: clamp(1.1rem, 2vw, 1.35rem); color: #B8B8B8;
+      font-size: clamp(1.1rem, 2vw, 1.35rem); color: var(--text-muted);
       max-width: 44rem; margin-top: 2rem; line-height: 1.7;
     }
-    .hero-sub strong { color: var(--paper); font-weight: 600; }
+    .hero-sub strong { color: var(--text); font-weight: 600; }
     .hero-sub .accent { color: var(--flare); font-weight: 600; }
     .hero-actions { display: flex; gap: 1rem; margin-top: 3rem; flex-wrap: wrap; }
     .btn {
       display: inline-flex; align-items: center; gap: 0.6rem;
-      padding: 0.85rem 1.75rem; border-radius: 8px;
+      padding: 0.85rem 1.75rem; min-height: 44px; border-radius: 8px;
       font-family: var(--font-mono); font-size: 0.95rem; font-weight: 700;
       text-decoration: none; cursor: pointer; border: 1px solid transparent;
-      transition: transform var(--dur-fast) var(--ease-out), background var(--dur-fast) ease, color var(--dur-fast) ease, border-color var(--dur-fast) ease;
+      transition: transform 50ms var(--ease-enter), background 150ms var(--ease-standard), border-color 150ms var(--ease-standard), color 150ms var(--ease-standard);
     }
     .btn:active { transform: scale(0.97); }
     .btn-flare { background: var(--flare); color: var(--ink); }
     .btn-flare:hover { background: var(--flare-deep); transform: translateY(-2px); }
-    .btn-outline { background: transparent; color: var(--paper); border-color: rgba(255,255,255,0.35); }
-    .btn-outline:hover { border-color: var(--paper); background: rgba(255,255,255,0.06); transform: translateY(-2px); }
-    .btn-dark { background: var(--ink); color: var(--paper); }
-    .btn-dark:hover { background: var(--flare); transform: translateY(-2px); }
-    .btn-outline-dark { background: transparent; color: var(--ink); border-color: var(--ink); }
-    .btn-outline-dark:hover { background: var(--ink); color: var(--paper); transform: translateY(-2px); }
+    .btn-ghost { background: transparent; color: var(--text); border-color: var(--border-ui); }
+    .btn-ghost:hover { border-color: var(--text); transform: translateY(-2px); }
+    .btn-ink { background: var(--ink); color: var(--text); border-color: var(--ink); }
+    .btn-ink:hover { background: var(--surface); transform: translateY(-2px); }
 
     .hero-stats {
       display: grid; grid-template-columns: repeat(4, 1fr); gap: 2rem;
-      margin-top: 5rem; padding-top: 3rem; border-top: 1px solid rgba(255,255,255,0.14);
+      margin-top: 5rem; padding-top: 3rem; border-top: 1px solid var(--hairline);
     }
     .stat-num {
       font-family: var(--font-mono); font-weight: 800;
-      font-size: clamp(1.75rem, 4vw, 2.75rem); color: var(--paper);
+      font-size: clamp(1.75rem, 4vw, 2.75rem); color: var(--text);
     }
     .stat-num.orange { color: var(--flare); }
-    .stat-label { font-size: 0.8rem; color: #8A8A8A; margin-top: 0.35rem; text-transform: uppercase; letter-spacing: 0.08em; }
+    .stat-label { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.35rem; text-transform: uppercase; letter-spacing: 0.08em; }
     @media (max-width: 640px) { .hero-stats { grid-template-columns: repeat(2, 1fr); } }
 
     .scroll-hint {
       position: absolute; bottom: 2rem; left: 50%; transform: translateX(-50%);
       font-family: var(--font-mono); font-size: 0.7rem; letter-spacing: 0.2em;
-      color: #6A6A6A; text-transform: uppercase; display: flex; flex-direction: column; align-items: center; gap: 0.6rem;
+      color: var(--text-muted); text-transform: uppercase; display: flex; flex-direction: column; align-items: center; gap: 0.6rem;
     }
-    .scroll-hint::after { content: ''; width: 1px; height: 2.5rem; background: linear-gradient(var(--flare), transparent); }
+    .scroll-hint::after {
+      content: ''; width: 1px; height: 2.5rem;
+      background: linear-gradient(var(--flare), transparent);
+    }
 
-    /* ── Section scaffolding ────────────────────── */
+    /* ── Sections: ink throughout, hairline dividers ── */
     section { padding: 7rem 1.5rem; }
     .section-inner { max-width: 72rem; margin: 0 auto; }
-    .section-alt { background: var(--bone); }
-    .section-dark { background: var(--ink); color: var(--paper); }
-    .section-dark h2, .section-dark h3 { color: var(--paper); }
+    .section-raised { background: var(--surface); border-top: 1px solid var(--hairline); border-bottom: 1px solid var(--hairline); }
+    .divider { border-top: 1px solid var(--hairline); }
 
     .kicker {
       font-family: var(--font-mono); color: var(--flare); font-size: 0.8rem;
       font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase;
       display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.25rem;
     }
-    .kicker::before { content: ''; width: 2rem; height: 2px; background: var(--flare); }
-    .section-dark .kicker { color: var(--flare); }
-    h2.section-title {
-      font-size: clamp(2rem, 4.5vw, 3.25rem); font-weight: 700;
-      margin-bottom: 1rem; letter-spacing: -0.02em;
-    }
-    .section-lede { color: var(--ash); font-size: 1.15rem; max-width: 40rem; }
-    .section-dark .section-lede { color: #A8A8A8; }
+    .kicker::before { content: ''; width: 2rem; height: 2px; background: var(--flare); flex-shrink: 0; }
+    h2.section-title { font-size: clamp(2rem, 4.5vw, 3.25rem); font-weight: 700; margin-bottom: 1rem; }
+    .section-lede { color: var(--text-muted); font-size: 1.15rem; max-width: 40rem; }
 
-    /* ── Reveal animations ──────────────────────── */
-    .reveal { opacity: 0; transform: translateY(28px); transition: opacity 0.7s var(--ease-out), transform 0.7s var(--ease-out); }
+    /* ── Reveal choreography ── */
+    .reveal { opacity: 0; transform: translateY(28px); transition: opacity 0.4s var(--ease-enter), transform 0.4s var(--ease-enter); }
     .reveal.visible { opacity: 1; transform: translateY(0); }
     .reveal-d1 { transition-delay: 80ms; }
     .reveal-d2 { transition-delay: 160ms; }
@@ -210,174 +207,146 @@
     .reveal-d4 { transition-delay: 320ms; }
     .reveal-d5 { transition-delay: 400ms; }
 
-    /* ── Terminal ───────────────────────────────── */
+    /* ── Terminal ── */
     .terminal {
-      background: var(--ink); color: #EDEDED;
+      background: var(--surface); color: var(--text-soft);
       border-radius: 16px; overflow: hidden;
-      border: 1px solid rgba(255,255,255,0.08);
+      border: 1px solid var(--hairline);
     }
     .terminal-bar {
       display: flex; align-items: center; gap: 0.5rem;
-      padding: 0.75rem 1.25rem; border-bottom: 1px solid rgba(255,255,255,0.08);
+      padding: 0.75rem 1.25rem; border-bottom: 1px solid var(--hairline);
     }
     .dot { width: 11px; height: 11px; border-radius: 50%; }
     .dot-r { background: #FF5F57; } .dot-y { background: #FEBC2E; } .dot-g { background: #28C840; }
-    .terminal-title { font-family: var(--font-mono); font-size: 0.75rem; color: #7A7A7A; margin-left: 0.75rem; }
+    .terminal-title { font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-muted); margin-left: 0.75rem; }
     .terminal pre {
       padding: 1.5rem 1.75rem; font-family: var(--font-mono);
-      font-size: 0.85rem; line-height: 1.75; overflow-x: auto;
+      font-size: 0.85rem; line-height: 1.75; overflow-x: auto; color: var(--text-soft);
     }
-    .t-cmd { color: var(--paper); }
+    .t-cmd { color: var(--text); }
     .t-prompt { color: var(--flare); }
-    .t-out { color: #9A9A9A; }
-    .t-ok { color: var(--green); }
-    .t-warn { color: #F59E0B; }
-    .t-err { color: var(--red); }
-    .t-key { color: var(--flare); }
+    .t-out { color: var(--text-muted); }
+    .t-ok { color: var(--pass); }
+    .t-warn { color: var(--review); }
+    .t-err { color: var(--crit); }
+    .t-key { color: var(--flare); font-weight: 700; }
 
-    /* ── Cards ──────────────────────────────────── */
+    /* ── Cards ── */
     .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.5rem; }
     .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1.5rem; }
-    .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.5rem; }
-    @media (max-width: 960px) { .grid-3, .grid-4 { grid-template-columns: repeat(2, 1fr); } }
-    @media (max-width: 640px) { .grid-3, .grid-2, .grid-4 { grid-template-columns: 1fr; } }
+    @media (max-width: 960px) { .grid-3 { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 640px) { .grid-3, .grid-2 { grid-template-columns: 1fr; } }
 
     .card {
-      background: var(--paper); border: 1px solid var(--ink);
+      background: var(--surface); border: 1px solid var(--hairline);
       border-radius: 16px; padding: 1.75rem;
-      transition: transform var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out);
+      transition: transform 200ms var(--ease-enter), border-color 200ms var(--ease-standard);
     }
-    .card:hover { transform: translateY(-4px); box-shadow: 0 8px 24px rgba(10,10,10,0.12); }
+    .card:hover { transform: translateY(-4px); border-color: var(--flare); }
     .card-num {
       font-family: var(--font-mono); font-weight: 800; font-size: 0.85rem;
-      color: var(--flare); margin-bottom: 1rem; display: block;
+      color: var(--flare); margin-bottom: 1rem; display: block; letter-spacing: 0.08em;
     }
     .card h3 { font-size: 1.2rem; font-weight: 600; margin-bottom: 0.6rem; }
-    .card p { color: var(--ash); font-size: 0.95rem; }
+    .card p { color: var(--text-muted); font-size: 0.95rem; }
 
-    /* ── Constraints list ───────────────────────── */
+    /* ── Constraints ledger ── */
     .constraint-row {
       display: flex; gap: 1.5rem; align-items: baseline;
-      padding: 1.25rem 0; border-bottom: 1px solid rgba(255,255,255,0.12);
+      padding: 1.25rem 0; border-bottom: 1px solid var(--hairline);
     }
     .constraint-row:last-child { border-bottom: none; }
-    .constraint-num {
-      font-family: var(--font-mono); font-weight: 800; color: var(--flare);
-      font-size: 1rem; min-width: 2.5rem;
-    }
-    .constraint-row strong { color: var(--ink); font-weight: 600; }
-    .constraint-row span { color: var(--ash); font-size: 0.95rem; }
-    .section-dark .constraint-row strong { color: var(--paper); }
-    .section-dark .constraint-row span { color: #9A9A9A; }
+    .constraint-num { font-family: var(--font-mono); font-weight: 800; color: var(--flare); font-size: 1rem; min-width: 2.5rem; }
+    .constraint-row strong { color: var(--text); font-weight: 600; }
+    .constraint-row span { color: var(--text-muted); font-size: 0.95rem; }
 
-    /* ── Pipeline ───────────────────────────────── */
-    .pipeline { display: flex; flex-direction: column; gap: 0; max-width: 48rem; margin: 0 auto; }
-    .pipe-step {
-      display: grid; grid-template-columns: 3.5rem 1fr; gap: 1.5rem;
-      padding: 1.75rem 0; position: relative;
-    }
+    /* ── Pipeline ── */
+    .pipeline { display: flex; flex-direction: column; max-width: 48rem; margin: 0 auto; }
+    .pipe-step { display: grid; grid-template-columns: 3.5rem 1fr; gap: 1.5rem; padding: 1.75rem 0; position: relative; }
     .pipe-step:not(:last-child)::before {
       content: ''; position: absolute; left: 1.65rem; top: 4.5rem; bottom: -0.5rem;
-      width: 2px; background: var(--smoke); opacity: 0.4;
+      width: 2px; background: var(--hairline);
     }
     .pipe-node {
       width: 3.25rem; height: 3.25rem; border-radius: 50%;
       display: flex; align-items: center; justify-content: center;
       font-family: var(--font-mono); font-weight: 800; font-size: 1rem;
-      border: 2px solid var(--ink); background: var(--paper); color: var(--ink);
+      border: 2px solid var(--border-ui); background: var(--ink); color: var(--text);
       position: relative; z-index: 1;
     }
     .pipe-step.hot .pipe-node { background: var(--flare); border-color: var(--flare); color: var(--ink); }
     .pipe-step h3 { font-size: 1.15rem; font-weight: 600; margin-bottom: 0.35rem; }
-    .pipe-step p { color: var(--ash); font-size: 0.95rem; }
+    .pipe-step p { color: var(--text-muted); font-size: 0.95rem; }
     .pipe-tag {
       display: inline-block; font-family: var(--font-mono); font-size: 0.72rem;
-      padding: 0.15rem 0.6rem; border: 1px solid var(--ink); border-radius: 999px;
-      margin-top: 0.6rem; margin-right: 0.4rem; font-weight: 600;
+      padding: 0.15rem 0.6rem; border: 1px solid var(--border-ui); border-radius: 999px;
+      margin-top: 0.6rem; margin-right: 0.4rem; font-weight: 600; color: var(--text-muted);
     }
-    .pipe-tag.hot { background: var(--flare); border-color: var(--flare); }
+    .pipe-tag.hot { background: var(--flare); border-color: var(--flare); color: var(--ink); }
 
-    /* ── Badges ─────────────────────────────────── */
+    /* ── Badges ── */
     .badge {
       display: inline-flex; align-items: center; gap: 0.4rem;
       font-family: var(--font-mono); font-size: 0.72rem; font-weight: 700;
       padding: 0.3rem 0.75rem; border-radius: 999px;
-      border: 1px solid var(--ink); text-transform: uppercase; letter-spacing: 0.05em;
+      border: 1px solid var(--border-ui); text-transform: uppercase; letter-spacing: 0.05em;
     }
-    .badge-solid { background: var(--ink); color: var(--paper); }
+    .badge-solid { background: var(--surface-alt); color: var(--text); }
     .badge-flare { background: var(--flare); border-color: var(--flare); color: var(--ink); }
-    .badge-ghost { background: transparent; color: var(--ink); }
-    .badge-green { border-color: var(--green); color: var(--green); }
+    .badge-ghost { background: transparent; color: var(--text-muted); }
 
-    /* ── Code inline ────────────────────────────── */
     code.inline {
       font-family: var(--font-mono); font-size: 0.85em;
-      background: var(--ink); color: var(--flare);
+      background: var(--surface-alt); color: var(--flare);
       padding: 0.15em 0.45em; border-radius: 4px; font-weight: 600;
     }
-    .section-dark code.inline { background: rgba(255,255,255,0.12); color: var(--flare); }
 
-    /* ── Modules table ──────────────────────────── */
+    /* ── Modules table ── */
     .mod-table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
-    .mod-table td { padding: 0.9rem 0; border-bottom: 1px solid rgba(255,255,255,0.12); }
+    .mod-table td { padding: 0.9rem 0; border-bottom: 1px solid var(--hairline); }
     .mod-table tr:last-child td { border-bottom: none; }
     .mod-table .mod-name { font-family: var(--font-mono); color: var(--flare); font-weight: 600; white-space: nowrap; padding-right: 2rem; }
-    .mod-table .mod-desc { color: #A8A8A8; }
+    .mod-table .mod-desc { color: var(--text-muted); }
 
-    /* ── Install section ────────────────────────── */
+    /* ── Install steps ── */
     .install-steps { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; align-items: start; }
     @media (max-width: 900px) { .install-steps { grid-template-columns: 1fr; } }
-    .step-list { counter-reset: step; }
-    .step {
-      display: grid; grid-template-columns: 2.5rem 1fr; gap: 1.25rem;
-      padding: 1.25rem 0; counter-increment: step;
-    }
-    .step::before {
-      content: counter(step, decimal-leading-zero);
-      font-family: var(--font-mono); font-weight: 800; color: var(--flare);
-      font-size: 1.1rem; line-height: 1.5;
-    }
+    .step { display: grid; grid-template-columns: 2.5rem 1fr; gap: 1.25rem; padding: 1.25rem 0; }
+    .step-num { font-family: var(--font-mono); font-weight: 800; color: var(--flare); font-size: 1.1rem; line-height: 1.5; }
     .step h3 { font-size: 1.1rem; margin-bottom: 0.4rem; }
-    .step p { color: var(--ash); font-size: 0.95rem; }
+    .step p { color: var(--text-muted); font-size: 0.95rem; }
+    .step .terminal { margin-top: 0.75rem; }
+    .step .terminal pre { padding: 0.9rem 1.25rem; }
 
-    /* ── CTA band ───────────────────────────────── */
-    .cta-band {
-      background: var(--flare); color: var(--ink);
-      padding: 5.5rem 1.5rem; text-align: center;
-    }
+    /* ── CTA band: THE orange moment ── */
+    .cta-band { background: var(--flare); color: var(--ink); padding: 5.5rem 1.5rem; text-align: center; }
     .cta-band h2 { font-size: clamp(2rem, 5vw, 3.5rem); font-weight: 700; letter-spacing: -0.02em; }
     .cta-band p { font-size: 1.15rem; margin: 1rem auto 2.5rem; max-width: 36rem; font-weight: 500; }
-    .cta-band .btn-dark:hover { background: var(--paper); color: var(--ink); }
+    .cta-band .btn-ink:hover { background: var(--text); color: var(--ink); }
+    .cta-band .btn-ghost { color: var(--ink); border-color: var(--ink); }
+    .cta-band .btn-ghost:hover { background: var(--ink); color: var(--flare); border-color: var(--ink); }
 
-    /* ── Footer ─────────────────────────────────── */
-    footer { background: var(--ink); color: #8A8A8A; padding: 4rem 1.5rem 2.5rem; }
+    /* ── Footer ── */
+    footer { background: var(--ink); color: var(--text-muted); padding: 4rem 1.5rem 2.5rem; }
     .footer-inner { max-width: 72rem; margin: 0 auto; }
     .footer-top {
       display: flex; justify-content: space-between; align-items: flex-start;
       flex-wrap: wrap; gap: 3rem; padding-bottom: 3rem;
-      border-bottom: 1px solid rgba(255,255,255,0.1);
+      border-bottom: 1px solid var(--hairline);
     }
     .footer-brand p { max-width: 20rem; margin-top: 1rem; font-size: 0.9rem; line-height: 1.7; }
     .footer-cols { display: flex; gap: 4rem; flex-wrap: wrap; }
     .footer-col h4 {
-      font-family: var(--font-mono); color: var(--paper); font-size: 0.8rem;
+      font-family: var(--font-mono); color: var(--text); font-size: 0.8rem;
       text-transform: uppercase; letter-spacing: 0.12em; margin-bottom: 1rem;
     }
-    .footer-col a { display: block; color: #8A8A8A; text-decoration: none; font-size: 0.9rem; padding: 0.25rem 0; transition: color var(--dur-fast) ease; }
+    .footer-col a { display: block; color: var(--text-muted); text-decoration: none; font-size: 0.9rem; padding: 0.25rem 0; transition: color 150ms var(--ease-standard); }
     .footer-col a:hover { color: var(--flare); }
     .footer-bottom {
       display: flex; justify-content: space-between; align-items: center;
       flex-wrap: wrap; gap: 1rem; padding-top: 2rem;
       font-size: 0.8rem; font-family: var(--font-mono);
-    }
-
-    /* ── Scroll-driven (progressive) ────────────── */
-    @supports (animation-timeline: view()) {
-      .scrub-line {
-        animation: growline linear both;
-        animation-timeline: view(); animation-range: entry 20% entry 80%;
-      }
-      @keyframes growline { from { transform: scaleX(0); } to { transform: scaleX(1); } }
     }
   </style>
 </head>
@@ -398,7 +367,7 @@
     </div>
   </nav>
 
-  <!-- ═══════════ ACT 1: HOOK ═══════════ -->
+  <!-- ═══ ACT 1: HOOK ═══ -->
   <header class="hero">
     <div class="hero-grid-lines" aria-hidden="true"></div>
     <div class="hero-inner">
@@ -414,7 +383,7 @@
       </p>
       <div class="hero-actions">
         <a class="btn btn-flare" href="#install">pip install verdity</a>
-        <a class="btn btn-outline" href="https://github.com/Dream-Pixels-Forge/verdity" target="_blank" rel="noopener">
+        <a class="btn btn-ghost" href="https://github.com/Dream-Pixels-Forge/verdity" target="_blank" rel="noopener">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.305-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/></svg>
           View source
         </a>
@@ -429,13 +398,12 @@
     <div class="scroll-hint">Scroll</div>
   </header>
 
-  <!-- ═══════════ ACT 2: JOURNEY ═══════════ -->
+  <!-- ═══ ACT 2: JOURNEY ═══ -->
 
-  <!-- Features -->
   <section id="features" aria-labelledby="features-h">
     <div class="section-inner">
       <div class="kicker reveal">01 — Features</div>
-      <h2 class="section-title reveal" id="features-h">Six non-negotiables,<br>zero exceptions.</h2>
+      <h2 class="section-title reveal" id="features-h">Six non-negotiables, zero exceptions.</h2>
       <p class="section-lede reveal reveal-d1">Each constraint is enforced in code and tested. Violating one is a build failure, not a style choice.</p>
 
       <div class="grid-3" style="margin-top: 4rem;">
@@ -473,11 +441,10 @@
     </div>
   </section>
 
-  <!-- Pipeline -->
-  <section id="pipeline" class="section-alt" aria-labelledby="pipeline-h">
+  <section id="pipeline" class="section-raised" aria-labelledby="pipeline-h">
     <div class="section-inner">
       <div class="kicker reveal">02 — Pipeline</div>
-      <h2 class="section-title reveal" id="pipeline-h">Webhook to verdict<br>in five moves.</h2>
+      <h2 class="section-title reveal" id="pipeline-h">Webhook to verdict in five moves.</h2>
       <p class="section-lede reveal reveal-d1">Ingestion decoupled from processing. Specialists fan out in parallel. The router decides. Nothing posts without a gate.</p>
 
       <div class="pipeline" style="margin-top: 4rem;">
@@ -525,8 +492,7 @@
     </div>
   </section>
 
-  <!-- Terminal demo -->
-  <section class="section-dark" aria-labelledby="demo-h">
+  <section aria-labelledby="demo-h">
     <div class="section-inner">
       <div class="kicker reveal">03 — In practice</div>
       <h2 class="section-title reveal" id="demo-h">Run it on a real PR.</h2>
@@ -558,11 +524,10 @@
     </div>
   </section>
 
-  <!-- Architecture -->
-  <section id="architecture" aria-labelledby="arch-h">
+  <section id="architecture" class="section-raised" aria-labelledby="arch-h">
     <div class="section-inner">
       <div class="kicker reveal">04 — Architecture</div>
-      <h2 class="section-title reveal" id="arch-h">Nine constraints.<br>One audit trail.</h2>
+      <h2 class="section-title reveal" id="arch-h">Nine constraints. One audit trail.</h2>
 
       <div class="grid-2" style="margin-top: 4rem; align-items: start;">
         <div class="reveal">
@@ -583,61 +548,66 @@
               <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
               <span class="terminal-title">src/verdity — modules</span>
             </div>
-            <table class="mod-table" style="padding: 1rem;">
-              <tbody style="display: block; padding: 1rem 1.5rem 1.25rem;">
-                <tr style="display: flex;"><td class="mod-name">llm_gateway</td><td class="mod-desc">Multi-backend LLM interface — Ollama, vLLM, llama.cpp, OpenAI</td></tr>
-                <tr style="display: flex;"><td class="mod-name">agents/llm_enricher</td><td class="mod-desc">Explain / fix / risk enrichment, batched by concern</td></tr>
-                <tr style="display: flex;"><td class="mod-name">trust_calibration</td><td class="mod-desc">Learns from human feedback; LLM-assisted drift analysis</td></tr>
-                <tr style="display: flex;"><td class="mod-name">orchestrator</td><td class="mod-desc">Durable scatter-gather workflow</td></tr>
-                <tr style="display: flex;"><td class="mod-name">router</td><td class="mod-desc">Multi-signal confidence → routing decision</td></tr>
-                <tr style="display: flex;"><td class="mod-name">approval_queue</td><td class="mod-desc">SLA-tracked human review store</td></tr>
-                <tr style="display: flex;"><td class="mod-name">verification_gate</td><td class="mod-desc">Multi-stage fix verification</td></tr>
-                <tr style="display: flex;"><td class="mod-name">audit_store</td><td class="mod-desc">Append-only log, SHA-256 checksums</td></tr>
-                <tr style="display: flex;"><td class="mod-name">token_economics</td><td class="mod-desc">Per-call metering and budget caps</td></tr>
-              </tbody>
-            </table>
+            <div style="padding: 1rem 1.5rem 1.25rem;">
+              <table class="mod-table">
+                <tbody>
+                  <tr><td class="mod-name">llm_gateway</td><td class="mod-desc">Multi-backend LLM interface — Ollama, vLLM, llama.cpp, OpenAI</td></tr>
+                  <tr><td class="mod-name">agents/llm_enricher</td><td class="mod-desc">Explain / fix / risk enrichment, batched by concern</td></tr>
+                  <tr><td class="mod-name">trust_calibration</td><td class="mod-desc">Learns from human feedback; LLM-assisted drift analysis</td></tr>
+                  <tr><td class="mod-name">orchestrator</td><td class="mod-desc">Durable scatter-gather workflow</td></tr>
+                  <tr><td class="mod-name">router</td><td class="mod-desc">Multi-signal confidence → routing decision</td></tr>
+                  <tr><td class="mod-name">approval_queue</td><td class="mod-desc">SLA-tracked human review store</td></tr>
+                  <tr><td class="mod-name">verification_gate</td><td class="mod-desc">Multi-stage fix verification</td></tr>
+                  <tr><td class="mod-name">audit_store</td><td class="mod-desc">Append-only log, SHA-256 checksums</td></tr>
+                  <tr><td class="mod-name">token_economics</td><td class="mod-desc">Per-call metering and budget caps</td></tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- Install -->
-  <section id="install" class="section-alt" aria-labelledby="install-h">
+  <section id="install" aria-labelledby="install-h">
     <div class="section-inner">
       <div class="kicker reveal">05 — Install</div>
       <h2 class="section-title reveal" id="install-h">Verdict in five minutes.</h2>
 
       <div class="install-steps" style="margin-top: 4rem;">
-        <div class="step-list">
+        <div>
           <div class="step reveal">
+            <span class="step-num">01</span>
             <div>
               <h3>Install</h3>
               <p>Python 3.11+. One dependency pull, no native build steps.</p>
-              <pre class="terminal" style="margin-top: 0.75rem;"><pre style="padding: 0.9rem 1.25rem;"><span class="t-prompt">$</span> <span class="t-cmd">pip install verdity==0.5.0</span></pre></pre>
+              <div class="terminal"><pre><span class="t-prompt">$</span> <span class="t-cmd">pip install verdity==0.5.0</span></pre></div>
             </div>
           </div>
           <div class="step reveal reveal-d1">
+            <span class="step-num">02</span>
             <div>
               <h3>Configure</h3>
               <p>GitHub App credentials via environment — never committed.</p>
-              <pre class="terminal" style="margin-top: 0.75rem;"><pre style="padding: 0.9rem 1.25rem;"><span class="t-prompt">$</span> <span class="t-cmd">cp .env.example .env</span>
+              <div class="terminal"><pre><span class="t-prompt">$</span> <span class="t-cmd">cp .env.example .env</span>
 <span class="t-out"># WEBHOOK_HMAC_SECRET, GITHUB_APP_ID,</span>
-<span class="t-out"># GITHUB_APP_INSTALLATION_ID, GITHUB_APP_PRIVATE_KEY</span></pre></pre>
+<span class="t-out"># GITHUB_APP_INSTALLATION_ID, GITHUB_APP_PRIVATE_KEY</span></pre></div>
             </div>
           </div>
           <div class="step reveal reveal-d2">
+            <span class="step-num">03</span>
             <div>
               <h3>Run the gateway</h3>
               <p>FastAPI ingestion, stateless, sub-second responses.</p>
-              <pre class="terminal" style="margin-top: 0.75rem;"><pre style="padding: 0.9rem 1.25rem;"><span class="t-prompt">$</span> <span class="t-cmd">uvicorn verdity.gateway.app:app --port 8000</span></pre></pre>
+              <div class="terminal"><pre><span class="t-prompt">$</span> <span class="t-cmd">uvicorn verdity.gateway.app:app --port 8000</span></pre></div>
             </div>
           </div>
           <div class="step reveal reveal-d3">
+            <span class="step-num">04</span>
             <div>
               <h3>Review a PR</h3>
               <p>CLI, MCP, or webhook — same deterministic pipeline.</p>
-              <pre class="terminal" style="margin-top: 0.75rem;"><pre style="padding: 0.9rem 1.25rem;"><span class="t-prompt">$</span> <span class="t-cmd">verdity-review run --owner acme --repo widgets --pr 42</span></pre></pre>
+              <div class="terminal"><pre><span class="t-prompt">$</span> <span class="t-cmd">verdity-review run --owner acme --repo widgets --pr 42</span></pre></div>
             </div>
           </div>
         </div>
@@ -665,7 +635,7 @@
     <span class="t-key">trigger_on_drift</span>: <span class="t-ok">true</span>
     <span class="t-key">min_samples</span>: <span class="t-cmd">20</span></pre>
           </div>
-          <p style="color: var(--ash); font-size: 0.9rem; margin-top: 1rem;">
+          <p style="color: var(--text-muted); font-size: 0.9rem; margin-top: 1rem;">
             The LLM never touches <code class="inline">finding.confidence</code> at runtime. It enriches context and suggests weight changes — the router stays deterministic.
           </p>
         </div>
@@ -673,14 +643,14 @@
     </div>
   </section>
 
-  <!-- ═══════════ ACT 3: RESOLUTION ═══════════ -->
+  <!-- ═══ ACT 3: RESOLUTION ═══ -->
 
   <div class="cta-band">
     <h2>Stop guessing.<br>Start calibrating.</h2>
     <p>Verdity is MIT-licensed, self-hosted, and reviewed by its own pipeline.</p>
     <div style="display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap;">
-      <a class="btn btn-dark" href="https://pypi.org/project/verdity/" target="_blank" rel="noopener">Get v0.5.0 from PyPI</a>
-      <a class="btn btn-outline-dark" href="https://github.com/Dream-Pixels-Forge/verdity" target="_blank" rel="noopener">Read the source</a>
+      <a class="btn btn-ink" href="https://pypi.org/project/verdity/" target="_blank" rel="noopener">Get v0.5.0 from PyPI</a>
+      <a class="btn btn-ghost" href="https://github.com/Dream-Pixels-Forge/verdity" target="_blank" rel="noopener">Read the source</a>
     </div>
   </div>
 
@@ -688,12 +658,12 @@
     <div class="footer-inner">
       <div class="footer-top">
         <div class="footer-brand">
-          <a href="#" class="brand" style="color: var(--paper);"><span class="bracket"><</span>verdity<span class="bracket">/></span></a>
+          <a href="#" class="brand" style="color: var(--text);"><span class="bracket" style="color: var(--flare);"><</span>verdity<span class="bracket" style="color: var(--flare);">/></span></a>
           <p>Deterministic PR review with calibrated trust. Every finding earns its confidence through evidence — never through a self-report.</p>
           <div style="display: flex; gap: 0.5rem; margin-top: 1.5rem; flex-wrap: wrap;">
             <span class="badge badge-flare">v0.5.0</span>
-            <span class="badge" style="border-color: rgba(255,255,255,0.3); color: #B8B8B8;">Python 3.11+</span>
-            <span class="badge" style="border-color: rgba(255,255,255,0.3); color: #B8B8B8;">MIT</span>
+            <span class="badge badge-ghost">Python 3.11+</span>
+            <span class="badge badge-ghost">MIT</span>
           </div>
         </div>
         <div class="footer-cols">
@@ -727,7 +697,7 @@
   </footer>
 
   <script>
-    // Scroll progress bar
+    // Scroll progress bar (flare accent)
     const progress = document.getElementById('progress');
     const updateProgress = () => {
       const max = document.documentElement.scrollHeight - window.innerHeight;
@@ -736,7 +706,7 @@
     window.addEventListener('scroll', updateProgress, { passive: true });
     updateProgress();
 
-    // Reveal on intersect
+    // Reveal choreography: one stagger per section
     const io = new IntersectionObserver((entries) => {
       entries.forEach((e) => {
         if (e.isIntersecting) { e.target.classList.add('visible'); io.unobserve(e.target); }
