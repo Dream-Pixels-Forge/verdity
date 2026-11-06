@@ -47,3 +47,5 @@ tests/.verdity-tests/
 
 # Node (for any frontend tooling)
 node_modules/
+worktrees/
+.workstreams.json

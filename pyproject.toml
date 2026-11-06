@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "verdity"
-version = "0.4.17"
+version = "0.5.1"
 description = "Verdity — AI-Powered Pull Request Review System with MCP integration, full-codebase context, agentic fix mode, multi-platform webhooks, and adversarial review"
 readme = "README.md"
 license = {text = "MIT"}
@@ -49,6 +49,7 @@ dependencies = [
     "pyyaml>=6.0.0",
     "redis>=5.0.0",
     "celpy>=0.0.1",
+    "click>=8.1",
 ]
 
 [project.optional-dependencies]
@@ -66,6 +67,7 @@ verdity = "verdity.worker:main"
 verdity-worker = "verdity.worker:run_entrypoint"
 verdity-enforce = "verdity.cli.enforce:enforce"
 verdity-review = "verdity.cli.review:review"
+verdity-enrich = "verdity.cli.enrich:main"
 
 [project.urls]
 Homepage = "https://github.com/Dream-Pixels-Forge/verdity"

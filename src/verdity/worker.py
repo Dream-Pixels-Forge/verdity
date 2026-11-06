@@ -26,7 +26,7 @@ from verdity.event_queue import EventQueue
 from verdity.orchestrator import Orchestrator
 from verdity.schemas import QueueEnvelope
 
-if TYPE_CHECKING:  # pragma: no cover - import for type checkers only
+if TYPE_CHECKING:  # TYPE_CHECKING
     from verdity.approval_queue import ApprovalQueueStore
 
 logger = logging.getLogger(__name__)
@@ -98,7 +98,7 @@ class Worker:
                         logger.info("SLA escalation: %d items escalated", len(escalated))
             except asyncio.CancelledError:
                 break
-            except Exception:  # pragma: no cover
+            except Exception:
                 logger.exception("SLA escalation check failed")
 
     async def check_sla_escalations(self) -> list[dict[str, Any]]:
@@ -147,7 +147,7 @@ class Worker:
             for t in done:
                 try:
                     t.result()
-                except Exception as exc:  # pragma: no cover
+                except Exception as exc:
                     logger.error("Background task errored: %s", exc)
 
         task = asyncio.create_task(self._process_one(envelope))
@@ -224,7 +224,7 @@ def parse_args(argv: list[str] | None = None) -> Any:
     return parser.parse_args(argv)
 
 
-async def _run_worker(args: Any) -> None:  # pragma: no cover
+async def _run_worker(args: Any) -> None:
     """Initialize and run the worker loop. Exported for testability."""
     # Initialize queue and orchestrator
     from verdity.audit_store import AuditStore
@@ -309,5 +309,5 @@ def run_entrypoint(argv: list[str] | None = None) -> None:
     main(argv)
 
 
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":  # pragma: no cover - module entry point
     main()

@@ -1,177 +1,311 @@
-# Handoff: Verdity Coverage Improvement Project
+# Handoff: Verdity
 
-**Date**: 2026-10-03  
-**Status**: 99.34% Coverage Achieved (1012 tests passing)  
-**Branch**: master (ahead of origin by 3 commits)
-
----
-
-## 🎯 Executive Summary
-
-Successfully improved test coverage from **93.91% → 99.34%** (+5.43%) with **+126 new tests** (886 → 1012 passing). All core business logic now at 100% coverage. Remaining 28 lines are extremely specific edge cases.
+**Date**: 2026-10-05
+**Version**: 0.4.17
+**Branch**: `chore/honest-coverage` (local), tracking `origin/chore/honest-coverage`
+**State**: one open PR awaiting human review (green), one merged.
 
 ---
 
-## ✅ Completed Phases
+## Executive summary
 
-| Phase | Target | Coverage | Tests Added | Status |
-|-------|--------|----------|-------------|--------|
-| **Phase 1** | Enforcement Engine | 84% → **100%** | 14 tests | ✅ Done |
-| **Phase 2** | GitHub Client | 93% → **100%** | 8 tests | ✅ Done |
-| **Phase 6** | Version Module | 69% → **100%** | 3 tests | ✅ Done |
-| **Phase 3** | MCP Server | 70% → **100%** | 36 tests | ✅ Done |
-| **Phase 5** | Approval Queue / Worker | 51% → **100%** | ~30 tests | ✅ Done |
-| **Phase 4** | CLI Commands | 30-89% → **100%** | ~45 tests | ✅ Done |
+Verdity's `master` CI had been red. It is now green — and the coverage gate that
+gated it turned out to be reporting a number that was partly fiction.
 
-**Total**: +126 tests (886 → 1012), coverage 93.91% → 99.34%
+The headline: `master` claimed **100% coverage** because **114 `# pragma: no cover`
+comments** told coverage not to look. Stripping them revealed the real figure was
+**98.776%** — 55 uncovered lines across 7 files, mostly reachable logic that had
+been excluded rather than tested.
 
----
+Closing that gap surfaced **two real bugs**, a **CI-only failure mode** invisible
+from a single interpreter, and a body of genuinely dead code.
 
-## 📊 Remaining 28 Uncovered Lines (99.34%)
-
-| Module | Lines | Coverage | Details |
-|--------|-------|----------|---------|
-| `worker.py` | 18 | 86% | SLA escalation loop, async cancellation handling |
-| `event_queue.py` | 4 | 95% | Not-connected error path |
-| `gateway/app.py` | 1 | 99% | No allowlist fallback |
-| `platforms/bitbucket.py` | 2 | 98% | Missing secret config warning |
-| `platforms/gitlab.py` | 2 | 98% | Missing secret config warning |
-| `verification_gate.py` | 1 | 99% | Escalation scheduled flag |
-
-**Note**: These are extremely specific edge cases requiring disproportionate effort. Core business logic is **100% covered**.
+| | before | after |
+|---|---|---|
+| Pragmas hiding code | 114 | **3** |
+| Real coverage | 98.776% | **100%** |
+| Tests | 1062 | **1124** |
+| Warnings | 15 | **0** |
+| `master` CI | 0/7 jobs passing | **7/7** |
 
 ---
 
-## 📁 Files Modified/Created
+## Repository state
 
-### Test Files (New/Extended)
-| File | Status | Tests |
-|------|--------|-------|
-| `tests/test_cli_review.py` | Created | 31 |
-| `tests/test_cli_enforce.py` | Extended | 23 |
-| `tests/test_mcp_server.py` | Extended | 47 |
-| `tests/test_mcp_server_extra.py` | Created | 18 |
-| `tests/test_version.py` | Created | 11 |
-| `tests/test_enforcement.py` | Extended | 73 |
-| `tests/test_github_client.py` | Extended | 48 |
-| `tests/test_version.py` | Extended | 11 |
-| `tests/test_enforcement.py` | Extended | 73 |
-
-### Source Code Improvements
-| File | Changes |
-|------|---------|
-| `src/verdity/enforcement.py` | Fixed boolean handling in `substitute_variables()` |
-| `src/verdity/github_client.py` | Added `get_pr_diff()` method |
-| `src/verdity/mcp_server.py` | Added 4 new MCP tools |
-| `src/verdity/cli/review.py` | New CLI module |
-| `src/verdity/cli/enforce.py` | Extended with error handling |
-
-### Documentation
-| File | Purpose |
-|------|---------|
-| `GOAL-100-COVERAGE.md` | Coverage gap analysis & plan |
-| `PHASE1_COMPLETE.md` | Phase 1 completion summary |
-| `.prides/issues/ISS-001-008.md` | 8 detailed issue files |
-
----
-
-## 🛠 New Tool: Silent Failure Hunter
-
-Created **`silent-failure-hunter`** skill at `/home/dimona/.config/opencode/skills/silent-failure-hunter/`
-
-**Capabilities**:
-- Detects swallowed exceptions, fake implementations, missing error paths
-- Finds async pitfalls, hardcoded returns, untested error paths
-- Commands: `scan`, `validate-coverage`, `find-fakes`
-- Output: Structured JSON reports with severity, category, suggested fixes
-- **Integration**: Pairs with `pipeline-orchestrator` - observational only
-
-**Usage**:
-```bash
-# Scan for silent failures
-silent-failure-hunter scan --project . --output report.json
-
-# Find fake implementations
-silent-failure-hunter find-fakes --module src/verdity/mcp_server.py
-
-# Validate coverage authenticity
-silent-failure-hunter validate-coverage --threshold 100
+```
+master   5872a68  fix(ci): restore green master — SLA bug, coverage gate, ruff lint (#62)
+HEAD     befa317  test(gateway): cover both webhook handlers on Python 3.11 too
+         857ffcf  test(gateway): stop lifespan tests corrupting shared app.state
+         d1271ec  test: make the 100% coverage gate honest (114 pragmas -> 3)
 ```
 
+### PRs (mine)
+
+| PR | Title | Checks |
+|---|---|---|
+| [#62](https://github.com/Dream-Pixels-Forge/verdity/pull/62) | **MERGED** — restored green master | 7/7 |
+| [#64](https://github.com/Dream-Pixels-Forge/verdity/pull/64) | Make the 100% coverage gate honest | 7/7 |
+
+`#64` is `CLEAN`, mergeable, and **independent of #62**. It does not overlap
+`#36`–`#39`.
+
+### PR #61 was closed, deliberately
+
+`#61` (review CLI auth + orchestrator wiring) was closed rather than merged. Its
+five commits are already in `master` via #62's squash, and merging the branch would
+have **regressed** master — it still carried the orphaned dead code and the broken
+`post_check_run()` call. Reasoning is recorded on the PR.
+
 ---
 
-## 🔄 Git Status
+## What was actually fixed
+
+### 1. SLA escalation fired immediately (the important one)
+
+`check_sla_escalations()` compared SQLite's `datetime(created_at, ...)` — which
+yields `YYYY-MM-DD HH:MM:SS` — against a raw ISO-8601 cutoff containing `T` and
+`+00:00`. The comparison is textual, and a space sorts before `T`, so **every
+pending approval item looked overdue regardless of its SLA**.
+
+Fixed by wrapping the cutoff in `datetime()`. The regression test
+`test_sla_boundary_respects_both_directions` pins both directions and was verified
+to fail against the old query.
+
+### 2. Three MCP bugs on the GitHub posting path
+
+Found by running `review run` against a real PR instead of only against mocks.
+AsyncMock invents any attribute, so all three were invisible to the suite:
+
+- **`post_to_github` crashed on every review with findings.** `Finding` needs 7 more
+  fields than the flattened dict provides. Since `--post-comment` defaults to
+  **True**, `verdity-review run` failed on its default path for any PR with
+  findings — the exact case the tool exists to report.
+- **`client.post_check_run()` does not exist.** The real method is
+  `create_check_run()`. Added a guard test asserting method names against the real
+  class so a mock cannot hide this again.
+- **`apply_fix` was an advertised MCP tool that could only fail.** No such method on
+  `GitHubClient`, plus an unauthenticated client. Now returns an explicit "not
+  implemented" instead of an `AttributeError`. Implementing the write path is real
+  work deserving its own PR.
+
+### 3. Prompt-injection findings always reported line 1
+
+The scanner located hits by searching each line for the pattern *name*
+(`ignore_instructions`) — an internal label that never appears in source text, since
+the payload reads `ignore all previous instructions`. The comparison could never
+match, so every finding fell through to `line_start = 1`. An injection on line 200
+was reported as line 1.
+
+`PromptInjectionResult` now carries `match_start`, and the scanner resolves the line
+from the offset.
+
+### 4. Dead code removed
+
+- `budget_enforcer.get_spend_summary()` held a stray copy of the tail of
+  `check_specialist_budget()` **after its `return`**, referencing `active` and
+  `specialist_id` — names that do not exist in that scope.
+- `mcp_server._review_full()` / `_verdity_review()` each built a `SpecialistContext`
+  and `ReviewPolicy` that was never passed on — leftovers from the earlier wiring
+  change to the real orchestrator API.
+- `_parse_ip_allowlist` had a "bare IP without CIDR" fallback behind `ip_network()`,
+  which already accepts `10.0.0.1`. Verified unreachable: no input exists where
+  `ip_address()` succeeds but `ip_network()` fails.
+- `get_repo_dashboard` had an unreachable guard (`get_repo_summary` raises first).
+
+### 5. A test that lied
+
+`test_cli_uses_enforcement_engine` was marked `@pytest.mark.asyncio` but invokes
+`enforce test`, a sync Click command that calls `asyncio.run()`. Inside a running
+loop that raises `RuntimeError`, the command aborted, and the test **still passed**
+because its only assertion was that the engine had been *constructed*. Now runs
+synchronously and asserts the command completed. Verified by injecting a crash.
+
+### 6. runpy double-import (real CLI, not just tests)
+
+`verdity/cli/__init__.py` eagerly imported both submodules, so
+`python -m verdity.cli.review` imported the module twice. The package now re-exports
+nothing. A lazy `__getattr__` was **rejected**: Python rebinds the attribute to the
+*module* once the submodule is imported, making the same name resolve to a `Group`
+or a `module` depending on import order.
+
+### 7. Warnings: 15 → 0
+
+`RuntimeWarning` / `DeprecationWarning` / `PendingDeprecationWarning` are now
+promoted to errors in pytest config. 12 of the 15 came from mocking `Orchestrator`
+as an `AsyncMock` when `register_specialist()` and `get_run()` are synchronous.
+
+---
+
+## The 3 remaining pragmas
+
+All three state their reason inline. Nothing is excluded to reach the number.
+
+| Location | Reason |
+|---|---|
+| `worker.py` `__main__` guard | module entry point |
+| `gateway/app.py` `if platform == "github"` | shadowed by the dedicated `/webhooks/github` route registered earlier |
+| `gateway/app.py` `else` (secret) | `platform_map` already rejected unknown values |
+
+---
+
+## ⚠️ Environment gotchas that cost real time
+
+### Python 3.11 needs its own verification
+
+**The single most important lesson from this session.** `master` CI runs a 6-job
+matrix (ubuntu/windows × py3.11/3.12/3.13). The default local interpreter is 3.12,
+and **every local run agreed with the passing CI jobs while 3.11 failed at
+98.86%**. I reported a commit as fixed when it was not.
+
+Root cause was upstream: on 3.11 coverage's tracer loses execution across the first
+`await` inside a `BaseHTTPMiddleware`-dispatched ASGI handler
+([coveragepy#1082](https://github.com/coveragepy/coveragepy/issues/1082),
+[#1911](https://github.com/coveragepy/coveragepy/issues/1911)). Bisecting executed
+lines proved it — line 588 recorded, line 590 not, despite the handler returning
+**202** on 3.11. Ruled out first: pytest 9.0.3 vs 9.1.1, coverage 7.16.0 vs 7.16.2,
+and `COVERAGE_CORE=sysmon`/`ctrace`.
+
+Fixed by invoking both handlers **directly** (synthetic Starlette `Request`),
+bypassing the middleware — rather than pragmas, which would hide them. This added
+14 tests which surfaced real 3.11-only gaps: bitbucket secret lookup,
+unconfigured-secret 401, invalid-JSON and normalization 400s, derived delivery IDs,
+replay detection on both routes.
+
+**A 100% gate across a matrix is only meaningful if every job is exercised
+locally.** Both interpreters are now installed:
 
 ```bash
-# Current state
-git status
-# On branch master, ahead of origin/master by 3 commits
-
-# Recent commits
-e790f9d - chore: bump version to v0.4.14
-1744150 - feat: coverage improvements - CLI 100%, MCP 100%, approval queue 100%
-4ad078b - feat: coverage improvements - MCP Server 100%, approval queue 100%
-0e53c9f - feat: coverage improvements - enforcement 100%, github client 100%, version 100%
+python3.11 -m pip install -e ".[dev]" --break-system-packages   # needed once
+python3.11 -m pytest tests/ -q                                 # verify on 3.11
 ```
 
----
+### Do not `git reset --hard` in this working tree
 
-## 🚀 Next Steps (If Needed)
+There are **30 pre-existing uncommitted changes** (28 deleted paths under
+`skills/workstreams/` plus 2 modified `dev-notes` files: `GOAL.md` and
+`SECURITY.md`). I destroyed them once with `reset --hard` during this session and
+recovered them from a dangling stash commit.
 
-### To Push Remaining Coverage to 100%
-The remaining 28 lines require:
-1. **Worker SLA/escalation paths** - Needs integration test with time manipulation
-2. **Event queue not-connected** - Requires mock infrastructure
-3. **Gateway allowlist fallback** - Needs config mocking
-4. **Platform secret warnings** - Needs missing config tests
-4. **Verification gate escalation** - Needs time manipulation
+This file (`HANDOFF.md`) is a 31st modification made by hand — it is **not** part of
+that pre-existing set, and is safe to commit or discard independently.
 
-**Estimated effort**: ~20 hours for diminishing returns.
-
----
-
-## 🔑 Key Commands for Continuation
+Stash carefully: `git stash push -u` would also sweep up this file and the untracked
+`dev-notes/*.md`, so restore the exact set rather than assuming.
 
 ```bash
-# Run all tests
-cd /home/dimona/Dream-Pixels-Forge/Dev/cli/verdity
-python3 -m pytest tests/ -q
-
-# Check coverage
-python3 -m pytest tests/ --cov=src/verdity --cov-report=term-missing --cov-fail-under=100
-
-# Run silent failure hunter
-PYTHONPATH=/home/dimona/.config/opencode/skills/silent-failure-hunter \
-  python3 -m silent_failure_hunter scan --project src/verdity --output report.json
-
-# Find fake implementations
-PYTHONPATH=/home/dimona/.config/opencode/skills/silent-failure-hunter \
-  python3 -m silent_failure_hunter find-fakes --module src/verdity/mcp_server.py
-
-# Run specific test modules
-python3 -m pytest tests/test_cli_review.py tests/test_cli_enforce.py -v
+git stash push -u -m 'preexisting-30'
+git checkout -b <branch>
+# ... work ...
+git stash pop
 ```
 
+To confirm the pre-existing set is intact, it should show 28 `D` and 2 `M`
+(`dev-notes/GOAL.md`, `dev-notes/SECURITY.md`), plus this file:
+
+```bash
+git status --short | grep -c '^ D'   # 28
+git status --short | grep '^ M'       # GOAL.md, HANDOFF.md, SECURITY.md
+```
+
+### `verdity.gateway.app` resolves to the FastAPI instance, not the module
+
+`verdity/gateway/__init__.py` does `from verdity.gateway.app import app`, which
+shadows the submodule of the same name. `import verdity.gateway.app as m` gives you a
+`FastAPI` object, and `m.app` raises `AttributeError`.
+
+```python
+import importlib
+gateway_module = importlib.import_module("verdity.gateway.app")
+```
+
+The same shadowing existed in `verdity.cli`, which is why that package re-exports
+nothing now.
+
+### AsyncMock hides non-existent methods
+
+The single reason three MCP bugs survived a 100%-coverage suite: an `AsyncMock`
+will happily invent any attribute, so a call to a method that does not exist passes
+every mocked test. When mocking a collaborator, assert the method names exist on the
+real class (see `TestMcpUsesRealGitHubClientApi`).
+
 ---
 
-## 📋 Issue Tracking
+## Known open issues
 
-Open issues in `.prides/issues/`:
-- **ISS-001**: Enforcement Engine (DONE)
-- **ISS-002**: GitHub Client (DONE)
-- **ISS-003**: MCP Server (DONE)
-- **ISS-004**: CLI Commands (DONE)
-- **ISS-005**: Worker/Gateway/Platforms (DONE)
-- **ISS-006**: Version Module (DONE)
-- **ISS-007**: Approval Queue (DONE)
-- **ISS-008**: Test Infrastructure (DONE)
+### `coverage-gate.yml` still fails on master — pre-existing, unrelated
 
-All blocking issues resolved. No open blockers.
+```yaml
+pip install -e /home/dimona/.config/opencode/skills/silent-failure-hunter
+```
+
+A **hardcoded absolute path to a machine-local skill**. It can never resolve in CI and
+has failed on every `master` commit, including before this work. GitHub reports it as
+"likely failed because of a workflow file issue".
+
+Fix by vendoring the tool into the repo or dropping the step. Worth its own small PR.
+Note it uses `--cov-fail-under=95` while pytest uses `100`.
+
+### PR #38 needs a rebase — commented, awaiting its author
+
+33 commits / ~10 days stale. Conflicts in `mcp_server.py`, `test_mcp_server.py`,
+`test_mcp_server_extra.py`. A naive merge would revert ~498 lines of #62's work. Its
+`_models.py` `summary` field merges cleanly and is independently valuable. Analysis
+posted; the author has the decision.
+
+### Scanner matches patterns inside prose — filed as [#63](https://github.com/Dream-Pixels-Forge/verdity/issues/63)
+
+`_VULN_PATTERNS` searches raw text without stripping comments/docstrings. On lmux PR
+#35 the pattern `r"\.\./"` matched the docstring of the function that **rejects**
+`../`, producing a false "medium Path Traversal" on a path-traversal *fix*. Fix
+option: tokenize and blank out matched regions for `.py`, preserving line numbers.
+
+### Other open verdity PRs (not mine, untouched)
+
+`#36`, `#37`, `#38`, `#39`, `#59`, `#60`.
 
 ---
 
-## 🎯 Final Verdict
+## Check-run posting needs GitHub App auth
 
-**Project is production-ready** with 99.34% authentic coverage. Core business logic (agents, orchestrator, semantic_index, token_economics, trust_calibration, verification_gate, router, schemas) all at **100%**. Remaining gaps are in edge-case infrastructure code requiring disproportionate effort for minimal gain.
+A PAT gets `403 You must authenticate via a GitHub App`. Posting Verdity results as a
+PR comment works; posting a check run needs org-owned App credentials.
 
-**Recommendation**: Ship v0.4.14. Remaining coverage work can be done incrementally in maintenance cycles.
+---
+
+## lmux (separate repo) — done
+
+| PR | Status |
+|---|---|
+| [#34](https://github.com/Dream-Pixels-Forge/lmux/pull/34) rate-limiter mutex | **MERGED**, CI green |
+| [#35](https://github.com/Dream-Pixels-Forge/lmux/pull/35) tar-escape rejection | **MERGED**, CI green |
+
+`master` @ `2717706`, 4/4 CI jobs green. Both findings from the Verdity review of #35
+were triaged as **false positives**, with reasoning posted on the PR.
+
+Open: `#32` (flatpak runtime), `#33` (handoff doc).
+
+---
+
+## Suggested next steps
+
+1. **Human review and merge #64.** It is green and independent.
+2. **Fix `coverage-gate.yml`** — vendor `silent-failure-hunter` or drop the step.
+   Small, self-contained PR.
+3. **PR #38** — offer to rebase and hand-resolve, or port the `summary` field alone.
+4. **File a workstream issue** for `apply_fix` (the MCP write path) if it is wanted.
+5. Reconcile `--cov-fail-under`: pytest says 100, coverage-gate says 95.
+
+---
+
+## Verification commands
+
+```bash
+# Verdity — run BOTH interpreters
+PYTHONPATH=src python3.11 -m pytest tests/ -q    # must be 100%
+PYTHONPATH=src python3    -m pytest tests/ -q    # must be 100%
+
+python3 -m ruff check src/ tests/
+python3 -m ruff format --check src/ tests/
+```
+
+Expected: `1124 passed`, `100.00%`, 0 warnings, on both.
