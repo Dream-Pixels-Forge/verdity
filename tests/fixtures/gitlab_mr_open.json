@@ -1,0 +1,137 @@
+{
+  "object_kind": "merge_request",
+  "event_name": "merge_request",
+  "user": {
+    "name": "Alex Garcia",
+    "username": "agarcia",
+    "avatar_url": "https://gitlab.example.com/uploads/-/system/user/avatar.png"
+  },
+  "project": {
+    "id": 2,
+    "name": "Flight Management",
+    "description": "Flight management application",
+    "web_url": "https://gitlab.example.com/flightjs/flight-management",
+    "avatar_url": null,
+    "git_ssh_url": "git@gitlab.example.com:flightjs/flight-management.git",
+    "git_http_url": "https://gitlab.example.com/flightjs/flight-management.git",
+    "namespace": "Flightjs",
+    "visibility_level": 0,
+    "path_with_namespace": "flightjs/flight-management",
+    "default_branch": "main",
+    "ci_config_path": null,
+    "homepage": "https://gitlab.example.com/flightjs/flight-management"
+  },
+  "repository": {
+    "name": "Flight Management",
+    "url": "git@gitlab.example.com:flightjs/flight-management.git",
+    "description": "Flight management application",
+    "homepage": "https://gitlab.example.com/flightjs/flight-management"
+  },
+  "object_attributes": {
+    "id": 93,
+    "iid": 16,
+    "project_id": 2,
+    "title": "Add input validation to booking form",
+    "description": "This merge request adds email format validation to the booking form.",
+    "state": "opened",
+    "created_at": "2026-01-16T05:56:22.000Z",
+    "updated_at": "2026-01-16T05:56:25.000Z",
+    "merged_by": null,
+    "merged_at": null,
+    "closed_by": null,
+    "closed_at": null,
+    "target_branch": "main",
+    "source_branch": "feature/booking-validation",
+    "source_project_id": 2,
+    "target_project_id": 2,
+    "wip": false,
+    "head_commit_sha": null,
+    "base_commit_sha": null,
+    "start_sha": null,
+    "diff_refs": null,
+    "last_commit": {
+      "id": "e59094b8de0f2f91abbe4760a52d9137260252d8",
+      "message": "Add email format validation",
+      "title": "Add email format validation",
+      "timestamp": "2026-01-16T05:01:10+00:00",
+      "url": "https://gitlab.example.com/flightjs/flight-management/commit/e59094b8de0f2f91abbe4760a52d9137260252d8",
+      "author": {
+        "name": "Alex Garcia",
+        "email": "agarcia@example.com"
+      }
+    },
+    "assignee_ids": [1],
+    "assignee_id": 1,
+    "reviewer_ids": [25],
+    "reviewer_id": null,
+    "author_id": 1,
+    "source": {
+      "id": 2,
+      "name": "Flight Management",
+      "description": "Flight management application",
+      "web_url": "https://gitlab.example.com/flightjs/flight-management",
+      "avatar_url": null,
+      "git_ssh_url": "git@gitlab.example.com:flightjs/flight-management.git",
+      "git_http_url": "https://gitlab.example.com/flightjs/flight-management.git",
+      "namespace": "Flightjs",
+      "visibility_level": 0,
+      "path_with_namespace": "flightjs/flight-management",
+      "default_branch": "main",
+      "ci_config_path": null
+    },
+    "target": {
+      "id": 2,
+      "name": "Flight Management",
+      "description": "Flight management application",
+      "web_url": "https://gitlab.example.com/flightjs/flight-management",
+      "avatar_url": null,
+      "git_ssh_url": "git@gitlab.example.com:flightjs/flight-management.git",
+      "git_http_url": "https://gitlab.example.com/flightjs/flight-management.git",
+      "namespace": "Flightjs",
+      "visibility_level": 0,
+      "path_with_namespace": "flightjs/flight-management",
+      "default_branch": "main",
+      "ci_config_path": null
+    },
+    "work_in_progress": false,
+    "total_time_spent": 0,
+    "time_change": 0,
+    "human_total_time_spent": null,
+    "human_time_change": null,
+    "human_time_estimate": null,
+    "author": {
+      "id": 1,
+      "name": "Alex Garcia",
+      "username": "agarcia",
+      "state": "active",
+      "avatar_url": "https://gitlab.example.com/uploads/-/system/user/avatar.png",
+      "web_url": "https://gitlab.example.com/agarcia"
+    },
+    "action": "open",
+    "merge_status": "checking",
+    "detailed_merge_status": "checking",
+    "labels": []
+  },
+  "labels": [],
+  "changes": {
+    "title": {
+      "previous": "",
+      "current": "Add input validation to booking form"
+    },
+    "description": {
+      "previous": "",
+      "current": "This merge request adds email format validation to the booking form."
+    },
+    "source_branch": {
+      "previous": "",
+      "current": "feature/booking-validation"
+    },
+    "target_branch": {
+      "previous": "",
+      "current": "main"
+    }
+  },
+  "href": "https://gitlab.example.com/flightjs/flight-management/merge_requests/16",
+  "task_statuses": [],
+  "task_count": 0
+}

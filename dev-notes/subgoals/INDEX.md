@@ -27,8 +27,8 @@ Work through these **one at a time, in order**. Each subgoal has its own branch,
 | 06 | [Trusted-proxy client IP (XFF spoofing)](SG-06-trusted-proxy-client-ip.md) | High · security | M | 05 | ☑ |
 | 07 | [Record delivery ID after enqueue](SG-07-delivery-id-at-least-once.md) | High · data loss | S | 06 | ☐ |
 | 08 | [Bitbucket `X-Request-UUID` + deterministic fallback](SG-08-platform-delivery-ids.md) | High | S | 07 | ☐ |
-| 09 | [Ignore non-reviewable events](SG-09-trigger-type-mapping.md) | High | S | 08 | ☐ |
-| 10 | [GitLab MR field mapping (check first)](SG-10-gitlab-payload-fields.md) | High if confirmed | S | 09 | ☐ |
+| 09 | [Ignore non-reviewable events](SG-09-trigger-type-mapping.md) | High | S | 08 | ☑ #71 |
+| 10 | [GitLab MR field mapping (check first)](SG-10-gitlab-payload-fields.md) | High if confirmed | S | 09 | ☑ #72 |
 | 11 | [Worker backoff + per-repo ordering](SG-11-worker-backoff-and-ordering.md) | High | M | 01 | ☐ |
 | 12 | [Gateway and worker share the queue](SG-12-queue-config-unification.md) | High | S | 11 | ☐ |
 | 13 | [Orchestrator lifecycle (run cache, SLA, timeouts)](SG-13-orchestrator-lifecycle.md) | Medium | S | 12 | ☐ |

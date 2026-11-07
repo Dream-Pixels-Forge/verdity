@@ -1,0 +1,35 @@
+{
+  "pullrequest": {
+    "id": 1,
+    "title": "Test PR",
+    "description": "Test description",
+    "source": {
+      "commit": {
+        "hash": "abc123"
+      },
+      "branch": {
+        "name": "feature"
+      }
+    },
+    "destination": {
+      "commit": {
+        "hash": "def456"
+      },
+      "branch": {
+        "name": "main"
+      }
+    },
+    "author": {
+      "username": "u"
+    },
+    "links": {}
+  },
+  "repository": {
+    "name": "repo",
+    "owner": {
+      "uuid": "owner-uuid"
+    }
+  },
+  "actor": {},
+  "event": "pullrequest_created"
+}

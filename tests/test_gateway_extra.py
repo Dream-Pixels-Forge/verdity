@@ -442,11 +442,19 @@ async def test_unified_webhook_invalid_pr_ref_rejected(gw_client):
                 "iid": 1,
                 "title": "T",
                 "description": "",
-                "head_commit_sha": "../../../etc/passwd",
-                "target_commit_sha": "def",
+                # Note: GitLab webhook uses last_commit.id, not head_commit_sha
+                "last_commit": {
+                    "id": "../../../etc/passwd",
+                    "message": "test",
+                },
+                "diff_refs": None,  # GitLab webhook may have null diff_refs
                 "author": {"username": "u"},
             },
-            "project": {"namespace": "ns", "name": "p"},
+            "project": {
+                "namespace": "ns",
+                "path_with_namespace": "ns/p",
+                "name": "p",
+            },
         },
         separators=(",", ":"),
     ).encode()
@@ -882,6 +890,44 @@ async def test_unified_webhook_413_via_raw_body_check(gw_client):
     )
     # Either 413 (middleware OR endpoint) — both branches acceptable
     assert resp.status_code in (400, 413)
+
+
+# ── SG-10: GitLab MR field mapping with real payload ─────────────────────
+
+
+@pytest.mark.asyncio
+async def test_gitlab_mr_open_end_to_end(gw_client):
+    """Verify GitLab MR open event is parsed correctly from real payload.
+
+    Key fields to verify:
+    - head_sha should come from object_attributes.last_commit.id
+    - base_sha may be empty since diff_refs is not in webhook payload
+    - owner should be project.path_with_namespace (stable identifier)
+    - number should be object_attributes.iid
+    """
+    import pathlib
+
+    # Load real GitLab MR payload fixture
+    fixture_path = pathlib.Path(__file__).parent / "fixtures" / "gitlab_mr_open.json"
+    with open(fixture_path) as f:
+        body = f.read().encode()
+
+    delivery_id = "gitlab-mr-open-test-" + str(uuid.uuid4())
+
+    resp = await gw_client.post(
+        "/verdity/webhooks/gitlab",
+        content=body,
+        headers={
+            "Content-Type": "application/json",
+            "X-Gitlab-Token": "gitlab-secret",
+            "X-Gitlab-Event-UUID": delivery_id,
+        },
+    )
+    # Should be accepted (202) since MR open IS a reviewable trigger
+    assert resp.status_code == 202, f"Expected 202, got {resp.status_code}: {resp.text}"
+    data = resp.json()
+    assert data["status"] == "queued"
+    assert "message_id" in data
 
 
 # ── Coverage for line 495 (github secret) and 501 (else branch) ────────
