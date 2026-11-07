@@ -12,6 +12,7 @@ Covers:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import uuid
 
 import pytest
@@ -24,11 +25,11 @@ from verdity.router import (
     RouteAction,
     compute_batch_routing,
     compute_confidence,
+    route,
     route_finding,
 )
 from verdity.schemas import ConcernType, Finding, RankedFinding, Severity
 from verdity.trust_calibration import TrustCalibrator
-from verdity.router import route
 
 # ── Test Finding Schema Extension ────────────────────────────────────────
 
@@ -762,7 +763,7 @@ class TestOrchestratorEdgeCases:
             # Skip unknown_type as it's not a valid calibrator outcome
         ]
         # Add multiple of each to reach min_samples
-        for i, (input_outcome, expected) in enumerate(outcomes):
+        for i, (input_outcome, _expected) in enumerate(outcomes):
             for _ in range(3):  # 3 * 4 = 12 outcomes
                 await metrics_store.record_finding_outcome(
                     finding_id=str(uuid.uuid4()),
@@ -827,10 +828,8 @@ class TestOrchestratorEdgeCases:
         task = await orchestrator.start_nightly_recalibration(interval_seconds=0.01)
         await asyncio.sleep(0.05)  # Let it run a couple of intervals
         task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await task
-        except asyncio.CancelledError:
-            pass
 
         # Should have been called at least twice (first failed, second succeeded)
         assert call_count >= 2
@@ -854,14 +853,14 @@ class TestMetricsStoreValidation:
         await store.connect()
 
         try:
-            with pytest.raises(ValueError, match="Confidence must be in \\[0.0, 1.0\\]"):
+            with pytest.raises(ValueError, match=r"Confidence must be in \[0.0, 1.0\]"):
                 await store.record_confidence_histogram(
                     repo_id="acme/widgets",
                     confidence=1.5,  # Invalid
                     severity="high",
                     concern="security",
                 )
-            with pytest.raises(ValueError, match="Confidence must be in \\[0.0, 1.0\\]"):
+            with pytest.raises(ValueError, match=r"Confidence must be in \[0.0, 1.0\]"):
                 await store.record_confidence_histogram(
                     repo_id="acme/widgets",
                     confidence=-0.1,  # Invalid
