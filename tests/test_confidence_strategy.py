@@ -765,14 +765,14 @@ class TestOrchestratorEdgeCases:
         for i, (input_outcome, expected) in enumerate(outcomes):
             for _ in range(3):  # 3 * 4 = 12 outcomes
                 await metrics_store.record_finding_outcome(
-                finding_id=str(uuid.uuid4()),
-                repo_id="acme/widgets",
-                pr_number=i,
-                final_outcome=input_outcome,
-                confidence=0.9,
-                severity="high",
-                concern="security",
-            )
+                    finding_id=str(uuid.uuid4()),
+                    repo_id="acme/widgets",
+                    pr_number=i,
+                    final_outcome=input_outcome,
+                    confidence=0.9,
+                    severity="high",
+                    concern="security",
+                )
 
         result = await orchestrator.recalibrate_trust(min_samples=10)
         # Should succeed with valid outcomes (4 mapped, 1 skipped)
@@ -1017,7 +1017,11 @@ async def test_gate_issue40_confidence_strategy():
             prompt_hash="sha256:abc",
         )
         decision = await route(f3, calibrator=calibrator2)
-        assert decision.action in (RouteAction.AUTO_APPROVE, RouteAction.MANUAL_REVIEW, RouteAction.AUTO_DISMISS)
+        assert decision.action in (
+            RouteAction.AUTO_APPROVE,
+            RouteAction.MANUAL_REVIEW,
+            RouteAction.AUTO_DISMISS,
+        )
         assert hasattr(f3, "confidence_signals")
         assert "base_confidence" in f3.confidence_signals
         assert f3.calibration_version > 0
@@ -1038,6 +1042,10 @@ async def test_gate_issue40_confidence_strategy():
         prompt_hash="sha256:def",
     )
     decision2 = await route(f4, calibrator=None)
-    assert decision2.action in (RouteAction.AUTO_APPROVE, RouteAction.MANUAL_REVIEW, RouteAction.AUTO_DISMISS)
+    assert decision2.action in (
+        RouteAction.AUTO_APPROVE,
+        RouteAction.MANUAL_REVIEW,
+        RouteAction.AUTO_DISMISS,
+    )
 
     print("All Issue #40 gate checks passed!")
