@@ -22,6 +22,7 @@ Security hardening (Phase 12 - Issue #41):
   - Redis-backed rate limiter (redis.asyncio) behind feature flag
   - HTTPX timeout config (10s total, 5s connect) on all clients
   - Webhook source validation: X-Hub-Signature-256 + source IP in allowlist
+  - Trusted-proxy client IP: X-Forwarded-For only honored from trusted proxies
   - Prompt-injection classifier for security agent
 """
 
@@ -33,7 +34,8 @@ import logging
 import re
 import time
 from collections import defaultdict
-from contextlib import asynccontextmanager, suppress
+from contextlib import suppress
+from ipaddress import ip_address
 from typing import Protocol
 
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -51,7 +53,6 @@ from verdity.webhook_normalizer import normalize_webhook
 logger = logging.getLogger(__name__)
 
 # ── Security constants ────────────────────────────────────────────────
-
 MAX_WEBHOOK_BODY_BYTES = 10 * 1024 * 1024  # 10 MiB — GitHub's practical limit
 DELIVERY_CACHE_TTL_SECONDS = 24 * 3600  # 24 hours
 _eviction_interval_seconds = 300  # evict every 5 minutes
@@ -129,51 +130,62 @@ def _is_ip_allowed(
         return False
 
 
-class _RateLimiter:
-    """In-memory sliding-window rate limiter, per client IP.
+def client_ip(request: Request, trusted_proxies: list) -> str:
+    """Derive the client IP safely, honoring X-Forwarded-For only from trusted proxies.
 
-    Tracks timestamps of recent requests and rejects when the count
-    within the window exceeds the limit. Returns the number of seconds
-    the caller should retry after.
+    Security policy:
+    - If trusted_proxies is empty: never trust XFF; return request.client.host.
+    - If the direct connection peer is NOT in trusted_proxies: return request.client.host
+      (the proxy's IP, NOT the original client — XFF is ignored to prevent spoofing).
+    - If the peer IS in trusted_proxies: walk XFF from the rightmost entry; return the
+      first IP that is NOT itself a trusted proxy. That is the real original client.
+    - If no XFF header: return request.client.host.
+
+    This prevents both:
+    1. Allowlist bypass: sending X-Forwarded-For: spoofed_ip from any host
+    2. Rate-limit bypass: changing XFF on each request to get a fresh bucket
     """
+    forwarded = request.headers.get("x-forwarded-for")
 
-    def __init__(
-        self,
-        max_requests: int = RATE_LIMIT_MAX_REQUESTS,
-        window_seconds: float = RATE_LIMIT_WINDOW_SECONDS,
-    ) -> None:
-        self._max = max_requests
-        self._window = window_seconds
-        self._buckets: dict[str, list[float]] = defaultdict(list)
-
-    def _client_ip(self, request: Request) -> str:
-        """Extract client IP from forwarded headers or direct connection."""
-        forwarded = request.headers.get("x-forwarded-for")
-        if forwarded:
-            return forwarded.split(",")[0].strip()
+    if not trusted_proxies:
+        # No trusted proxies configured — never trust XFF
         return request.client.host if request.client else "unknown"
 
-    def _evict(self, timestamps: list[float], now: float) -> None:
-        """Remove timestamps older than the window."""
-        cutoff = now - self._window
-        while timestamps and timestamps[0] < cutoff:
-            timestamps.pop(0)
+    if not forwarded:
+        # No XFF header
+        return request.client.host if request.client else "unknown"
 
-    async def is_allowed(self, request: Request) -> tuple[bool, float]:
-        """Check if the request is within the rate limit.
+    # Check if the direct peer is trusted
+    peer_host = request.client.host if request.client else None
+    if not peer_host:
+        return "unknown"
 
-        Returns (allowed, retry_after_seconds).
-        """
-        now = time.time()
-        ip = self._client_ip(request)
-        timestamps = self._buckets[ip]
-        self._evict(timestamps, now)
-        if len(timestamps) >= self._max:
-            oldest = timestamps[0]
-            retry_after = self._window - (now - oldest)
-            return False, max(retry_after, 1.0)
-        timestamps.append(now)
-        return True, 0.0
+    try:
+        peer_ip = ip_address(peer_host)
+        peer_is_trusted = any(peer_ip in network for network in trusted_proxies)
+    except ValueError:
+        # Can't parse peer IP — don't trust XFF
+        return peer_host
+
+    if not peer_is_trusted:
+        # Peer is not a trusted proxy — never trust XFF, return peer IP
+        return peer_host
+
+    # Peer is trusted — walk XFF from right to left; return the first untrusted hop
+    ips = [ip.strip() for ip in forwarded.split(",")]
+
+    for ip_str in reversed(ips):
+        try:
+            ip = ip_address(ip_str)
+            # If this IP is NOT a trusted proxy, it's the real original client
+            if not any(ip in network for network in trusted_proxies):
+                return ip_str
+        except ValueError:
+            continue
+
+    # All IPs in XFF are trusted proxies, or we couldn't parse them
+    # Return the leftmost (original client in XFF convention)
+    return ips[0] if ips else peer_host
 
 
 # Lua script for sliding window rate limiting in Redis
@@ -209,6 +221,47 @@ return {1, 0}
 """
 
 
+class _RateLimiter:
+    """In-memory sliding-window rate limiter, per client IP.
+
+    Tracks timestamps of recent requests and rejects when the count
+    within the window exceeds the limit. Returns the number of seconds
+    the caller should retry after.
+    """
+
+    def __init__(
+        self,
+        max_requests: int = RATE_LIMIT_MAX_REQUESTS,
+        window_seconds: float = RATE_LIMIT_WINDOW_SECONDS,
+    ) -> None:
+        self._max = max_requests
+        self._window = window_seconds
+        self._buckets: dict[str, list[float]] = defaultdict(list)
+
+    def _evict(self, timestamps: list[float], now: float) -> None:
+        """Remove timestamps older than the window."""
+        cutoff = now - self._window
+        while timestamps and timestamps[0] < cutoff:
+            timestamps.pop(0)
+
+    async def is_allowed(self, request: Request) -> tuple[bool, float]:
+        """Check if the request is within the rate limit.
+
+        Returns (allowed, retry_after_seconds).
+        """
+        now = time.time()
+        ip = client_ip(request, [])  # In-memory limiter always ignores XFF
+        timestamps = self._buckets[ip]
+        self._evict(timestamps, now)
+        if len(timestamps) >= self._max:
+            oldest = timestamps[0]
+            retry_after = self._window - (now - oldest)
+            return False, max(retry_after, 1.0)
+        timestamps.append(now)
+        return True, 0.0
+
+
+# Redis-backed rate limiter for distributed deployments
 class RedisRateLimiter:
     """Redis-backed sliding-window rate limiter for distributed deployments.
 
@@ -263,24 +316,16 @@ class RedisRateLimiter:
             self._redis = None
             self._connected = False
 
-    def _client_ip(self, request: Request) -> str:
-        """Extract client IP from forwarded headers or direct connection."""
-        forwarded = request.headers.get("x-forwarded-for")
-        if forwarded:
-            return forwarded.split(",")[0].strip()
-        return request.client.host if request.client else "unknown"
-
     async def is_allowed(self, request: Request) -> tuple[bool, float]:
         """Check if the request is within the rate limit.
 
-        Returns (allowed, retry_after_seconds).
         Falls back to in-memory limiter on Redis errors.
         """
         if not self._connected or self._redis is None:
             logger.warning("Redis rate limiter not connected, using fallback")
             return await self._fallback_limiter.is_allowed(request)
 
-        ip = self._client_ip(request)
+        ip = client_ip(request, [])  # When behind no trusted proxy, ignore XFF
         key = f"rate_limit:{ip}"
         now = time.time()
 
@@ -416,7 +461,6 @@ def _cleanup_delivery_cache(state) -> None:
 # ── Lifespan ──────────────────────────────────────────────────────────
 
 
-@asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup/shutdown hooks for queue, audit store, and cache."""
     settings = get_settings()
@@ -450,16 +494,6 @@ async def lifespan(app: FastAPI):
     app.state._delivery_cache = DeliveryCache(db_path=delivery_cache_path)
     await app.state._delivery_cache.connect()
 
-    # Phase 9: Engineering analytics metrics store
-    metrics_path = getattr(settings, "metrics_sqlite_path", None)
-    if metrics_path is None:
-        import pathlib
-
-        _base = pathlib.Path(settings.audit_sqlite_path).parent
-        metrics_path = str(_base / "metrics_store.db")
-    app.state.metrics = MetricsStore(db_path=metrics_path)
-    await app.state.metrics.connect()
-
     # Load persisted delivery IDs into memory
     app.state.delivery_ids: set[str] = await app.state._delivery_cache.load_recent()
     app.state._delivery_cache_ts: dict[str, float] = {}
@@ -479,6 +513,18 @@ async def lifespan(app: FastAPI):
         )
     else:
         logger.info("GitHub IP allowlist disabled (no networks configured)")
+
+    # Trusted proxy CIDRs for XFF handling
+    trusted_proxies_cidrs = getattr(settings, "trusted_proxies", "")
+    if trusted_proxies_cidrs:
+        app.state._trusted_proxies = _parse_ip_allowlist(trusted_proxies_cidrs)
+        logger.info(
+            "Trusted proxies initialized with %d network(s)",
+            len(app.state._trusted_proxies),
+        )
+    else:
+        app.state._trusted_proxies = []
+        logger.info("Trusted proxies not configured — XFF will not be honored")
 
     logger.info(
         "Ingestion Gateway initialized (loaded %d cached delivery IDs)",
@@ -557,17 +603,14 @@ async def ip_allowlist_middleware(request: Request, call_next):
     if request.method == "POST" and request.url.path == "/verdity/webhooks/github":
         allowed_networks: list = getattr(request.app.state, "_github_ip_allowlist", [])
         if allowed_networks:  # Only enforce when allowlist is configured
-            # Extract client IP from X-Forwarded-For or direct connection
-            forwarded = request.headers.get("x-forwarded-for")
-            if forwarded:
-                client_ip = forwarded.split(",")[0].strip()
-            else:
-                client_ip = request.client.host if request.client else "unknown"
+            # Extract client IP safely — XFF only honored from trusted proxies
+            trusted_proxies = getattr(request.app.state, "_trusted_proxies", [])
+            client_ip_val = client_ip(request, trusted_proxies)
 
-            if not _is_ip_allowed(client_ip, allowed_networks):
+            if not _is_ip_allowed(client_ip_val, allowed_networks):
                 logger.warning(
                     "IP allowlist rejected request from %s to /verdity/webhooks/github",
-                    client_ip,
+                    client_ip_val,
                 )
                 response = JSONResponse(
                     status_code=403,

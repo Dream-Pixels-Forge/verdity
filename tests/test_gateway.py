@@ -247,8 +247,8 @@ async def test_rate_limit_returns_429_after_exceeding_limit(gateway_client_and_q
 
 
 @pytest.mark.asyncio
-async def test_rate_limit_different_ips_are_independent():
-    """Rate limit is per-IP — two different client IPs are tracked separately."""
+async def test_rate_limit_ignores_xff_header():
+    """Rate limiter always uses peer IP — XFF cannot be used to bypass limits."""
     from verdity.audit_store import AuditStore
     from verdity.gateway.app import DeliveryCache, _RateLimiter, app
 
@@ -270,10 +270,10 @@ async def test_rate_limit_different_ips_are_independent():
     sig = _sign(body)
 
     try:
-        # Fill up IP A's quota (using X-Forwarded-For to identify IPs)
-        for _ in range(100):
+        # Send 100 requests with XFF=10.0.0.1 — should fill the bucket
+        for i in range(100):
             delivery_id = str(uuid.uuid4())
-            await client.post(
+            resp = await client.post(
                 "/verdity/webhooks/github",
                 content=body,
                 headers={
@@ -284,8 +284,12 @@ async def test_rate_limit_different_ips_are_independent():
                     "X-Forwarded-For": "10.0.0.1",
                 },
             )
+            assert resp.status_code in (202, 409), (
+                f"Request {i + 1} got {resp.status_code}: {resp.text}"
+            )
 
-        # IP B should still be able to send (different bucket)
+        # Switch XFF to 10.0.0.2 — rate limiter ignores XFF, still uses peer IP
+        # So this request should be rate-limited (429)
         delivery_id_b = str(uuid.uuid4())
         resp_b = await client.post(
             "/verdity/webhooks/github",
@@ -298,25 +302,9 @@ async def test_rate_limit_different_ips_are_independent():
                 "X-Forwarded-For": "10.0.0.2",
             },
         )
-        assert resp_b.status_code in (
-            202,
-            409,
-        ), f"IP B should not be rate-limited by IP A, got {resp_b.status_code}"
-
-        # IP A should now be rate-limited
-        delivery_id_a = str(uuid.uuid4())
-        resp_a = await client.post(
-            "/verdity/webhooks/github",
-            content=body,
-            headers={
-                "X-GitHub-Event": "pull_request",
-                "X-Hub-Signature-256": sig,
-                "X-GitHub-Delivery": delivery_id_a,
-                "Content-Type": "application/json",
-                "X-Forwarded-For": "10.0.0.1",
-            },
+        assert resp_b.status_code == 429, (
+            f"Rate limiter should ignore XFF; got {resp_b.status_code}"
         )
-        assert resp_a.status_code == 429
     finally:
         await client.aclose()
         await app.state.queue.close()

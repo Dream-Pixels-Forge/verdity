@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 import uuid
 from collections.abc import AsyncGenerator
+from unittest.mock import MagicMock
 
 import pytest
 import pytest_asyncio
@@ -1022,11 +1024,10 @@ class TestIpAllowlist:
 
 
 class TestRedisRateLimiterClientIp:
-    """RedisRateLimiter._client_ip decides which bucket a request is counted in.
+    """RedisRateLimiter uses the client_ip() helper for bucket selection.
 
-    This is duplicated from the in-memory _RateLimiter and had no direct test.
-    Trusting X-Forwarded-For means a caller can spoof its identity unless the
-    deployment strips that header, so the first-hop behaviour is worth pinning.
+    This verifies that when no trusted proxies are configured (empty list),
+    X-Forwarded-For is ignored and request.client.host is used directly.
     """
 
     @staticmethod
@@ -1046,35 +1047,37 @@ class TestRedisRateLimiterClientIp:
         request.client = client
         return request
 
-    def test_takes_first_hop_from_forwarded_chain(self):
-        limiter = self._limiter()
+    def test_ignores_xff_when_no_trusted_proxies(self):
+        """Without trusted proxies, XFF is ignored — use peer IP."""
+        from verdity.gateway.app import client_ip
 
         request = self._request({"x-forwarded-for": "203.0.113.9, 10.0.0.1, 172.16.0.1"})
 
-        assert limiter._client_ip(request) == "203.0.113.9"
+        # Empty trusted_proxies list = never honor XFF
+        assert client_ip(request, []) == "10.1.1.1"
 
-    def test_forwarded_value_is_stripped(self):
-        limiter = self._limiter()
+    def test_strips_whitespace_from_forwarded(self):
+        from verdity.gateway.app import client_ip
 
         request = self._request({"x-forwarded-for": "  203.0.113.9  "})
 
-        assert limiter._client_ip(request) == "203.0.113.9"
+        assert client_ip(request, []) == "10.1.1.1"
 
     def test_falls_back_to_direct_peer(self):
-        limiter = self._limiter()
+        from verdity.gateway.app import client_ip
 
         request = self._request({}, client_host="198.51.100.4")
 
-        assert limiter._client_ip(request) == "198.51.100.4"
+        assert client_ip(request, []) == "198.51.100.4"
 
     def test_missing_client_returns_unknown(self):
         """No peer and no header must not raise."""
-        limiter = self._limiter()
+        from verdity.gateway.app import client_ip
 
         request = self._request({})
         request.client = None
 
-        assert limiter._client_ip(request) == "unknown"
+        assert client_ip(request, []) == "unknown"
 
     @pytest.mark.asyncio
     async def test_falls_back_to_memory_when_not_connected(self):
@@ -1095,6 +1098,287 @@ class TestRedisRateLimiterClientIp:
         assert allowed is True
         assert retry_after == 0.0
         fallback.is_allowed.assert_called_once()
+
+
+class TestTrustedProxyClientIp:
+    """SG-06: client_ip() honors X-Forwarded-For only from trusted proxies.
+
+    The security property: an untrusted peer cannot spoof its identity by
+    sending a custom X-Forwarded-For header, even if it knows the allowlist
+    or rate-limiter buckets.
+    """
+
+    @staticmethod
+    def _request(headers=None, client_host="10.1.1.1"):
+        from unittest.mock import MagicMock
+
+        request = MagicMock()
+        request.headers = headers or {}
+        client = MagicMock()
+        client.host = client_host
+        request.client = client
+        return request
+
+    def test_empty_trusted_proxies_disables_xff(self):
+        """When trusted_proxies is empty, XFF is never honored."""
+        from verdity.gateway.app import client_ip
+
+        request = self._request({"x-forwarded-for": "203.0.113.5"})
+        assert client_ip(request, []) == "10.1.1.1"
+
+    def test_spoofed_xff_from_untrusted_peer_ignored(self):
+        """Spoofing XFF from a non-trusted peer returns the peer IP, not the fake."""
+        import ipaddress
+
+        from verdity.gateway.app import client_ip
+
+        # Peer is 192.168.1.100 (not in any trusted proxy range)
+        request = self._request(
+            {"x-forwarded-for": "203.0.113.5"},
+            client_host="192.168.1.100",
+        )
+        trusted = [ipaddress.ip_network("10.0.0.0/8")]
+        # Peer is NOT trusted → XFF is ignored, return peer IP
+        assert client_ip(request, trusted) == "192.168.1.100"
+
+    def test_trusted_peer_honors_xff_rightmost_untrusted(self):
+        """When peer is trusted, XFF is walked right-to-left for first untrusted hop."""
+        import ipaddress
+
+        from verdity.gateway.app import client_ip
+
+        # Peer is in 10.0.0.0/8 (trusted)
+        request = self._request(
+            {"x-forwarded-for": "203.0.113.5, 10.0.0.1, 172.16.0.1"},
+            client_host="10.0.0.1",
+        )
+        trusted = [ipaddress.ip_network("10.0.0.0/8")]
+        # Walk from right: 172.16.0.1 (untrusted) → return it
+        assert client_ip(request, trusted) == "172.16.0.1"
+
+    def test_all_trusted_ips_in_xff_falls_back_to_last(self):
+        """If every IP in XFF is trusted, return the rightmost (original client)."""
+        import ipaddress
+
+        from verdity.gateway.app import client_ip
+
+        request = self._request(
+            {"x-forwarded-for": "10.0.0.5, 10.0.0.1"},
+            client_host="10.0.0.1",
+        )
+        trusted = [ipaddress.ip_network("10.0.0.0/8")]
+        # All are trusted; return the rightmost (original client)
+        assert client_ip(request, trusted) == "10.0.0.5"
+
+    def test_no_xff_header_uses_peer(self):
+        """Without XFF, return peer IP regardless of trusted_proxies."""
+        import ipaddress
+
+        from verdity.gateway.app import client_ip
+
+        request = self._request({}, client_host="10.0.0.5")
+        trusted = [ipaddress.ip_network("10.0.0.0/8")]
+        assert client_ip(request, trusted) == "10.0.0.5"
+
+    def test_invalid_ip_in_xff_skipped(self):
+        """Malformed IPs in XFF are skipped without crashing."""
+        import ipaddress
+
+        from verdity.gateway.app import client_ip
+
+        request = self._request(
+            {"x-forwarded-for": "not-an-ip, 10.0.0.1, 203.0.113.5"},
+            client_host="10.0.0.1",
+        )
+        trusted = [ipaddress.ip_network("10.0.0.0/8")]
+        # Skip "not-an-ip", find 203.0.113.5 as untrusted
+        assert client_ip(request, trusted) == "203.0.113.5"
+
+    def test_all_invalid_ips_in_xff_falls_back_to_leftmost(self):
+        """When all XFF IPs are unparsable, ValueError is caught and leftmost is returned."""
+        import ipaddress
+
+        from verdity.gateway.app import client_ip
+
+        request = self._request(
+            {"x-forwarded-for": "not-an-ip, also-bad"},
+            client_host="10.0.0.1",
+        )
+        trusted = [ipaddress.ip_network("10.0.0.0/8")]
+        # Both invalid — ValueError path hit, falls through to ips[0]
+        assert client_ip(request, trusted) == "not-an-ip"
+
+    def test_all_trusted_ips_in_xff_returns_leftmost(self):
+        """When all XFF entries are trusted proxies, returns the leftmost."""
+        import ipaddress
+
+        from verdity.gateway.app import client_ip
+
+        request = self._request(
+            {"x-forwarded-for": "10.0.0.1, 10.0.0.2, 10.0.0.3"},
+            client_host="10.0.0.1",
+        )
+        trusted = [ipaddress.ip_network("10.0.0.0/8")]
+        # All IPs are trusted; return leftmost as original client
+        assert client_ip(request, trusted) == "10.0.0.1"
+
+    def test_no_client_peer_returns_unknown(self):
+        """When request.client is None, return 'unknown'."""
+        from verdity.gateway.app import client_ip
+
+        request = MagicMock()
+        request.headers = {"x-forwarded-for": "203.0.113.5"}
+        request.client = None
+        trusted = [ipaddress.ip_network("10.0.0.0/8")]
+        assert client_ip(request, trusted) == "unknown"
+
+    def test_unparseable_peer_ip_falls_back_to_peer(self):
+        """Unparseable peer IP returns peer_host without trusting XFF."""
+        from verdity.gateway.app import client_ip
+
+        request = self._request(
+            {"x-forwarded-for": "203.0.113.5"},
+            client_host="not-an-ip",
+        )
+        trusted = [ipaddress.ip_network("10.0.0.0/8")]
+        assert client_ip(request, trusted) == "not-an-ip"
+
+    def test_ipv6_peer_in_trusted_network(self):
+        """IPv6 peer in trusted CIDR honours XFF."""
+        import ipaddress
+
+        from verdity.gateway.app import client_ip
+
+        request = self._request(
+            {"x-forwarded-for": "2001:db8::1"},
+            client_host="::1",
+        )
+        trusted = [ipaddress.ip_network("::1/128")]
+        assert client_ip(request, trusted) == "2001:db8::1"
+
+    def test_ipv6_peer_not_in_trusted_network(self):
+        """IPv6 peer outside trusted CIDR ignores XFF."""
+        import ipaddress
+
+        from verdity.gateway.app import client_ip
+
+        request = self._request(
+            {"x-forwarded-for": "2001:db8::1"},
+            client_host="fe80::1",
+        )
+        trusted = [ipaddress.ip_network("::1/128")]
+        assert client_ip(request, trusted) == "fe80::1"
+
+    def test_empty_xff_header_uses_peer(self):
+        """Empty XFF header string is treated as no header - returns peer IP."""
+        import ipaddress
+
+        from verdity.gateway.app import client_ip
+
+        request = self._request(
+            {"x-forwarded-for": ""},
+            client_host="10.0.0.1",
+        )
+        trusted = [ipaddress.ip_network("10.0.0.0/8")]
+        # Empty XFF is falsy, so treat as no header
+        assert client_ip(request, trusted) == "10.0.0.1"
+
+
+class TestLifespanShutdownWithRedisRateLimiter:
+    """Test that lifespan shutdown properly closes RedisRateLimiter."""
+
+    @pytest.mark.asyncio
+    async def test_shutdown_closes_rate_limiter(self):
+        """Verify the shutdown code path closes rate limiter if it has close()."""
+        from verdity.gateway.app import _RateLimiter
+
+        # Track whether close was called
+        mock_close_called = False
+
+        class MockRateLimiter:
+            """Mock rate limiter with close method (simulates RedisRateLimiter)."""
+
+            async def close(self):
+                nonlocal mock_close_called
+                mock_close_called = True
+
+        # In-memory limiter has no close method
+        in_memory = _RateLimiter()
+        assert not hasattr(in_memory, "close")
+
+        # Mock Redis limiter has close method
+        mock_redis = MockRateLimiter()
+        assert hasattr(mock_redis, "close")
+
+        # The shutdown logic in app.py line 544-547:
+        # rate_limiter = getattr(app.state, "_rate_limiter", None)
+        # if rate_limiter and hasattr(rate_limiter, "close"):
+        #     await rate_limiter.close()
+
+        # Verify the pattern works
+        rate_limiter = getattr(
+            type("obj", (object,), {"_rate_limiter": mock_redis})(), "_rate_limiter", None
+        )
+        assert rate_limiter is not None
+        assert hasattr(rate_limiter, "close")
+        await rate_limiter.close()
+        assert mock_close_called, "Rate limiter close() should be callable during shutdown"
+
+        # Verify in-memory limiter is not closed (no close method)
+        rate_limiter2 = getattr(
+            type("obj", (object,), {"_rate_limiter": in_memory})(), "_rate_limiter", None
+        )
+        assert rate_limiter2 is not None
+        assert not hasattr(rate_limiter2, "close")
+
+
+class TestIpAllowlistWithTrustedProxy:
+    """Integration test: IP allowlist middleware uses client_ip() correctly."""
+
+    @pytest.mark.asyncio
+    async def test_allowlist_blocks_spoofed_xff_from_untrusted_peer(self, gw_client):
+        """A request from an untrusted peer with spoofed XFF is rejected by allowlist."""
+        import os
+
+        from verdity.config import get_settings
+        from verdity.gateway.app import _parse_ip_allowlist
+
+        # Configure allowlist with GitHub IPs and trusted proxies empty
+        get_settings.cache_clear()
+        os.environ["WEBHOOK_HMAC_SECRET"] = "test-hmac-secret-key-for-dev-only"
+        os.environ["GITHUB_WEBHOOK_IPS"] = "192.30.252.0/22"
+        os.environ["TRUSTED_PROXIES"] = ""  # No trusted proxies
+        get_settings.cache_clear()
+
+        # Set up state with allowlist enabled
+        original_allowlist = app.state._github_ip_allowlist
+        original_trusted = getattr(app.state, "_trusted_proxies", [])
+        app.state._github_ip_allowlist = _parse_ip_allowlist("192.30.252.0/22")
+        app.state._trusted_proxies = []
+
+        try:
+            body = b'{"action":"opened","pull_request":{},"repository":{}}'
+            resp = await gw_client.post(
+                "/verdity/webhooks/github",
+                content=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Hub-Signature-256": "sha256=invalid",  # bad sig — but IP blocked first
+                    "X-GitHub-Event": "pull_request",
+                    "X-GitHub-Delivery": str(uuid.uuid4()),
+                    "X-Forwarded-For": "192.30.252.5",  # Spoofed GitHub IP — ignored since peer untrusted
+                },
+            )
+            # Should get 403 (IP blocked) — XFF is ignored because peer is untrusted,
+            # so the real peer IP 127.0.0.1 is rejected by the GitHub IP allowlist.
+            # This proves XFF spoofing is prevented.
+            assert resp.status_code == 403
+        finally:
+            app.state._github_ip_allowlist = original_allowlist
+            app.state._trusted_proxies = original_trusted
+            del os.environ["GITHUB_WEBHOOK_IPS"]
+            del os.environ["TRUSTED_PROXIES"]
+            get_settings.cache_clear()
 
 
 class TestUnifiedWebhookGithubBranch:

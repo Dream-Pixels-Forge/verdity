@@ -144,6 +144,12 @@ class Settings(BaseSettings):
         description="Comma-separated CIDR list of allowed IPs for GitHub webhooks. "
         "Empty disables the IP allowlist feature.",
     )
+    # Trusted proxy CIDRs — X-Forwarded-For is only honored when peer is in these ranges
+    trusted_proxies: str = Field(
+        default="",
+        description="Comma-separated CIDR list of trusted proxy IPs. When empty, "
+        "X-Forwarded-For is never trusted; request.client.host is used directly.",
+    )
     # Redis rate limiter feature flag
     redis_rate_limiter_enabled: bool = Field(
         default=False,

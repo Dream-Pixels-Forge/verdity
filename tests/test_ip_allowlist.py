@@ -11,6 +11,7 @@ The IP allowlist middleware should:
 
 from __future__ import annotations
 
+import ipaddress
 import os
 from collections.abc import AsyncGenerator
 
@@ -67,6 +68,8 @@ async def gw_client() -> AsyncGenerator[AsyncClient, None]:
     app.state._github_ip_allowlist = _parse_ip_allowlist(
         "192.30.252.0/22,185.199.108.0/22,140.82.112.0/20"
     )
+    # Trust 127.0.0.1 so X-Forwarded-For is honored in tests
+    app.state._trusted_proxies = [ipaddress.ip_network("127.0.0.0/8")]
     app.state._delivery_cache = DeliveryCache(db_path=":memory:")
     await app.state._delivery_cache.connect()
     app.state.queue = EventQueue(db_path=":memory:")
@@ -269,11 +272,13 @@ class TestIPAllowlistMiddleware:
 
     @pytest.mark.asyncio
     async def test_allowlist_handles_multiple_ips_in_x_forwarded_for(self, gw_client):
-        """Should use the first IP in X-Forwarded-For header."""
+        """Should extract the original client IP from multi-hop X-Forwarded-For."""
         body = b'{"action":"opened","pull_request":{"number":1,"head":{"sha":"abc"},"base":{"sha":"def"},"title":"T","body":"","user":{"login":"u"}},"repository":{"name":"r","owner":{"login":"o"}}}'
         sig = _sign(GITHUB_SECRET, body)
 
-        # First IP is allowed, second is not - should use first (allowed)
+        # XFF: proxy(192.30.252.1) -> client(10.0.0.1)
+        # client_ip walks right-to-left, returns first untrusted: 10.0.0.1
+        # 10.0.0.1 is NOT in GitHub's allowlist, so expect 403
         resp = await gw_client.post(
             "/verdity/webhooks/github",
             content=body,
@@ -285,7 +290,8 @@ class TestIPAllowlistMiddleware:
                 "X-Forwarded-For": "192.30.252.1, 10.0.0.1",
             },
         )
-        assert resp.status_code == 202
+        assert resp.status_code == 403
+        assert "IP not allowed" in resp.json().get("detail", "")
 
     @pytest.mark.asyncio
     async def test_allowlist_falls_back_to_direct_client_ip(self, gw_client):
