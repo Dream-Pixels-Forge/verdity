@@ -81,12 +81,14 @@ class TestGitLabNormalizeEvent:
                 "iid": 42,
                 "title": "Fix auth bug",
                 "description": "Fixes the auth bypass",
-                "head_commit_sha": "abc123",
-                "target_commit_sha": "def456",
+                # GitLab webhook uses last_commit.id, not head_commit_sha
+                "last_commit": {"id": "abc123", "message": "Fix"},
+                "diff_refs": None,
                 "author": {"username": "alice"},
             },
             "project": {
                 "namespace": "myorg",
+                "path_with_namespace": "myorg/myrepo",
                 "name": "myrepo",
             },
         }
@@ -94,7 +96,8 @@ class TestGitLabNormalizeEvent:
         assert result["trigger_type"] == "pr.opened"
         assert result["action"] == "open"
         assert result["delivery_id"] == "delivery-123"
-        assert result["repo"]["owner"] == "myorg"
+        # owner should use path_with_namespace (stable identifier per SG-10)
+        assert result["repo"]["owner"] == "myorg/myrepo"
         assert result["repo"]["name"] == "myrepo"
         assert result["pull_request"]["number"] == 42
         assert result["pull_request"]["head_sha"] == "abc123"
@@ -112,12 +115,13 @@ class TestGitLabNormalizeEvent:
                 "iid": 10,
                 "title": "Update",
                 "description": "",
-                "head_commit_sha": "aaa",
-                "target_commit_sha": "bbb",
+                "last_commit": {"id": "aaa", "message": "Update"},
+                "diff_refs": None,
                 "author": {"username": "bob"},
             },
             "project": {
                 "namespace": "team",
+                "path_with_namespace": "team/proj",
                 "name": "proj",
             },
         }
@@ -135,11 +139,11 @@ class TestGitLabNormalizeEvent:
                 "iid": 5,
                 "title": "Merged",
                 "description": "",
-                "head_commit_sha": "x",
-                "target_commit_sha": "y",
+                "last_commit": {"id": "x", "message": "merge"},
+                "diff_refs": None,
                 "author": {"username": "carol"},
             },
-            "project": {"namespace": "t", "name": "p"},
+            "project": {"namespace": "t", "path_with_namespace": "t/p", "name": "p"},
         }
         result = platform.normalize_event(headers, body)
         assert result["trigger_type"] == "pr.merged"
@@ -154,11 +158,11 @@ class TestGitLabNormalizeEvent:
                 "iid": 1,
                 "title": "Closed",
                 "description": "",
-                "head_commit_sha": "",
-                "target_commit_sha": "",
+                "last_commit": {"id": "", "message": "close"},
+                "diff_refs": None,
                 "author": {"username": "dave"},
             },
-            "project": {"namespace": "", "name": ""},
+            "project": {"namespace": "", "path_with_namespace": "p", "name": "p"},
         }
         result = platform.normalize_event({}, body)
         assert result["trigger_type"] == "pr.closed"
@@ -173,11 +177,11 @@ class TestGitLabNormalizeEvent:
                 "iid": 7,
                 "title": "Reopened",
                 "description": "",
-                "head_commit_sha": "",
-                "target_commit_sha": "",
+                "last_commit": {"id": "", "message": "reopen"},
+                "diff_refs": None,
                 "author": {"username": "eve"},
             },
-            "project": {"namespace": "", "name": ""},
+            "project": {"namespace": "", "path_with_namespace": "p", "name": "p"},
         }
         result = platform.normalize_event({}, body)
         assert result["trigger_type"] == "pr.reopened"
@@ -200,11 +204,11 @@ class TestGitLabNormalizeEvent:
                 "iid": 1,
                 "title": "T",
                 "description": "",
-                "head_commit_sha": "",
-                "target_commit_sha": "",
+                "last_commit": {"id": "", "message": "test"},
+                "diff_refs": None,
                 "author": {"username": "x"},
             },
-            "project": {"namespace": "", "name": ""},
+            "project": {"namespace": "", "path_with_namespace": "p", "name": "p"},
         }
         result = platform.normalize_event({}, body)
         assert result["pull_request"]["diff_url"] == ""
@@ -313,14 +317,14 @@ class TestGitLabHandleWebhook:
         """Valid webhook returns normalized VerdityEvent."""
         platform = GitLabPlatform()
 
-        # Create a mock Request
+        # Create a mock Request with real GitLab webhook structure
         mock_request = MagicMock(spec=Request)
         mock_request.headers = {
             "x-gitlab-token": "secret-token",
             "x-gitlab-event-uuid": "delivery-123",
         }
         mock_request.body = AsyncMock(
-            return_value=b'{"object_kind": "merge_request", "object_attributes": {"action": "open", "iid": 42, "title": "Test", "description": "", "head_commit_sha": "abc", "target_commit_sha": "def", "author": {"username": "alice"}}, "project": {"namespace": "myorg", "name": "myrepo"}}'
+            return_value=b'{"object_kind": "merge_request", "object_attributes": {"action": "open", "iid": 42, "title": "Test", "description": "", "last_commit": {"id": "abc", "message": "test"}, "diff_refs": null, "author": {"username": "alice"}}, "project": {"namespace": "myorg", "path_with_namespace": "myorg/myrepo", "name": "myrepo"}}'
         )
 
         with patch.object(platform, "verify_webhook", return_value=True):
@@ -332,7 +336,8 @@ class TestGitLabHandleWebhook:
 
         assert isinstance(event, VerdityEvent)
         assert event.trigger_type.value == "pr.opened"
-        assert event.repo.owner == "myorg"
+        # owner uses path_with_namespace (stable identifier)
+        assert event.repo.owner == "myorg/myrepo"
         assert event.repo.name == "myrepo"
         assert event.pull_request.number == 42
 
@@ -402,7 +407,7 @@ class TestGitLabHandleWebhook:
         }
         # Use an action that maps to unknown trigger type
         mock_request.body = AsyncMock(
-            return_value=b'{"object_kind": "merge_request", "object_attributes": {"action": "unknown_action", "iid": 1, "title": "Test", "description": "", "head_commit_sha": "abc", "target_commit_sha": "def", "author": {"username": "alice"}}, "project": {"namespace": "myorg", "name": "myrepo", "id": 123}}'
+            return_value=b'{"object_kind": "merge_request", "object_attributes": {"action": "unknown_action", "iid": 1, "title": "Test", "description": "", "last_commit": {"id": "abc", "message": "test"}, "diff_refs": null, "author": {"username": "alice"}}, "project": {"namespace": "myorg", "path_with_namespace": "myorg/myrepo", "name": "myrepo", "id": 123}}'
         )
 
         with patch("verdity.platforms.gitlab.get_settings") as mock_get_settings:

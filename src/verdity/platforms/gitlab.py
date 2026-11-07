@@ -117,18 +117,23 @@ class GitLabPlatform(Platform):
         action = attrs.get("action", "")
         trigger_type = trigger_map.get(action, "unknown")
 
+        # Extract head SHA from last_commit.id (GitLab webhook doesn't include head_commit_sha)
+        # Base SHA is not in webhook payload; will be fetched via API diff_refs in SG-14
+        last_commit = attrs.get("last_commit") or {}
+        head_sha = last_commit.get("id", "") if isinstance(last_commit, dict) else ""
+
         return {
             "trigger_type": trigger_type,
             "action": action,
             "delivery_id": delivery_id,
             "repo": {
-                "owner": project.get("namespace", ""),
+                "owner": project.get("path_with_namespace", project.get("namespace", "")),
                 "name": project.get("name", ""),
             },
             "pull_request": {
                 "number": attrs.get("iid", 0),
-                "head_sha": attrs.get("head_commit_sha", ""),
-                "base_sha": attrs.get("target_commit_sha", ""),
+                "head_sha": head_sha,
+                "base_sha": "",  # Not available in webhook payload; fetch via API
                 "title": attrs.get("title", ""),
                 "body": attrs.get("description", ""),
                 "author": author.get("username", ""),

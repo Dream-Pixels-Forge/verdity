@@ -1015,8 +1015,11 @@ async def handle_platform_webhook(
     pr = event.pull_request
     if pr:
         try:
-            pr.head_sha = _sanitize_path(pr.head_sha)
-            pr.base_sha = _sanitize_path(pr.base_sha)
+            # Only sanitize non-empty SHAs; empty base_sha will be resolved via API in SG-14
+            if pr.head_sha:
+                pr.head_sha = _sanitize_path(pr.head_sha)
+            if pr.base_sha:
+                pr.base_sha = _sanitize_path(pr.base_sha)
         except ValueError as exc:
             logger.warning("Rejected suspicious PR ref: %s", exc)
             raise HTTPException(status_code=400, detail="Invalid PR reference") from exc
