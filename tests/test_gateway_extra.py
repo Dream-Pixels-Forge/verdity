@@ -865,15 +865,15 @@ async def test_unified_webhook_413_via_raw_body_check(gw_client):
 
     The middleware checks Content-Length but the endpoint re-checks raw body.
     A request with short Content-Length but big body passes middleware but
-    hits the endpoint's own size check (line 490).
+    hits the endpoint's own size check.
     """
-    b"x" * (10 * 1024 * 1024 + 1024)  # 10MB + 1KB
+    big_body = b"x" * (10 * 1024 * 1024 + 1024)  # 10MB + 1KB
     # httpx lets us send raw content with custom headers including a short
     # Content-Length that lies about the size — middleware allows it through.
     resp = await gw_client.post(
         "/verdity/webhooks/gitlab",
-        # Send small initial chunk + override Content-Length
-        content=b"{}",
+        # Send big body + override Content-Length header to lie about size
+        content=big_body,
         headers={
             "Content-Type": "application/json",
             "X-Gitlab-Token": "gitlab-secret",
@@ -2224,3 +2224,314 @@ class TestBitbucketDeliveryIdFallbackDeterministic:
         assert resp2.status_code == 409, (
             "Same body with same fallback key should be rejected as replay"
         )
+
+
+# ── SG-09: Non-reviewable events should be ignored ──────────────────────
+
+
+class TestNonReviewableEventsIgnored:
+    """SG-09: Only reviewable triggers should be enqueued; others return 202 ignored."""
+
+    @pytest.mark.asyncio
+    async def test_bitbucket_merged_ignored(self, gw_client):
+        """Bitbucket pullrequest:merged should return 202 ignored (not enqueued)."""
+        body = json.dumps(
+            {
+                "pullrequest": {
+                    "id": 1,
+                    "title": "Merged PR",
+                    "description": "",
+                    "source": {"commit": {"hash": "abc"}},
+                    "destination": {"commit": {"hash": "def"}},
+                    "author": {"username": "u"},
+                    "links": {},
+                },
+                "repository": {"name": "repo", "owner": {"uuid": "owner-uuid"}},
+            },
+            separators=(",", ":"),
+        ).encode()
+        sig = _sign("bitbucket-secret", body)
+        delivery_id = "bitbucket-merged-test-" + str(uuid.uuid4())
+
+        resp = await gw_client.post(
+            "/verdity/webhooks/bitbucket",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature": sig,
+                "X-Event-Key": "pullrequest:merged",
+                "X-Request-UUID": delivery_id,
+            },
+        )
+        # Should be 202 with "ignored" status, not queued for review
+        assert resp.status_code == 202
+        data = resp.json()
+        assert data["status"] == "ignored", f"Expected ignored, got {data}"
+        assert "message_id" not in data, "Ignored events should not be queued"
+
+    @pytest.mark.asyncio
+    async def test_bitbucket_closed_ignored(self, gw_client):
+        """Bitbucket pullrequest:declined should return 202 ignored."""
+        body = json.dumps(
+            {
+                "pullrequest": {
+                    "id": 2,
+                    "title": "Declined PR",
+                    "description": "",
+                    "source": {"commit": {"hash": "abc"}},
+                    "destination": {"commit": {"hash": "def"}},
+                    "author": {"username": "u"},
+                    "links": {},
+                },
+                "repository": {"name": "repo", "owner": {"uuid": "owner-uuid"}},
+            },
+            separators=(",", ":"),
+        ).encode()
+        sig = _sign("bitbucket-secret", body)
+        delivery_id = "bitbucket-closed-test-" + str(uuid.uuid4())
+
+        resp = await gw_client.post(
+            "/verdity/webhooks/bitbucket",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature": sig,
+                "X-Event-Key": "pullrequest:declined",
+                "X-Request-UUID": delivery_id,
+            },
+        )
+        assert resp.status_code == 202
+        data = resp.json()
+        assert data["status"] == "ignored"
+
+    @pytest.mark.asyncio
+    async def test_bitbucket_approved_ignored(self, gw_client):
+        """Bitbucket pullrequest:approved should return 202 ignored."""
+        body = json.dumps(
+            {
+                "pullrequest": {
+                    "id": 3,
+                    "title": "Approved PR",
+                    "description": "",
+                    "source": {"commit": {"hash": "abc"}},
+                    "destination": {"commit": {"hash": "def"}},
+                    "author": {"username": "u"},
+                    "links": {},
+                },
+                "repository": {"name": "repo", "owner": {"uuid": "owner-uuid"}},
+            },
+            separators=(",", ":"),
+        ).encode()
+        sig = _sign("bitbucket-secret", body)
+        delivery_id = "bitbucket-approved-test-" + str(uuid.uuid4())
+
+        resp = await gw_client.post(
+            "/verdity/webhooks/bitbucket",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature": sig,
+                "X-Event-Key": "pullrequest:approved",
+                "X-Request-UUID": delivery_id,
+            },
+        )
+        assert resp.status_code == 202
+        data = resp.json()
+        assert data["status"] == "ignored"
+
+    @pytest.mark.asyncio
+    async def test_bitbucket_push_ignored(self, gw_client):
+        """Bitbucket repo:push event should return 202 ignored (no PR)."""
+        body = json.dumps(
+            {
+                "push": {
+                    "changes": [],
+                },
+                "repository": {"name": "repo", "owner": {"uuid": "owner-uuid"}},
+            },
+            separators=(",", ":"),
+        ).encode()
+        sig = _sign("bitbucket-secret", body)
+        delivery_id = "bitbucket-push-test-" + str(uuid.uuid4())
+
+        resp = await gw_client.post(
+            "/verdity/webhooks/bitbucket",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature": sig,
+                "X-Event-Key": "repo:push",
+                "X-Request-UUID": delivery_id,
+            },
+        )
+        assert resp.status_code == 202
+        data = resp.json()
+        assert data["status"] == "ignored"
+
+    @pytest.mark.asyncio
+    async def test_gitlab_close_ignored(self, gw_client):
+        """GitLab MR close should return 202 ignored."""
+        body = json.dumps(
+            {
+                "object_kind": "merge_request",
+                "user": {"username": "u"},
+                "project": {"namespace": "owner", "name": "repo", "id": 1},
+                "object_attributes": {
+                    "action": "close",
+                    "iid": 1,
+                    "title": "Closed MR",
+                    "description": "",
+                    "head_commit_sha": "abc",
+                    "target_commit_sha": "def",
+                },
+            },
+            separators=(",", ":"),
+        ).encode()
+        sig = _sign("gitlab-secret", body)
+        delivery_id = "gitlab-close-test-" + str(uuid.uuid4())
+
+        resp = await gw_client.post(
+            "/verdity/webhooks/gitlab",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Gitlab-Token": "gitlab-secret",
+                "X-Gitlab-Event-Uuid": delivery_id,
+            },
+        )
+        assert resp.status_code == 202
+        data = resp.json()
+        assert data["status"] == "ignored"
+
+    @pytest.mark.asyncio
+    async def test_gitlab_merge_ignored(self, gw_client):
+        """GitLab MR merge should return 202 ignored."""
+        body = json.dumps(
+            {
+                "object_kind": "merge_request",
+                "user": {"username": "u"},
+                "project": {"namespace": "owner", "name": "repo", "id": 1},
+                "object_attributes": {
+                    "action": "merge",
+                    "iid": 1,
+                    "title": "Merged MR",
+                    "description": "",
+                    "head_commit_sha": "abc",
+                    "target_commit_sha": "def",
+                },
+            },
+            separators=(",", ":"),
+        ).encode()
+        sig = _sign("gitlab-secret", body)
+        delivery_id = "gitlab-merge-test-" + str(uuid.uuid4())
+
+        resp = await gw_client.post(
+            "/verdity/webhooks/gitlab",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Gitlab-Token": "gitlab-secret",
+                "X-Gitlab-Event-Uuid": delivery_id,
+            },
+        )
+        assert resp.status_code == 202
+        data = resp.json()
+        assert data["status"] == "ignored"
+
+    @pytest.mark.asyncio
+    async def test_gitlab_push_ignored(self, gw_client):
+        """GitLab push event should return 202 ignored (no MR)."""
+        body = json.dumps(
+            {
+                "object_kind": "push",
+                "user": {"username": "u"},
+                "project": {"namespace": "owner", "name": "repo", "id": 1},
+            },
+            separators=(",", ":"),
+        ).encode()
+        sig = _sign("gitlab-secret", body)
+        delivery_id = "gitlab-push-test-" + str(uuid.uuid4())
+
+        resp = await gw_client.post(
+            "/verdity/webhooks/gitlab",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Gitlab-Token": "gitlab-secret",
+                "X-Gitlab-Event-Uuid": delivery_id,
+            },
+        )
+        assert resp.status_code == 202
+        data = resp.json()
+        assert data["status"] == "ignored"
+
+    @pytest.mark.asyncio
+    async def test_github_issue_ignored(self, gw_client):
+        """GitHub issues event should return 202 ignored (not a PR event)."""
+        body = json.dumps(
+            {
+                "action": "opened",
+                "issue": {
+                    "number": 1,
+                    "title": "Issue",
+                    "body": "",
+                },
+                "repository": {"name": "repo", "owner": {"login": "owner"}, "id": 1},
+                "sender": {"login": "user"},
+            },
+            separators=(",", ":"),
+        ).encode()
+        sig = _sign(GITHUB_SECRET, body)
+        delivery_id = "github-issue-test-" + str(uuid.uuid4())
+
+        resp = await gw_client.post(
+            "/verdity/webhooks/github",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": sig,
+                "X-GitHub-Event": "issues",
+                "X-GitHub-Delivery": delivery_id,
+            },
+        )
+        assert resp.status_code == 202
+        data = resp.json()
+        assert data["status"] == "ignored"
+
+    @pytest.mark.asyncio
+    async def test_reviewable_opened_accepted(self, gw_client):
+        """Reviewable events like pull_request:created should still be accepted."""
+        body = json.dumps(
+            {
+                "pullrequest": {
+                    "id": 100,
+                    "title": "Reviewable PR",
+                    "description": "",
+                    "source": {"commit": {"hash": "abc"}},
+                    "destination": {"commit": {"hash": "def"}},
+                    "author": {"username": "reviewer"},
+                    "links": {},
+                },
+                "repository": {"name": "repo", "owner": {"uuid": "owner-uuid"}},
+            },
+            separators=(",", ":"),
+        ).encode()
+        sig = _sign("bitbucket-secret", body)
+        delivery_id = "bitbucket-reviewable-" + str(uuid.uuid4())
+
+        resp = await gw_client.post(
+            "/verdity/webhooks/bitbucket",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature": sig,
+                "X-Event-Key": "pullrequest:created",
+                "X-Request-UUID": delivery_id,
+            },
+        )
+        assert resp.status_code == 202, (
+            f"Reviewable event should be accepted, got {resp.status_code}: {resp.text}"
+        )
+        data = resp.json()
+        assert data["status"] == "queued"
+        assert "message_id" in data

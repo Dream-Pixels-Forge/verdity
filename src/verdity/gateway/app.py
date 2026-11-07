@@ -701,9 +701,72 @@ async def handle_github_webhook(
         logger.error("Failed to normalize webhook: %s", exc)
         raise HTTPException(status_code=400, detail="Webhook normalization failed") from exc
 
-    # ── Step 5: Sanitize paths before enqueueing ──────────────────────
+    # ── Step 5: Check if trigger is reviewable ──────────────────────────
+    # Known GitHub event types that we explicitly support for PR reviews
+    KNOWN_GITHUB_EVENT_TYPES = {
+        "pull_request",
+        "pull_request_review_comment",
+        "check_suite",
+        "push",
+        "installation",
+        "installation_repositories",
+    }
+
+    # Reviewable trigger types that should be enqueued for review
+    REVIEWABLE_TRIGGERS = {
+        "pr.opened",
+        "pr.synchronize",
+        "pr.reopened",
+        "pr.ready_for_review",
+        "review_comment.created",
+        "check_suite.rerequested",
+        "push",
+        "installation.created",
+        "installation_repositories.added",
+        "installation.deleted",
+    }
+
+    trigger_type_str = event.trigger_type.value
+
+    # Check if the event type is known and the trigger is reviewable
+    is_known_event = x_github_event in KNOWN_GITHUB_EVENT_TYPES
+    is_reviewable = trigger_type_str in REVIEWABLE_TRIGGERS
+
+    if not is_known_event or not is_reviewable:
+        logger.info(
+            "Ignoring non-reviewable GitHub event: event=%s trigger=%s delivery=%s known=%s",
+            x_github_event,
+            trigger_type_str,
+            x_github_delivery,
+            is_known_event,
+        )
+        await request.app.state.audit.append(
+            event_type="webhook.ignored",
+            entity_type="delivery",
+            entity_id=x_github_delivery,
+            payload={
+                "platform": "github",
+                "trigger_type": trigger_type_str,
+                "event": x_github_event,
+                "action": payload.get("action", ""),
+                "is_known_event": is_known_event,
+            },
+        )
+        return JSONResponse(
+            status_code=202,
+            content={
+                "status": "ignored",
+                "delivery_id": x_github_delivery,
+                "platform": "github",
+                "trigger_type": trigger_type_str,
+                "message": f"Event type not reviewable: {trigger_type_str}",
+            },
+        )
+
+    # ── Step 7: Sanitize paths before enqueueing ──────────────────────
+    # Only sanitize if we have valid non-empty PR SHAs (non-PR events may have empty ones)
     pr = event.pull_request
-    if pr:
+    if pr and pr.head_sha and pr.base_sha:
         try:
             pr.head_sha = _sanitize_path(pr.head_sha)
             pr.base_sha = _sanitize_path(pr.base_sha)
@@ -711,7 +774,7 @@ async def handle_github_webhook(
             logger.warning("Rejected suspicious PR ref: %s", exc)
             raise HTTPException(status_code=400, detail="Invalid PR reference") from exc
 
-    # ── Step 6: Enqueue (decoupling boundary — nothing else happens here) ─
+    # ── Step 8: Enqueue (decoupling boundary — nothing else happens here) ─
     envelope = QueueEnvelope(event=event)
     try:
         msg_id = await request.app.state.queue.publish(envelope)
@@ -725,7 +788,7 @@ async def handle_github_webhook(
         _add_security_headers(response)
         return response
 
-    # ── Step 7: Audit log (constraint #9 — if it isn't logged, it didn't happen) ─
+    # ── Step 9: Audit log (constraint #9 — if it isn't logged, it didn't happen) ─
     await request.app.state.audit.append(
         event_type="webhook.ingested",
         entity_type="delivery",
@@ -864,14 +927,64 @@ async def handle_platform_webhook(
     if delivery_cache is not None:
         await delivery_cache.add(delivery_id)
 
-    # ── Step 6: Convert to Verdity internal format and enqueue ────────
+    # ── Step 6: Check if trigger is reviewable ──────────────────────────
     from verdity.schemas import PullRequestRef, RepoRef, TriggerType, VerdityEvent
 
+    # Reviewable trigger types that should be enqueued for review
+    REVIEWABLE_TRIGGERS = {
+        "pr.opened",
+        "pr.synchronize",
+        "pr.reopened",
+        "pr.ready_for_review",
+        "review_comment.created",
+        "check_suite.rerequested",
+        "push",
+        "installation.created",
+        "installation_repositories.added",
+        "installation.deleted",
+    }
+
     trigger_type_str = event_dict.get("trigger_type", "unknown")
+
+    # Check if this is a valid reviewable trigger type
     try:
         trigger_type = TriggerType(trigger_type_str)
+        is_reviewable = trigger_type_str in REVIEWABLE_TRIGGERS
     except ValueError:
-        trigger_type = TriggerType.PR_OPENED  # default for unknown
+        trigger_type = TriggerType.PR_OPENED
+        is_reviewable = False
+
+    # Record delivery ID for dedup (SG-07: record after the decision, but before ignoring)
+    # This ensures ignored events still count toward dedup
+
+    # ── Step 6a: Ignore non-reviewable events ────────────────────────
+    if not is_reviewable:
+        logger.info(
+            "Ignoring non-reviewable event: platform=%s trigger=%s delivery=%s",
+            platform,
+            trigger_type_str,
+            delivery_id,
+        )
+        await request.app.state.audit.append(
+            event_type="webhook.ignored",
+            entity_type="delivery",
+            entity_id=delivery_id,
+            payload={
+                "platform": platform,
+                "trigger_type": trigger_type_str,
+                "action": event_dict.get("action", ""),
+            },
+        )
+        return JSONResponse(
+            status_code=202,
+            content={
+                "status": "ignored",
+                "delivery_id": delivery_id,
+                "platform": platform,
+                "trigger_type": trigger_type_str,
+                "message": f"Event type not reviewable: {trigger_type_str}",
+            },
+        )
 
     repo_dict = event_dict.get("repo", {})
     pr_dict = event_dict.get("pull_request", {})
