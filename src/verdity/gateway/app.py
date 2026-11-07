@@ -28,6 +28,7 @@ Security hardening (Phase 12 - Issue #41):
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 import ipaddress
 import logging
@@ -826,7 +827,7 @@ async def handle_platform_webhook(
     if not platform_instance.verify_webhook(headers_dict, raw_body, secret):
         delivery_id = headers_dict.get(
             "x-github-delivery",
-            headers_dict.get("x-hook-uuid", "unknown"),
+            headers_dict.get("x-request-uuid", "unknown"),
         )
         logger.warning(
             "Webhook verification failed for platform=%s delivery=%s",
@@ -852,7 +853,7 @@ async def handle_platform_webhook(
     # ── Step 5: Replay detection ──────────────────────────────────────
     delivery_id = event_dict.get("delivery_id", "")
     if not delivery_id:
-        delivery_id = f"{platform}-{hash(raw_body.hex()[:64])}"
+        delivery_id = f"{platform}-{hashlib.sha256(raw_body).hexdigest()}"
 
     if delivery_id in request.app.state.delivery_ids:
         logger.warning("Duplicate delivery ID detected: %s", delivery_id)

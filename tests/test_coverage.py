@@ -4185,7 +4185,7 @@ class TestPlatformWebhookHandlerCalledDirectly:
             app=gateway_module.app,
             headers={
                 "x-hub-signature": sig,
-                "x-hook-uuid": str(uuid.uuid4()),
+                "x-request-uuid": str(uuid.uuid4()),
                 "x-event-key": "pullrequest:created",
                 "content-type": "application/json",
             },

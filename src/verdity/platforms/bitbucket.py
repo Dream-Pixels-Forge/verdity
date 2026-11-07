@@ -99,7 +99,8 @@ class BitbucketPlatform(Platform):
         PR events have keys like "pullrequest:created", "pullrequest:updated".
         """
         event_key = headers.get("x-event-key", "")
-        delivery_id = headers.get("x-hook-uuid", "")
+        # X-Request-UUID is per-request; X-Hook-UUID is per-webhook (same for all events)
+        delivery_id = headers.get("x-request-uuid", headers.get("x-hook-uuid", ""))
 
         # Only handle pull request events
         if not event_key.startswith("pullrequest:"):
