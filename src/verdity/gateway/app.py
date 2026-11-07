@@ -329,17 +329,26 @@ class DeliveryCache:
         )
         await self._conn.commit()
 
-    async def load_recent(self) -> set[str]:
-        """Load delivery IDs that haven't expired yet."""
+    async def load_recent(self) -> dict[str, float]:
+        """Load delivery IDs that haven't expired yet, with their timestamps."""
         if self._conn is None:
             raise RuntimeError("DeliveryCache is not connected. Call connect() first.")
         cutoff_epoch = time.time() - DELIVERY_CACHE_TTL_SECONDS
         cutoff_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(cutoff_epoch))
         rows = await self._conn.execute(
-            "SELECT delivery_id FROM delivery_cache WHERE created_at >= ?",
+            "SELECT delivery_id, created_at FROM delivery_cache WHERE created_at >= ?",
             (cutoff_iso,),
         )
-        return {row["delivery_id"] for row in rows}
+        # Parse ISO timestamps back to epoch floats for eviction tracking
+        result: dict[str, float] = {}
+        for row in rows:
+            try:
+                ts = time.mktime(time.strptime(row["created_at"], "%Y-%m-%dT%H:%M:%SZ"))
+                result[row["delivery_id"]] = ts
+            except ValueError:
+                # Malformed timestamp — skip it
+                pass
+        return result
 
     async def evict_expired(self) -> int:
         """Remove expired entries. Returns the number of rows deleted."""
@@ -396,6 +405,20 @@ def _cleanup_delivery_cache(state) -> None:
         state._delivery_cache_ts.pop(k, None)
 
 
+async def _mark_delivery_seen(
+    state, delivery_id: str, delivery_cache: DeliveryCache | None
+) -> None:
+    """Record a delivery ID as seen — in memory and persisted to SQLite.
+
+    Called ONLY after successful enqueue so that failed requests (400/503)
+    leave the ID unregistered, allowing GitHub redeliveries to be accepted.
+    """
+    state.delivery_ids.add(delivery_id)
+    state._delivery_cache_ts[delivery_id] = time.time()
+    if delivery_cache is not None:
+        await delivery_cache.add(delivery_id)
+
+
 # ── Lifespan ──────────────────────────────────────────────────────────
 
 
@@ -443,9 +466,9 @@ async def lifespan(app: FastAPI):
     app.state.metrics = MetricsStore(db_path=metrics_path)
     await app.state.metrics.connect()
 
-    # Load persisted delivery IDs into memory
-    app.state.delivery_ids: set[str] = await app.state._delivery_cache.load_recent()
-    app.state._delivery_cache_ts: dict[str, float] = {}
+    # Load persisted delivery IDs into memory (with timestamps for eviction)
+    app.state.delivery_ids: set[str] = set(await app.state._delivery_cache.load_recent())
+    app.state._delivery_cache_ts: dict[str, float] = await app.state._delivery_cache.load_recent()
     app.state._last_eviction: float = time.time()
 
     # Load IP allowlist for GitHub webhooks (Issue #41)
@@ -611,16 +634,10 @@ async def handle_github_webhook(
         )
         raise HTTPException(status_code=401, detail="Invalid or missing signature")
 
-    # ── Step 3: Replay detection (delivery ID dedupe cache with TTL) ──
+    # ── Step 3: Replay detection (read-only check — no recording yet) ──
     if x_github_delivery in request.app.state.delivery_ids:
         logger.warning("Duplicate delivery ID detected: %s", x_github_delivery)
         raise HTTPException(status_code=409, detail="Duplicate delivery — already processed")
-    request.app.state.delivery_ids.add(x_github_delivery)
-    request.app.state._delivery_cache_ts[x_github_delivery] = time.time()
-    # Persist to SQLite so dedup survives restart
-    delivery_cache: DeliveryCache | None = getattr(request.app.state, "_delivery_cache", None)
-    if delivery_cache is not None:
-        await delivery_cache.add(x_github_delivery)
 
     # ── Step 4: Parse & normalize payload (only after verification passes) ─
     try:
@@ -664,7 +681,11 @@ async def handle_github_webhook(
         _add_security_headers(response)
         return response
 
-    # ── Step 7: Audit log (constraint #9 — if it isn't logged, it didn't happen) ─
+    # ── Step 7: Mark delivery as seen (only after successful enqueue) ──
+    delivery_cache = getattr(request.app.state, "_delivery_cache", None)
+    await _mark_delivery_seen(request.app.state, x_github_delivery, delivery_cache)
+
+    # ── Step 8: Audit log (constraint #9 — if it isn't logged, it didn't happen) ─
     await request.app.state.audit.append(
         event_type="webhook.ingested",
         entity_type="delivery",
@@ -789,7 +810,7 @@ async def handle_platform_webhook(
         logger.error("Failed to normalize %s webhook: %s", platform, exc)
         raise HTTPException(status_code=400, detail="Webhook normalization failed") from exc
 
-    # ── Step 5: Replay detection ──────────────────────────────────────
+    # ── Step 5: Replay detection (read-only check — no recording yet) ───
     delivery_id = event_dict.get("delivery_id", "")
     if not delivery_id:
         delivery_id = f"{platform}-{hash(raw_body.hex()[:64])}"
@@ -797,11 +818,6 @@ async def handle_platform_webhook(
     if delivery_id in request.app.state.delivery_ids:
         logger.warning("Duplicate delivery ID detected: %s", delivery_id)
         raise HTTPException(status_code=409, detail="Duplicate delivery — already processed")
-    request.app.state.delivery_ids.add(delivery_id)
-    request.app.state._delivery_cache_ts[delivery_id] = time.time()
-    delivery_cache: DeliveryCache | None = getattr(request.app.state, "_delivery_cache", None)
-    if delivery_cache is not None:
-        await delivery_cache.add(delivery_id)
 
     # ── Step 6: Convert to Verdity internal format and enqueue ────────
     from verdity.schemas import PullRequestRef, RepoRef, TriggerType, VerdityEvent
@@ -860,7 +876,11 @@ async def handle_platform_webhook(
         _add_security_headers(response)
         return response
 
-    # ── Step 7: Audit log ─────────────────────────────────────────────
+    # ── Step 7: Mark delivery as seen (only after successful enqueue) ──
+    delivery_cache = getattr(request.app.state, "_delivery_cache", None)
+    await _mark_delivery_seen(request.app.state, delivery_id, delivery_cache)
+
+    # ── Step 8: Audit log ─────────────────────────────────────────────
     await request.app.state.audit.append(
         event_type="webhook.ingested",
         entity_type="delivery",

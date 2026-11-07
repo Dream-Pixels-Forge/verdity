@@ -15,12 +15,14 @@ import json
 import time
 import uuid
 from collections.abc import AsyncGenerator
+from unittest.mock import patch
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from verdity.event_queue import EventQueue
+from verdity.gateway.app import DELIVERY_CACHE_TTL_SECONDS
 from verdity.hmac_verify import compute_signature
 
 WEBHOOK_SECRET = b"test-hmac-secret-key-for-dev-only"
@@ -372,7 +374,7 @@ async def test_delivery_cache_persists_across_restart(tmp_path):
 
     # Load persisted IDs into the in-memory set
     loaded_ids = await cache2.load_recent()
-    app.state.delivery_ids = loaded_ids
+    app.state.delivery_ids = set(loaded_ids)
 
     # The previously-seen delivery ID must be detected as a replay
     assert delivery_id in app.state.delivery_ids
@@ -474,3 +476,209 @@ async def test_503_includes_retry_after_header(gateway_client_and_queue):
     assert "Retry-After" in resp.headers
     retry_after = int(resp.headers["Retry-After"])
     assert retry_after > 0
+
+
+@pytest.mark.asyncio
+async def test_503_retry_succeeds_same_delivery_id(gateway_client_and_queue):
+    """A failed publish (503) must not block a retry with the same delivery ID.
+
+    The delivery ID is recorded ONLY after successful enqueue, so a 503-
+    returned request leaves the ID unregistered — a subsequent redelivery
+    with the same ID must be accepted (202), not rejected (409).
+    """
+    client, queue = gateway_client_and_queue
+    body = _make_signable_payload(SAMPLE_PAYLOAD)
+    sig = _sign(body)
+    delivery_id = str(uuid.uuid4())
+
+    # Make publish fail on first call, succeed on second
+    call_count = 0
+
+    async def failing_publish(envelope):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise OSError("connection refused")
+        return await original_publish(envelope)
+
+    original_publish = queue.publish
+    queue.publish = failing_publish  # type: ignore[method-assign]
+
+    try:
+        # First attempt: queue.publish raises OSError → 503
+        resp_fail = await client.post(
+            "/verdity/webhooks/github",
+            content=body,
+            headers={
+                "X-GitHub-Event": "pull_request",
+                "X-Hub-Signature-256": sig,
+                "X-GitHub-Delivery": delivery_id,
+                "Content-Type": "application/json",
+            },
+        )
+        assert resp_fail.status_code == 503
+
+        # The delivery ID must NOT be in the cache after failure
+        from verdity.gateway.app import app
+
+        recent = await app.state._delivery_cache.load_recent()
+        assert delivery_id not in recent, "Delivery ID must not be recorded after 503"
+
+        # Second attempt with SAME delivery_id → 202 (not 409)
+        resp_ok = await client.post(
+            "/verdity/webhooks/github",
+            content=body,
+            headers={
+                "X-GitHub-Event": "pull_request",
+                "X-Hub-Signature-256": sig,
+                "X-GitHub-Delivery": delivery_id,
+                "Content-Type": "application/json",
+            },
+        )
+        assert resp_ok.status_code == 202, (
+            f"Retry after 503 should succeed (202), got {resp_ok.status_code}: {resp_ok.text}"
+        )
+    finally:
+        queue.publish = original_publish  # type: ignore[method-assign]
+
+
+@pytest.mark.asyncio
+async def test_400_malformed_body_retry_succeeds(gateway_client_and_queue):
+    """A malformed-body rejection (400) must not block a retry with valid body."""
+    client, queue = gateway_client_and_queue
+    sig = _sign(b"not-json")
+    delivery_id = str(uuid.uuid4())
+
+    # First attempt: invalid JSON body → 400
+    resp_fail = await client.post(
+        "/verdity/webhooks/github",
+        content=b"not-json",
+        headers={
+            "X-GitHub-Event": "pull_request",
+            "X-Hub-Signature-256": sig,
+            "X-GitHub-Delivery": delivery_id,
+            "Content-Type": "application/json",
+        },
+    )
+    assert resp_fail.status_code == 400
+
+    # The delivery ID must NOT be recorded after 400
+    from verdity.gateway.app import app
+
+    recent = await app.state._delivery_cache.load_recent()
+    assert delivery_id not in recent
+
+    # Second attempt: valid body with SAME delivery_id → 202
+    resp_ok = await client.post(
+        "/verdity/webhooks/github",
+        content=_make_signable_payload(SAMPLE_PAYLOAD),
+        headers={
+            "X-GitHub-Event": "pull_request",
+            "X-Hub-Signature-256": _sign(_make_signable_payload(SAMPLE_PAYLOAD)),
+            "X-GitHub-Delivery": delivery_id,
+            "Content-Type": "application/json",
+        },
+    )
+    assert resp_ok.status_code == 202, (
+        f"Retry after 400 should succeed (202), got {resp_ok.status_code}: {resp_ok.text}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_accepted_delivery_still_returns_409(gateway_client_and_queue):
+    """A successfully accepted delivery must still be rejected on replay (409)."""
+    client, queue = gateway_client_and_queue
+    body = _make_signable_payload(SAMPLE_PAYLOAD)
+    sig = _sign(body)
+    delivery_id = str(uuid.uuid4())
+
+    # First attempt: valid → 202
+    resp1 = await client.post(
+        "/verdity/webhooks/github",
+        content=body,
+        headers={
+            "X-GitHub-Event": "pull_request",
+            "X-Hub-Signature-256": sig,
+            "X-GitHub-Delivery": delivery_id,
+            "Content-Type": "application/json",
+        },
+    )
+    assert resp1.status_code == 202
+
+    # The delivery ID IS recorded (this is expected for successful enqueues)
+    from verdity.gateway.app import app
+
+    recent = await app.state._delivery_cache.load_recent()
+    assert delivery_id in recent
+
+    # Replay with same ID → 409
+    resp2 = await client.post(
+        "/verdity/webhooks/github",
+        content=body,
+        headers={
+            "X-GitHub-Event": "pull_request",
+            "X-Hub-Signature-256": sig,
+            "X-GitHub-Delivery": delivery_id,
+            "Content-Type": "application/json",
+        },
+    )
+    assert resp2.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_loaded_ids_evicted_after_ttl(tmp_path):
+    """IDs loaded from SQLite at startup must be evicted from memory after TTL.
+
+    Before the fix: load_recent() returns only a set — no timestamps are stored
+    in _delivery_cache_ts, so _cleanup_delivery_cache cannot evict them.
+
+    After the fix: each loaded ID gets a timestamp so periodic cleanup works.
+    """
+    from verdity.audit_store import AuditStore
+    from verdity.gateway.app import (
+        DeliveryCache,
+        _cleanup_delivery_cache,
+        _parse_ip_allowlist,
+        _RateLimiter,
+        app,
+    )
+
+    cache_db = str(tmp_path / "delivery_cache.db")
+    cache = DeliveryCache(db_path=cache_db)
+    await cache.connect()
+
+    app.state.delivery_ids = set()
+    app.state._delivery_cache_ts = {}
+    app.state._last_eviction = 0.0
+    app.state._rate_limiter = _RateLimiter()
+    app.state._delivery_cache = cache
+    app.state._github_ip_allowlist = _parse_ip_allowlist("")
+    app.state.queue = EventQueue(db_path=":memory:")
+    app.state.audit = AuditStore(db_path=":memory:")
+    await app.state.queue.connect()
+    await app.state.audit.connect()
+
+    # Insert a RECENT delivery ID into the DB
+    recent_id = str(uuid.uuid4())
+    await cache.add(recent_id)
+
+    # Simulate startup: load IDs into memory (with timestamps, as lifespan does)
+    loaded = await cache.load_recent()
+    assert recent_id in loaded
+    app.state.delivery_ids = set(loaded.keys())
+    app.state._delivery_cache_ts = loaded  # lifespan copies timestamps too
+
+    # Advance time past TTL
+    future_time = time.time() + DELIVERY_CACHE_TTL_SECONDS + 1
+
+    with patch("verdity.gateway.app.time.time", return_value=future_time):
+        _cleanup_delivery_cache(app.state)
+
+    # AFTER FIX: loaded IDs should be evicted because they now have timestamps
+    # BEFORE FIX: they persist because _delivery_cache_ts is empty
+    assert recent_id not in app.state.delivery_ids, "Loaded IDs must be evicted after TTL"
+    assert recent_id not in app.state._delivery_cache_ts
+
+    await cache.close()
+    await app.state.queue.close()
+    await app.state.audit.close()
