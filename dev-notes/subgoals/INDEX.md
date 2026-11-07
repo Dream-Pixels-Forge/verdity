@@ -21,10 +21,10 @@ Work through these **one at a time, in order**. Each subgoal has its own branch,
 |---|---------|----------|------|------------|--------|
 | 01 | [Baseline: dev env, hygiene, packaging](SG-01-baseline-and-hygiene.md) | Low (enabler) | S | — | ☑ |
 | 02 | [MCP `llm_enrich_findings` crash](SG-02-mcp-llm-enrich-crash.md) | High · confirmed | S | 01 | ☑ #65 |
-| 03 | [`verdity-enrich` CLI stdin / `--output-file`](SG-03-cli-enrich.md) | Medium | S | 02 | ☐ |
-| 04 | [Metrics routes: shadowed dashboard + auth](SG-04-metrics-endpoints.md) | High · confirmed | S | 01 | ☐ |
-| 05 | [Await Redis rate limiter in middleware](SG-05-redis-rate-limiter-await.md) | High · confirmed | XS | 01 | ☐ |
-| 06 | [Trusted-proxy client IP (XFF spoofing)](SG-06-trusted-proxy-client-ip.md) | High · security | M | 05 | ☐ |
+| 03 | [`verdity-enrich` CLI stdin / `--output-file`](SG-03-cli-enrich.md) | Medium | S | 02 | ☑ #66 |
+| 04 | [Metrics routes: shadowed dashboard + auth](SG-04-metrics-endpoints.md) | High · confirmed | S | 01 | ☑ #67 |
+| 05 | [Await Redis rate limiter in middleware](SG-05-redis-rate-limiter-await.md) | High · confirmed | XS | 01 | ☑ #68 |
+| 06 | [Trusted-proxy client IP (XFF spoofing)](SG-06-trusted-proxy-client-ip.md) | High · security | M | 05 | ☑ |
 | 07 | [Record delivery ID after enqueue](SG-07-delivery-id-at-least-once.md) | High · data loss | S | 06 | ☐ |
 | 08 | [Bitbucket `X-Request-UUID` + deterministic fallback](SG-08-platform-delivery-ids.md) | High | S | 07 | ☐ |
 | 09 | [Ignore non-reviewable events](SG-09-trigger-type-mapping.md) | High | S | 08 | ☐ |
