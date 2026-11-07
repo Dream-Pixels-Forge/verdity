@@ -20,6 +20,7 @@ import logging
 import signal
 import time
 from contextlib import suppress
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Self
 
 from verdity.event_queue import EventQueue
@@ -123,19 +124,21 @@ class Worker:
         # Rate-limit per repo to avoid thundering herd on large repos
         repo_id = f"{envelope.event.repo.owner}/{envelope.event.repo.name}"
         if repo_id in self._backoffs:
-            # Check if backoff has expired; if not, nack and sleep remaining time
+            # Check if backoff has expired; if not, defer and sleep remaining time
             now = time.monotonic()
             backoff_expiry = self._backoff_expiry_times.get(repo_id, 0)
             if now < backoff_expiry:
                 remaining = backoff_expiry - now
                 logger.debug("Backing off repo %s for %.1fs remaining", repo_id, remaining)
-                # Put message back on queue for retry
+                # Defer message without consuming retries
                 msg_id = envelope.event.delivery_id
-                await self._queue.nack(msg_id, error_msg="backoff")
+                not_before = datetime.now(UTC) + timedelta(seconds=min(remaining, 1.0))
+                await self._queue.defer(msg_id, not_before)
                 await asyncio.sleep(min(remaining, 1.0))
                 return
             # Backoff expired, clear it
             self._backoff_expiry_times.pop(repo_id, None)
+            self._backoffs.pop(repo_id, None)
 
         # Limit concurrency
         while len(self._tasks) >= self._max_concurrent:
@@ -165,14 +168,16 @@ class Worker:
             self._backoffs.pop(repo_id, None)
             self._backoff_expiry_times.pop(repo_id, None)
             await self._queue.acknowledge(msg_id)
-        except Exception as exc:
+        except Exception:
             logger.exception("Failed to process delivery %s", msg_id)
             # Exponential backoff for this repo
             current = self._backoffs.get(repo_id, self._backoff_initial)
             new_backoff = min(current * self._backoff_factor, self._backoff_max)
             self._backoffs[repo_id] = new_backoff
             self._backoff_expiry_times[repo_id] = time.monotonic() + new_backoff
-            await self._queue.nack(msg_id, error_msg=str(exc))
+            # Defer message without consuming retries
+            not_before = datetime.now(UTC) + timedelta(seconds=new_backoff)
+            await self._queue.defer(msg_id, not_before)
 
     async def shutdown(self, signum: int | None = None, frame: Any = None) -> None:
         """Graceful shutdown: stop accepting new work, drain in-flight tasks."""

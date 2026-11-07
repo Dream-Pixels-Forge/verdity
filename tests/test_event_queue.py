@@ -4,6 +4,8 @@ Tests for the durable Event Queue.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from verdity.event_queue import EventQueue
@@ -64,6 +66,30 @@ async def test_nack_and_retry(queue: EventQueue, sample_event):
     await queue.nack(msg_id, error_msg="perm-failure", max_retries=1)
     counts = await queue.count_by_state()
     assert counts["dead"] == 1
+
+
+@pytest.mark.asyncio
+async def test_nack_ignores_unknown_message_id(queue: EventQueue):
+    """nack() should silently return when message_id is not found (no-op)."""
+    await queue.nack("unknown-msg-id", error_msg="fail")
+    # Should not raise; message simply not found
+    counts = await queue.count_by_state()
+    assert counts["pending"] == 0
+    assert counts["dead"] == 0
+
+
+@pytest.mark.asyncio
+async def test_count_by_state_with_repo_id_filter(queue: EventQueue, sample_event):
+    """count_by_state() should filter by repo_id when provided."""
+    envelope = QueueEnvelope(event=sample_event)
+    await queue.publish(envelope)
+
+    counts = await queue.count_by_state(repo_id="acme/widgets")
+    assert counts["pending"] == 1
+
+    # Filter for non-existent repo should return all zeros
+    counts = await queue.count_by_state(repo_id="other/repo")
+    assert counts["pending"] == 0
 
 
 @pytest.mark.asyncio
@@ -185,3 +211,121 @@ async def test_count_by_state_raises_when_not_connected():
     queue = EventQueue(db_path=":memory:")
     with pytest.raises(RuntimeError, match="not connected"):
         await queue.count_by_state()
+
+
+@pytest.mark.asyncio
+async def test_defer_raises_when_not_connected():
+    queue = EventQueue(db_path=":memory:")
+    with pytest.raises(RuntimeError, match="not connected"):
+        await queue.defer("msg-id", datetime.now(UTC))
+
+
+@pytest.mark.asyncio
+async def test_defer_requeues_without_incrementing_retry_count(queue: EventQueue, sample_event):
+    """defer() should requeue a message without incrementing retry_count.
+
+    This is the core fix for SG-11: when backing off, messages should not be
+    dead-lettered due to retry exhaustion.
+    """
+    envelope = QueueEnvelope(event=sample_event)
+    msg_id = await queue.publish(envelope)
+
+    # Consume the message
+    consumed = await queue.consume()
+    assert consumed is not None
+
+    # Defer it for 1 second
+    not_before = datetime.now(UTC) + timedelta(seconds=1)
+    await queue.defer(msg_id, not_before)
+
+    # Check retry_count is still 0 (not incremented)
+    row = await queue._conn.execute_one(
+        "SELECT retry_count, state, not_before FROM queue_messages WHERE message_id = ?",
+        (msg_id,),
+    )
+    assert row is not None
+    assert row["retry_count"] == 0  # key assertion: no increment
+    assert row["state"] == "pending"
+    assert row["not_before"] is not None
+
+
+@pytest.mark.asyncio
+async def test_defer_with_none_not_before_pushes_to_earliest(queue: EventQueue, sample_event):
+    """defer() with not_before=None should make message available immediately.
+
+    This allows clearing a defer when backoff expires.
+    """
+    envelope = QueueEnvelope(event=sample_event)
+    msg_id = await queue.publish(envelope)
+
+    # First defer with a future time
+    not_before = datetime.now(UTC) + timedelta(hours=1)
+    await queue.defer(msg_id, not_before)
+
+    # Now remove the defer by setting to None (or very near-future)
+    await queue.defer(msg_id, None)
+
+    # Message should be consumable
+    consumed = await queue.consume()
+    assert consumed is not None
+    assert consumed.event.delivery_id == "del-001"
+
+
+@pytest.mark.asyncio
+async def test_consume_skips_deferred_messages(queue: EventQueue, sample_event):
+    """consume() should not return messages that are still deferred.
+
+    Messages with not_before > now should remain in pending state but not
+    be returned by consume().
+    """
+    envelope = QueueEnvelope(event=sample_event)
+    msg_id = await queue.publish(envelope)
+
+    # Defer for 1 hour
+    not_before = datetime.now(UTC) + timedelta(hours=1)
+    await queue.defer(msg_id, not_before)
+
+    # Consume should return None since the only message is deferred
+    result = await queue.consume()
+    assert result is None
+
+    # But the message should still be in pending state
+    counts = await queue.count_by_state()
+    assert counts["pending"] == 1
+
+
+@pytest.mark.asyncio
+async def test_consume_returns_ready_messages_skipping_deferred(queue: EventQueue, sample_event):
+    """consume() should skip deferred messages and return ready ones.
+
+    When multiple messages exist, deferred ones should be skipped to allow
+    ready messages to be processed first.
+    """
+    # Message A: will be deferred
+    evt_a = sample_event.model_copy(update={"delivery_id": "del-a"})
+    env_a = QueueEnvelope(event=evt_a)
+    msg_a_id = await queue.publish(env_a)
+
+    # Message B: ready to go
+    evt_b = sample_event.model_copy(update={"delivery_id": "del-b"})
+    env_b = QueueEnvelope(event=evt_b)
+    msg_b_id = await queue.publish(env_b)
+
+    # Defer message A
+    await queue.defer(msg_a_id, datetime.now(UTC) + timedelta(hours=1))
+
+    # Consume should return message B (the only ready message)
+    consumed = await queue.consume()
+    assert consumed is not None
+    assert consumed.event.delivery_id == "del-b"
+
+    # Message A should still be pending and deferred
+    result = await queue.consume()
+    assert result is None  # nothing ready yet
+
+    # Message A becomes ready after its defer time
+    await queue.defer(msg_a_id, None)
+
+    consumed = await queue.consume()
+    assert consumed is not None
+    assert consumed.event.delivery_id == "del-a"

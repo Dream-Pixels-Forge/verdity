@@ -11,7 +11,7 @@ Uses stdlib sqlite3 wrapped with asyncio for async compatibility.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from verdity.async_sqlite import AsyncConnection
@@ -47,7 +47,8 @@ class EventQueue:
             acked_at      TEXT,
             failed_at     TEXT,
             retry_count   INTEGER NOT NULL DEFAULT 0,
-            error_msg     TEXT
+            error_msg     TEXT,
+            not_before    TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_repo_state ON queue_messages(repo_id, state);
         CREATE INDEX IF NOT EXISTS idx_state     ON queue_messages(state);
@@ -94,62 +95,6 @@ class EventQueue:
         )
         await self._conn.commit()
         return msg_id
-
-    async def consume(
-        self, repo_id: str | None = None, timeout_ms: int = 500
-    ) -> QueueEnvelope | None:
-        """
-        Dequeue the oldest pending message for the given repo (or any repo if None).
-        Returns None if no messages are available.
-        """
-        if self._conn is None:
-            raise RuntimeError("EventQueue is not connected. Call connect() first.")
-        if repo_id:
-            # Escape LIKE wildcards in repo_id to prevent cross-repo matching
-            escaped_repo = repo_id.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            rows = await self._conn.execute(
-                """
-                SELECT id, message_id, envelope_json, retry_count
-                FROM queue_messages
-                WHERE state = 'pending' AND repo_id LIKE ? ESCAPE '\\'
-                ORDER BY created_at ASC
-                LIMIT 1
-                """,
-                (escaped_repo,),
-            )
-        else:
-            rows = await self._conn.execute(
-                """
-                SELECT id, message_id, envelope_json, retry_count
-                FROM queue_messages
-                WHERE state = 'pending'
-                ORDER BY created_at ASC
-                LIMIT 1
-                """,
-            )
-        row = rows[0] if rows else None
-
-        if row is None:
-            return None
-
-        msg_id = row["message_id"]
-        # Mark as processing to prevent double-delivery
-        await self._conn.execute(
-            "UPDATE queue_messages SET state = 'processing' WHERE message_id = ?",
-            (msg_id,),
-        )
-        await self._conn.commit()
-
-        data = json.loads(row["envelope_json"])
-        event_dict = data["event"]
-        enqueued_at = datetime.fromisoformat(data["enqueued_at"])
-
-        envelope = QueueEnvelope(
-            event=VerdityEvent(**event_dict),
-            enqueued_at=enqueued_at,
-            retry_count=row["retry_count"],
-        )
-        return envelope
 
     async def acknowledge(self, message_id: str) -> None:
         """Mark a message as successfully processed."""
@@ -226,6 +171,100 @@ class EventQueue:
         for row in rows:
             result[row["state"]] = row["cnt"]
         return result
+
+    async def defer(
+        self,
+        message_id: str,
+        not_before: datetime | None,
+    ) -> None:
+        """Defer a message's processing without incrementing retry_count.
+
+        Args:
+            message_id: The message to defer
+            not_before: When the message becomes available (None = immediately)
+
+        This is the key mechanism for backoff: instead of nacking (which increments
+        retry_count and risks dead-lettering), we defer the message. This allows
+        backoff to work without consuming retries.
+        """
+        if self._conn is None:
+            raise RuntimeError("EventQueue is not connected. Call connect() first.")
+
+        not_before_str = not_before.isoformat() if not_before else None
+        await self._conn.execute(
+            """
+            UPDATE queue_messages
+            SET state = 'pending', not_before = ?
+            WHERE message_id = ?
+            """,
+            (not_before_str, message_id),
+        )
+        await self._conn.commit()
+
+    async def consume(
+        self, repo_id: str | None = None, timeout_ms: int = 500
+    ) -> QueueEnvelope | None:
+        """
+        Dequeue the oldest pending message for the given repo (or any repo if None).
+        Returns None if no messages are available.
+
+        Skipped messages are those with not_before > now (still deferred).
+        """
+        if self._conn is None:
+            raise RuntimeError("EventQueue is not connected. Call connect() first.")
+
+        now_str = datetime.now(UTC).isoformat()
+
+        if repo_id:
+            # Escape LIKE wildcards in repo_id to prevent cross-repo matching
+            escaped_repo = repo_id.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            rows = await self._conn.execute(
+                """
+                SELECT id, message_id, envelope_json, retry_count
+                FROM queue_messages
+                WHERE state = 'pending'
+                  AND repo_id LIKE ? ESCAPE '\\'
+                  AND (not_before IS NULL OR not_before <= ?)
+                ORDER BY created_at ASC
+                LIMIT 1
+                """,
+                (escaped_repo, now_str),
+            )
+        else:
+            rows = await self._conn.execute(
+                """
+                SELECT id, message_id, envelope_json, retry_count
+                FROM queue_messages
+                WHERE state = 'pending'
+                  AND (not_before IS NULL OR not_before <= ?)
+                ORDER BY created_at ASC
+                LIMIT 1
+                """,
+                (now_str,),
+            )
+        row = rows[0] if rows else None
+
+        if row is None:
+            return None
+
+        msg_id = row["message_id"]
+        # Mark as processing to prevent double-delivery
+        await self._conn.execute(
+            "UPDATE queue_messages SET state = 'processing' WHERE message_id = ?",
+            (msg_id,),
+        )
+        await self._conn.commit()
+
+        data = json.loads(row["envelope_json"])
+        event_dict = data["event"]
+        enqueued_at = datetime.fromisoformat(data["enqueued_at"])
+
+        envelope = QueueEnvelope(
+            event=VerdityEvent(**event_dict),
+            enqueued_at=enqueued_at,
+            retry_count=row["retry_count"],
+        )
+        return envelope
 
     async def get_events(self, limit: int = 100) -> list[dict]:
         """Get recent events from the queue for monitoring."""
