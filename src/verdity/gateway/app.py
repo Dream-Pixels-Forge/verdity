@@ -49,7 +49,7 @@ from verdity.event_queue import EventQueue
 from verdity.hmac_verify import verify_with_rotation
 from verdity.metrics_store import MetricsStore
 from verdity.schemas import QueueEnvelope
-from verdity.webhook_normalizer import normalize_webhook
+from verdity.webhook_normalizer import is_mapped_trigger, normalize_webhook
 
 logger = logging.getLogger(__name__)
 
@@ -728,9 +728,13 @@ async def handle_github_webhook(
 
     trigger_type_str = event.trigger_type.value
 
-    # Check if the event type is known and the trigger is reviewable
+    # Check if the event type is known and the trigger is reviewable. The
+    # normalizer falls back to pr.opened for unmapped event/action pairs, so the
+    # trigger alone can't tell `closed` or `labeled` from a real open.
     is_known_event = x_github_event in KNOWN_GITHUB_EVENT_TYPES
-    is_reviewable = trigger_type_str in REVIEWABLE_TRIGGERS
+    is_reviewable = trigger_type_str in REVIEWABLE_TRIGGERS and is_mapped_trigger(
+        x_github_event, payload.get("action")
+    )
 
     if not is_known_event or not is_reviewable:
         logger.info(

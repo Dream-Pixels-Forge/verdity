@@ -34,6 +34,16 @@ _TRIGGER_MAP: dict[tuple[str, str | None], TriggerType] = {
 }
 
 
+def is_mapped_trigger(event_name: str, action: str | None) -> bool:
+    """True if (event, action) maps to a trigger explicitly, not via fallback.
+
+    ``normalize_webhook`` falls back to ``PR_OPENED`` for unmapped pairs so it
+    always returns an event. Callers deciding whether to *review* must check
+    this first, or e.g. ``pull_request.closed`` would be reviewed as opened.
+    """
+    return (event_name, action) in _TRIGGER_MAP or (event_name, None) in _TRIGGER_MAP
+
+
 def _extract_repo(payload: dict) -> RepoRef:
     """Extract repo info — tries repository first, falls back to repo (push events)."""
     repo = payload.get("repository") or payload.get("repo") or {}
