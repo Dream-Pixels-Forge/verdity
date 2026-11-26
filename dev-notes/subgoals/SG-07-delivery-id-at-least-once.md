@@ -22,10 +22,20 @@ A webhook that fails to enqueue must be retryable. Today the gateway rejects the
    - Pull this into one helper, `_dedup_and_enqueue(request, delivery_id, envelope)`, used by both handlers.
 3. Document the guarantee (at-least-once, gateway-side idempotent) in `dev-notes/03-API-Webhook-Specification.md`.
 
+## What was done
+- `gateway/app.py` gained `_reserve_delivery`, `_commit_delivery` and `_release_delivery`. Both handlers now reserve the ID, then run `try: _accept_*() finally: release`. The accept step commits (memory, timestamp and `DeliveryCache`) only after `publish()` succeeds, or once the event is deliberately ignored. A 503, 400 or crash leaves no trace.
+- The in-flight set closes the race the reorder would otherwise open. A mutation check (removing the in-flight test) makes both concurrency tests fail rather than hang.
+- `tests/test_gateway_delivery_dedup.py` (7 tests) covers: retry after a 503 on both routes; a 400 doesn't burn the ID; an ignored event is still deduplicated; concurrent duplicates on both routes are enqueued once; and the GitLab route works without test patches.
+- The guarantee is documented in `03-API-Webhook-Specification.md` §1.
+
+## Found while doing this (separate commits)
+- **The platform route returned 400 for every reviewable GitLab and Bitbucket webhook.** It built `RepoRef` without the required `id`, and the tests hid this by monkeypatching `RepoRef.__init__`. Fixed: the gateway passes `id` (GitLab's `project.id`; Bitbucket has no numeric id, so 0) and the monkeypatches are removed.
+- **SG-09 regression on the GitHub route.** The normalizer falls back to `pr.opened` for unmapped event/action pairs, so `pull_request.closed`, `labeled`, `edited`, `assigned`, `installation.suspend` and others were queued as full reviews. Fixed with `webhook_normalizer.is_mapped_trigger()`.
+
 ## Definition of done
-- [ ] A retry after a failed enqueue is accepted (tested on both routes).
-- [ ] The concurrent duplicate test passes.
-- [ ] The dedup code lives in one helper and the two handlers don't duplicate it.
+- [x] A retry after a failed enqueue is accepted (tested on both routes).
+- [x] The concurrent duplicate test passes.
+- [x] The dedup code lives in one set of helpers and the two handlers don't duplicate it.
 
 ## Commit
 `fix(gateway): record delivery ID only after successful enqueue (at-least-once)`

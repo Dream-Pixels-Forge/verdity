@@ -37,7 +37,7 @@ import time
 from collections import defaultdict
 from contextlib import suppress
 from ipaddress import ip_address
-from typing import Protocol
+from typing import Any, Protocol
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
@@ -459,6 +459,46 @@ def _cleanup_delivery_cache(state) -> None:
         state._delivery_cache_ts.pop(k, None)
 
 
+def _inflight_deliveries(state) -> set[str]:
+    inflight = getattr(state, "delivery_inflight", None)
+    if inflight is None:
+        inflight = set()
+        state.delivery_inflight = inflight
+    return inflight
+
+
+def _reserve_delivery(state, delivery_id: str) -> None:
+    """Reject a duplicate, then mark the delivery as in flight (SG-07).
+
+    A duplicate is an ID already accepted, or one another request is processing
+    right now. There is no ``await`` between the check and the add, so this is
+    atomic under asyncio. Always pair with :func:`_release_delivery`.
+    """
+    inflight = _inflight_deliveries(state)
+    if delivery_id in state.delivery_ids or delivery_id in inflight:
+        logger.warning("Duplicate delivery ID detected: %s", delivery_id)
+        raise HTTPException(status_code=409, detail="Duplicate delivery — already processed")
+    inflight.add(delivery_id)
+
+
+async def _commit_delivery(state, delivery_id: str) -> None:
+    """Record a delivery as handled. Call only once it is enqueued or deliberately ignored.
+
+    Recording earlier would turn the provider's retry of a failed request (503,
+    400) into a 409, and the event would be lost.
+    """
+    state.delivery_ids.add(delivery_id)
+    state._delivery_cache_ts[delivery_id] = time.time()
+    # Persist to SQLite so dedup survives restart
+    delivery_cache: DeliveryCache | None = getattr(state, "_delivery_cache", None)
+    if delivery_cache is not None:
+        await delivery_cache.add(delivery_id)
+
+
+def _release_delivery(state, delivery_id: str) -> None:
+    _inflight_deliveries(state).discard(delivery_id)
+
+
 # ── Lifespan ──────────────────────────────────────────────────────────
 
 
@@ -673,16 +713,22 @@ async def handle_github_webhook(
         raise HTTPException(status_code=401, detail="Invalid or missing signature")
 
     # ── Step 3: Replay detection (delivery ID dedupe cache with TTL) ──
-    if x_github_delivery in request.app.state.delivery_ids:
-        logger.warning("Duplicate delivery ID detected: %s", x_github_delivery)
-        raise HTTPException(status_code=409, detail="Duplicate delivery — already processed")
-    request.app.state.delivery_ids.add(x_github_delivery)
-    request.app.state._delivery_cache_ts[x_github_delivery] = time.time()
-    # Persist to SQLite so dedup survives restart
-    delivery_cache: DeliveryCache | None = getattr(request.app.state, "_delivery_cache", None)
-    if delivery_cache is not None:
-        await delivery_cache.add(x_github_delivery)
+    # Reserve now; the ID is only recorded once the event is safely queued
+    # or deliberately ignored (SG-07, at-least-once ingestion).
+    _reserve_delivery(request.app.state, x_github_delivery)
+    try:
+        return await _accept_github_webhook(request, x_github_event, x_github_delivery, matched)
+    finally:
+        _release_delivery(request.app.state, x_github_delivery)
 
+
+async def _accept_github_webhook(
+    request: Request,
+    x_github_event: str,
+    x_github_delivery: str,
+    matched: str,
+) -> JSONResponse:
+    """Steps 4 to 9 of the GitHub handler, run while the delivery ID is reserved."""
     # ── Step 4: Parse & normalize payload (only after verification passes) ─
     try:
         payload = await request.json()
@@ -744,6 +790,8 @@ async def handle_github_webhook(
             x_github_delivery,
             is_known_event,
         )
+        # Handled on purpose: a redelivery of an ignored event is a duplicate.
+        await _commit_delivery(request.app.state, x_github_delivery)
         await request.app.state.audit.append(
             event_type="webhook.ignored",
             entity_type="delivery",
@@ -791,6 +839,8 @@ async def handle_github_webhook(
         response.headers["Retry-After"] = "30"
         _add_security_headers(response)
         return response
+
+    await _commit_delivery(request.app.state, x_github_delivery)
 
     # ── Step 9: Audit log (constraint #9 — if it isn't logged, it didn't happen) ─
     await request.app.state.audit.append(
@@ -922,15 +972,21 @@ async def handle_platform_webhook(
     if not delivery_id:
         delivery_id = f"{platform}-{hashlib.sha256(raw_body).hexdigest()}"
 
-    if delivery_id in request.app.state.delivery_ids:
-        logger.warning("Duplicate delivery ID detected: %s", delivery_id)
-        raise HTTPException(status_code=409, detail="Duplicate delivery — already processed")
-    request.app.state.delivery_ids.add(delivery_id)
-    request.app.state._delivery_cache_ts[delivery_id] = time.time()
-    delivery_cache: DeliveryCache | None = getattr(request.app.state, "_delivery_cache", None)
-    if delivery_cache is not None:
-        await delivery_cache.add(delivery_id)
+    # Reserve now; record only once queued or deliberately ignored (SG-07).
+    _reserve_delivery(request.app.state, delivery_id)
+    try:
+        return await _accept_platform_webhook(request, platform, delivery_id, event_dict)
+    finally:
+        _release_delivery(request.app.state, delivery_id)
 
+
+async def _accept_platform_webhook(
+    request: Request,
+    platform: str,
+    delivery_id: str,
+    event_dict: dict[str, Any],
+) -> JSONResponse:
+    """Steps 6 and 7 of the platform handler, run while the delivery ID is reserved."""
     # ── Step 6: Check if trigger is reviewable ──────────────────────────
     from verdity.schemas import PullRequestRef, RepoRef, TriggerType, VerdityEvent
 
@@ -958,9 +1014,6 @@ async def handle_platform_webhook(
         trigger_type = TriggerType.PR_OPENED
         is_reviewable = False
 
-    # Record delivery ID for dedup (SG-07: record after the decision, but before ignoring)
-    # This ensures ignored events still count toward dedup
-
     # ── Step 6a: Ignore non-reviewable events ────────────────────────
     if not is_reviewable:
         logger.info(
@@ -969,6 +1022,8 @@ async def handle_platform_webhook(
             trigger_type_str,
             delivery_id,
         )
+        # Handled on purpose: a redelivery of an ignored event is a duplicate.
+        await _commit_delivery(request.app.state, delivery_id)
         await request.app.state.audit.append(
             event_type="webhook.ignored",
             entity_type="delivery",
@@ -1043,6 +1098,8 @@ async def handle_platform_webhook(
         response.headers["Retry-After"] = "30"
         _add_security_headers(response)
         return response
+
+    await _commit_delivery(request.app.state, delivery_id)
 
     # ── Step 7: Audit log ─────────────────────────────────────────────
     await request.app.state.audit.append(

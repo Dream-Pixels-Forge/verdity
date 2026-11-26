@@ -29,9 +29,9 @@ Files for the subgoals already done (01–05, 08–10, 15) were never committed.
 | 04 | Metrics routes: shadowed dashboard + auth | High · confirmed | S | 01 | ☑ #67 |
 | 05 | Await Redis rate limiter in middleware | High · confirmed | XS | 01 | ☑ #68 |
 | 06 | [Trusted-proxy client IP (XFF spoofing)](SG-06-trusted-proxy-client-ip.md) | High · security | M | 05 | ☑ f8f185c |
-| 07 | [Record delivery ID after enqueue](SG-07-delivery-id-at-least-once.md) | High · data loss | S | 06 | ☐ |
+| 07 | [Record delivery ID after enqueue](SG-07-delivery-id-at-least-once.md) | High · data loss | S | 06 | ☑ |
 | 08 | Bitbucket `X-Request-UUID` + deterministic fallback | High | S | 07 | ☑ 4f16974 |
-| 09 | Ignore non-reviewable events | High | S | 08 | ☑ #71 |
+| 09 | Ignore non-reviewable events | High | S | 08 | ☑ #71 (GitHub-route regression fixed with SG-07) |
 | 10 | GitLab MR field mapping | High | S | 09 | ☑ #72 |
 | 11 | [Worker backoff + per-repo ordering](SG-11-worker-backoff-and-ordering.md) | High | M | 01 | ☐ |
 | 12 | [Gateway and worker share the queue](SG-12-queue-config-unification.md) | High | S | 11, 16 | ☐ |
@@ -60,7 +60,7 @@ Files for the subgoals already done (01–05, 08–10, 15) were never committed.
 | 24 | [Evaluation harness (precision/recall/ECE in CI)](SG-24-evaluation-harness.md) | Proves calibration | M | 17 | ☐ |
 
 ## Recommended order
-**18 → 17 → 07 → 11 → 16 → 12 → 13 → 14 → 25 → 24 → 19 → 20 → 21 → 22 → 23**
+**~~18 → 17 → 07~~ → 11 → 16 → 12 → 13 → 14 → 25 → 24 → 19 → 20 → 21 → 22 → 23**
 
 - **18** first: it's trivial and makes the tree clean for everything after it.
 - **17** next: today `verdity-review --post-check` posts *every* finding, so Verdity's main promise (constraint #7) is broken for anyone using it now. It needs nothing else and gives SG-14 its `gate_findings` building block.
