@@ -45,7 +45,7 @@ Files for the subgoals already done (01–05, 08–10, 15) were never committed.
 |---|---------|----------|------|------------|--------|
 | 16 | [Queue leases, atomic claim, dead-letter replay](SG-16-queue-leases-and-dead-letter.md) | High · silent loss | M | 11 | ☐ |
 | 17 | [Gate every post through the router (constraint #7)](SG-17-confidence-gated-posting.md) | **Critical** | M | — | ☐ |
-| 18 | [Repo hygiene](SG-18-repo-hygiene.md) | Low | XS | — | ☐ |
+| 18 | [Repo hygiene](SG-18-repo-hygiene.md) | Low | XS | — | ◐ (coverage-gate.yml decision open) |
 
 ## Track C — New features
 

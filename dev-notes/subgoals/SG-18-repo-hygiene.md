@@ -19,9 +19,16 @@ A new contributor (or the PyPI sdist) shouldn't get scripts that only work on on
 3. Move superseded dev-notes to `dev-notes/archive/` and add `dev-notes/README.md` listing which docs are current.
 4. Add a test that compares `verdity.__version__`, `importlib.metadata.version` and the CHANGELOG's top entry (it may already exist in `test_version.py`; extend it to the README).
 
+## Found during the work
+- **`.github/workflows/coverage-gate.yml` has never run.** It's invalid YAML: the inline `python3 -c` blocks start at column 0, so GitHub reports the file path as the run name and every one of its 58 runs failed with no jobs, including on master. It also runs `pip install -e /home/dimona/...` and `python -m silent_failure_hunter`, a tool that isn't on PyPI, so it can't pass on a hosted runner even once parsed. Its pytest step duplicates `ci.yml`, which already enforces 100% (not 95%) on 6 OS×Python combinations. **Owner decision needed:** delete it, or publish silent-failure-hunter and repair the YAML.
+- `.pre-commit-config.yaml`: `debug-logger` isn't a valid hook ID (pre-commit aborts on it, so *no* hook ran), and `black` conflicted with the `ruff format` that CI enforces. Fixed to `debug-statements` and `ruff-format` (rev matching the installed ruff 0.16.9). The local silent-failure-hunter hook now uses the script, which takes the path from `SILENT_FAILURE_HUNTER_PATH` and prints a notice when the tool is missing. (Before, it passed silently because of `|| true`.)
+- `MANIFEST.in` shipped all of `dev-notes/` in the sdist. It now ships only `dev-notes/SECURITY.md` (the README links to it).
+
 ## Definition of done
-- [ ] There are no absolute home paths in tracked files (`git grep -n "/home/"` is empty outside archived notes).
-- [ ] The sdist contents have been checked.
+- [ ] There are no absolute home paths in tracked files outside archived notes. Only `coverage-gate.yml` is left, pending the owner decision above.
+- [x] The sdist contents have been checked: only `dev-notes/SECURITY.md` ships, and no `.prides`, `specs` or helper scripts.
+- [x] Machine-specific scripts removed; stale notes in `dev-notes/archive/`; `dev-notes/README.md` added.
+- [x] `test_version_sources_agree` checks pyproject, `__version__` and the CHANGELOG.
 
 ## Commit
 `chore: remove machine-specific scripts, archive stale dev-notes, fix version strings`

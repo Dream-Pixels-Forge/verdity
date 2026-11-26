@@ -5,7 +5,8 @@ include README.md
 include CHANGELOG.md
 include .env.example
 include pyproject.toml
-recursive-include dev-notes *
+prune dev-notes
+include dev-notes/SECURITY.md
 recursive-include skills *
 graft tests
 global-exclude __pycache__

@@ -119,7 +119,7 @@ Violating any of these is a **build failure**, not a style choice.
 ```
 verdity/
 ├── src/verdity/
-│   ├── __init__.py                 # Package root, version 0.5.0
+│   ├── __init__.py                 # Package root, exposes __version__
 │   ├── config.py                   # pydantic-settings; all secrets from env/KMS
 │   ├── async_sqlite.py             # stdlib sqlite3 wrapped with asyncio
 │   ├── schemas/
@@ -167,14 +167,15 @@ verdity/
 │   ├── test_review_rules.py        # 17 tests
 │   └── test_semantic_index_full_context.py  # 11 tests
 ├── dev-notes/
-│   ├── GOAL.md                     # Build charter (single source of truth)
+│   ├── README.md                   # Which notes are current
 │   ├── 01-Product-Requirements-Document.md
 │   ├── 02-Technical-Architecture-Document.md
 │   ├── 03-API-Webhook-Specification.md
 │   ├── 04-Security-Threat-Model.md
 │   ├── 05-Agent-Orchestration-Design.md
-│   ├── PHASE-0{1..8}-GATE.md       # 8 gate validation documents
-│   └── SECURITY-AUDIT.md           # This phase's security audit findings
+│   ├── SECURITY.md                 # LLM integration security requirements
+│   ├── subgoals/                   # Current work plan (INDEX.md)
+│   └── archive/                    # Phase gates, old charters, handoffs
 ├── .env.example                    # Template — NEVER commit real secrets
 ├── .gitignore                      # Excludes .env, *.db, __pycache__, .htmlcov
 ├── pyproject.toml                  # Project config, pytest settings

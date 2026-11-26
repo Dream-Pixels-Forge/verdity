@@ -1,13 +1,9 @@
 repos:
-  - repo: https://github.com/psf/black
-    rev: 24.8.0
+  # Same formatter and linter as CI (.github/workflows/ci.yml): ruff only, no black.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.9
     hooks:
-      - id: black
-        language_version: python3.11
-
-  - repo: https://github.com/charliermarsh/ruff-pre-commit
-    rev: v0.6.9
-    hooks:
+      - id: ruff-format
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
 
@@ -19,16 +15,16 @@ repos:
       - id: check-yaml
       - id: check-added-large-files
       - id: check-merge-conflict
-      - id: debug-logger
+      - id: debug-statements
 
   - repo: local
     hooks:
       - id: silent-failure-hunter
         name: Silent Failure Hunter
-        entry: python -m silent_failure_hunter scan
-        language: system
+        # Skips with a notice when silent-failure-hunter isn't installed.
+        entry: scripts/pre-commit-silent-failure.sh
+        language: script
         types: [python]
-        args: [--project, .]
         pass_filenames: false
         require_serial: true
 
@@ -36,7 +32,7 @@ repos:
     hooks:
       - id: coverage-check
         name: Coverage Check
-        entry: python -m pytest --cov=src/verdity --cov-fail-under=95 -q
+        entry: python -m pytest -q  # coverage gate (100%) comes from pytest.ini
         language: system
         types: [python]
         pass_filenames: false
