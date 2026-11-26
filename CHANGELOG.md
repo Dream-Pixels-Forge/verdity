@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Repo hygiene (SG-18)** — Removed machine-specific helper scripts (`delegate_phase1.py`, `check_syntax.py`, `run_test.py`, `run_coverage.py`, `run_test_coverage.py`); `python -m pytest` is the one test command. Moved superseded notes (phase gates, old charters, handoff and progress notes, `.prides/`) to `dev-notes/archive/` and added `dev-notes/README.md`. The sdist now ships only `dev-notes/SECURITY.md` from `dev-notes/`.
 - **Pre-commit** — Replaced `black` with `ruff-format` to match CI; fixed the invalid `debug-logger` hook ID (`debug-statements`), which stopped every hook from running; the silent-failure-hunter hook takes its path from `SILENT_FAILURE_HUNTER_PATH` and skips with a notice when the tool is absent.
 
+### Removed
+- **`.github/workflows/coverage-gate.yml`** — invalid YAML (inline `python3 -c` blocks at column 0), so it never ran a job; all 58 runs failed instantly. It also installed `silent-failure-hunter` from a local home path. Coverage stays enforced at 100% by `ci.yml` on ubuntu + windows × Python 3.11–3.13.
+
 ### Development
 - Added `test_version_sources_agree`: `pyproject.toml`, `verdity.__version__` and the newest CHANGELOG release must match.
 
