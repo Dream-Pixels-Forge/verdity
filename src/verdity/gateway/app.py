@@ -996,6 +996,9 @@ async def handle_platform_webhook(
             repo=RepoRef(
                 owner=repo_dict.get("owner", ""),
                 name=repo_dict.get("name", ""),
+                # RepoRef.id is required. GitLab supplies a numeric project
+                # id; Bitbucket has none (uuids only), so it defaults to 0.
+                id=int(repo_dict.get("id") or 0),
             ),
             pull_request=PullRequestRef(
                 number=pr_dict.get("number", 0),

@@ -55,16 +55,6 @@ async def gw_client() -> AsyncGenerator[AsyncClient, None]:
     os.environ["METRICS_API_TOKEN"] = "gw-metrics-token"
     get_settings.cache_clear()
 
-    # Patch RepoRef constructor so the gateway's missing-id construction succeeds.
-    # Save original and restore in cleanup.
-    original_init = RepoRef.__init__
-
-    def patched_init(self, owner, name, **kwargs):
-        kwargs.setdefault("id", 0)
-        original_init(self, owner=owner, name=name, **kwargs)
-
-    RepoRef.__init__ = patched_init
-
     app.state.delivery_ids = set()
     app.state._delivery_cache_ts = {}
     app.state._last_eviction = 0.0
@@ -90,7 +80,6 @@ async def gw_client() -> AsyncGenerator[AsyncClient, None]:
         await app.state.audit.close()
         await app.state.metrics.close()
         await app.state._delivery_cache.close()
-        RepoRef.__init__ = original_init
 
 
 # ── Unified /verdity/webhooks/{platform} endpoint ──────────────────────
@@ -147,10 +136,7 @@ async def test_unified_webhook_gitlab_invalid_token_returns_401(gw_client):
 
 @pytest.mark.asyncio
 async def test_unified_webhook_gitlab_valid_signature_returns_202(gw_client):
-    """Valid GitLab token + valid payload returns 202.
-
-    The fixture patches RepoRef.__init__ to forgive the missing id.
-    """
+    """Valid GitLab token + valid payload returns 202."""
     body = json.dumps(
         {
             "object_kind": "merge_request",
@@ -1890,15 +1876,6 @@ class TestRateLimiterMiddlewareAwait:
         os.environ["METRICS_API_TOKEN"] = "gw-metrics-token"
         get_settings.cache_clear()
 
-        # Patch RepoRef constructor so the gateway's missing-id construction succeeds.
-        original_init = RepoRef.__init__
-
-        def patched_init(self, owner, name, **kwargs):
-            kwargs.setdefault("id", 0)
-            original_init(self, owner=owner, name=name, **kwargs)
-
-        RepoRef.__init__ = patched_init
-
         app.state.delivery_ids = set()
         app.state._delivery_cache_ts = {}
         app.state._last_eviction = 0.0
@@ -1923,7 +1900,6 @@ class TestRateLimiterMiddlewareAwait:
             await app.state.audit.close()
             await app.state.metrics.close()
             await app.state._delivery_cache.close()
-            RepoRef.__init__ = original_init
             get_settings.cache_clear()
             for key in ["WEBHOOK_HMAC_SECRET", "WEBHOOK_HMAC_SECRET_PREVIOUS", "METRICS_API_TOKEN"]:
                 os.environ.pop(key, None)
