@@ -220,5 +220,24 @@ class TestVersionEdgeCases:
                     assert result == "0.0.0+unknown"
 
 
+def test_version_sources_agree():
+    """pyproject.toml, verdity.__version__ and the newest CHANGELOG release must match."""
+    import re
+    import tomllib
+
+    import verdity
+
+    root = Path(__file__).resolve().parent.parent
+    pyproject_version = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))[
+        "project"
+    ]["version"]
+    changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+    top_release = re.search(r"^## \[(\d+\.\d+\.\d+[^\]]*)\]", changelog, re.MULTILINE)
+
+    assert top_release is not None, "CHANGELOG.md has no '## [x.y.z]' release heading"
+    assert verdity.__version__ == pyproject_version
+    assert top_release.group(1) == pyproject_version
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

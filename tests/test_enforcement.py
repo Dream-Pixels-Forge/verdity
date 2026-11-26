@@ -657,7 +657,7 @@ class TestRouterEnforcementIntegration:
         decision = await route(finding, enforcement_engine=engine)
 
         # Should be blocked by enforcement, not pass through confidence
-        assert decision.action == RouteAction.MANUAL_REVIEW
+        assert decision.action == RouteAction.BLOCK
 
 
 # ── Gate Test ───────────────────────────────────────────────────────────────

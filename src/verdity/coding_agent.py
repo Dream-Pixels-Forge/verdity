@@ -109,6 +109,33 @@ class CodingAgent:
                 error="No fix available for this finding type",
             )
 
+        # Step 1b: Constraint #7. Nothing reaches a PR unless the finding earns
+        # it through the same gate every other post path uses.
+        from .gating import gate_findings
+        from .schemas import RepoRef, SpecialistResponse
+
+        gate_run_id = uuid.uuid4()
+        gate = await gate_findings(
+            review_run_id=gate_run_id,
+            repo=RepoRef(owner=owner, name=repo, id=0),
+            responses=[
+                SpecialistResponse(
+                    review_run_id=gate_run_id,
+                    specialist="coding_agent",
+                    status="ok",
+                    findings=[finding],
+                )
+            ],
+        )
+        if finding.finding_id not in {f.finding_id for f in gate.postable}:
+            held = (gate.queued + gate.dismissed)[0].decision
+            return FixResult(
+                success=False,
+                finding_id=finding.finding_id,
+                file_path=finding.file,
+                error=f"Held back by the posting gate ({held.action.value}): {held.reason}",
+            )
+
         # Step 2: Generate the unified diff patch
         patch = self._generate_patch(
             file_path=proposed.file,

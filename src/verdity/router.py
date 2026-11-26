@@ -31,6 +31,9 @@ class RouteAction(StrEnum):
     AUTO_APPROVE = "auto_approve"
     MANUAL_REVIEW = "manual_review"
     AUTO_DISMISS = "auto_dismiss"
+    # An enforcement rule says this finding must stop the merge. It is posted
+    # (the developer has to see why) and fails the check run.
+    BLOCK = "block"
 
 
 @dataclass
@@ -160,7 +163,7 @@ async def route(
         if enforcement_decision.blocked:
             # Map enforcement action to RouteAction
             action_map = {
-                "BLOCK": RouteAction.MANUAL_REVIEW,
+                "BLOCK": RouteAction.BLOCK,
                 "REQUIRE_APPROVAL": RouteAction.MANUAL_REVIEW,
                 "ESCALATE": RouteAction.MANUAL_REVIEW,
             }

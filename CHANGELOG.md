@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Webhooks are no longer lost after a failed enqueue (SG-07)** — the gateway recorded a delivery ID *before* enqueueing it, so when `publish()` failed (503) the provider's redelivery got 409 and the event was lost. IDs are now reserved while in flight and recorded only once the event is enqueued or deliberately ignored; concurrent duplicates still enqueue exactly once.
+- **GitLab and Bitbucket webhooks were always rejected** — the platform route built `RepoRef` without its required `id`, so every reviewable GitLab/Bitbucket webhook returned 400. Test fixtures hid it by patching `RepoRef.__init__`; the patches are removed.
+- **Unmapped GitHub actions triggered reviews** — `pull_request` `closed`/`labeled`/`edited`/`assigned` and similar fell back to `pr.opened` in the normalizer and were queued as reviews. New `webhook_normalizer.is_mapped_trigger()` gates queuing.
+- **Constraint #7 enforced on every post path (SG-17)** — `verdity_review` (MCP) and `verdity-review run --post-check/--post-comment` posted *every* finding to the check run, with no confidence routing, dedup or approval queue. A new `verdity.gating.gate_findings` aggregates, routes (enforcement first, then deterministic confidence) and dispatches: auto-approve and blocking findings are posted, manual-review findings go to the Approval Queue, low-confidence findings are only audited (`finding.routed`). The response gains `routing`, `queued_findings` and `conclusion`; the CLI prints the counts.
+- **Check runs now complete** — Verdity created its check run with the default `status="in_progress"` and never finished it. It is now `completed` with `conclusion` = `failure` (blocking rule), `neutral` (findings held for review) or `success`, and the summary says what was posted and held back.
+- **Enforcement `BLOCK` actually blocks** — added `RouteAction.BLOCK`; a `BLOCK` rule previously mapped to `MANUAL_REVIEW` and never failed the check. `REQUIRE_APPROVAL` / `ESCALATE` still route to manual review.
+- **`CodingAgent.apply_fix_and_open_pr` gated** — refuses to post for findings that don't pass the gate.
+
+### Removed
+- `mcp_server._finding_from_flattened` — the lossy dict→Finding round-trip (it dropped explanation, `line_end` and suggested fix). The gate works on the specialists' real `Finding` objects.
+
+### Changed
+- **Repo hygiene (SG-18)** — Removed machine-specific helper scripts (`delegate_phase1.py`, `check_syntax.py`, `run_test.py`, `run_coverage.py`, `run_test_coverage.py`); `python -m pytest` is the one test command. Moved superseded notes (phase gates, old charters, handoff and progress notes, `.prides/`) to `dev-notes/archive/` and added `dev-notes/README.md`. The sdist now ships only `dev-notes/SECURITY.md` from `dev-notes/`.
+- **Pre-commit** — Replaced `black` with `ruff-format` to match CI; fixed the invalid `debug-logger` hook ID (`debug-statements`), which stopped every hook from running; the silent-failure-hunter hook takes its path from `SILENT_FAILURE_HUNTER_PATH` and skips with a notice when the tool is absent.
+
+### Removed
+- **`.github/workflows/coverage-gate.yml`** — invalid YAML (inline `python3 -c` blocks at column 0), so it never ran a job; all 58 runs failed instantly. It also installed `silent-failure-hunter` from a local home path. Coverage stays enforced at 100% by `ci.yml` on ubuntu + windows × Python 3.11–3.13.
+
+### Development
+- Added `test_version_sources_agree`: `pyproject.toml`, `verdity.__version__` and the newest CHANGELOG release must match.
+
 ## [0.5.1] — 2026-11-06
 
 ### Fixed

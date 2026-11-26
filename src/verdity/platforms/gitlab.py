@@ -129,6 +129,7 @@ class GitLabPlatform(Platform):
             "repo": {
                 "owner": project.get("path_with_namespace", project.get("namespace", "")),
                 "name": project.get("name", ""),
+                "id": project.get("id", 0),
             },
             "pull_request": {
                 "number": attrs.get("iid", 0),

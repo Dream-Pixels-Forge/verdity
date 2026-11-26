@@ -4,6 +4,15 @@
 
 set -euo pipefail
 
+# Location of a silent-failure-hunter checkout, if it isn't pip-installed.
+# Example: export SILENT_FAILURE_HUNTER_PATH=~/.config/opencode/skills/silent-failure-hunter
+SFH_PATH="${SILENT_FAILURE_HUNTER_PATH:-}"
+
+if ! PYTHONPATH="$SFH_PATH" python3 -c "import silent_failure_hunter" 2>/dev/null; then
+    echo "silent-failure-hunter not found (pip install it or set SILENT_FAILURE_HUNTER_PATH). Skipping scan."
+    exit 0
+fi
+
 # Get changed Python files
 CHANGED_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep '\.py$' || true)
 
@@ -25,11 +34,11 @@ ERRORS=0
 while IFS= read -r file; do
     if [ -f "$file" ]; then
         echo "Scanning $file..."
-        PYTHONPATH=/home/dimona/.config/opencode/skills/silent-failure-hunter \
+        PYTHONPATH="$SFH_PATH" \
         python3 -m silent_failure_hunter scan --module "$file" --output /dev/null 2>&1 || true
         
         # Check for critical issues in the output
-        OUTPUT=$(PYTHONPATH=/home/dimona/.config/opencode/skills/silent-failure-hunter \
+        OUTPUT=$(PYTHONPATH="$SFH_PATH" \
             python3 -m silent_failure_hunter scan --module "$file" 2>/dev/null || true)
         
         CRITICAL=$(echo "$OUTPUT" | python3 -c "

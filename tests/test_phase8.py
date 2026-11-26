@@ -1,7 +1,7 @@
 """
 Phase 8 — Hardening & Production Readiness.
 
-Validates all Production-Ready criteria from GOAL.md Section 3 and the
+Validates all Production-Ready criteria from the original build charter (Section 3; superseded, see dev-notes/archive/) and the
 STRIDE threat model from Security doc §3 against the actual implementation.
 """
 
@@ -49,7 +49,7 @@ from verdity.webhook_normalizer import normalize_webhook
 
 
 class TestProductionReadyChecklist:
-    """Every item in GOAL.md Section 3 must pass."""
+    """Every item in the original build charter Section 3 must pass."""
 
     @pytest.mark.asyncio
     async def S3_1_webhook_rejection_invalid_sig(self):

@@ -110,6 +110,12 @@ def _print_text_result(result: dict):
     click.echo(f"Tier: {result.get('tier', 'unknown')}")
     click.echo(f"Review Run ID: {result.get('review_run_id', 'unknown')}")
     click.echo(f"Total Findings: {result.get('total_findings', 0)}")
+    routing = result.get("routing")
+    if routing:
+        click.echo(
+            f"Posted: {routing['posted']} · Held for review: {routing['queued']} · "
+            f"Dismissed: {routing['dismissed']} · Blocking: {routing['blocking']}"
+        )
     click.echo()
 
     findings = result.get("findings", [])

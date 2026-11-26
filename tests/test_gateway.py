@@ -462,3 +462,37 @@ async def test_503_includes_retry_after_header(gateway_client_and_queue):
     assert "Retry-After" in resp.headers
     retry_after = int(resp.headers["Retry-After"])
     assert retry_after > 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("event", "action"),
+    [
+        ("pull_request", "closed"),
+        ("pull_request", "labeled"),
+        ("pull_request", "edited"),
+        ("pull_request", "assigned"),
+        ("installation", "suspend"),
+    ],
+)
+async def test_unmapped_github_actions_are_ignored_not_reviewed(
+    gateway_client_and_queue, event, action
+):
+    """The normalizer falls back to pr.opened for unmapped pairs; that must not queue a review."""
+    client, queue = gateway_client_and_queue
+    body = _make_signable_payload({**SAMPLE_PAYLOAD, "action": action})
+
+    resp = await client.post(
+        "/verdity/webhooks/github",
+        content=body,
+        headers={
+            "X-GitHub-Event": event,
+            "X-Hub-Signature-256": _sign(body),
+            "X-GitHub-Delivery": str(uuid.uuid4()),
+            "Content-Type": "application/json",
+        },
+    )
+
+    assert resp.status_code == 202
+    assert resp.json()["status"] == "ignored"
+    assert (await queue.count_by_state())["pending"] == 0

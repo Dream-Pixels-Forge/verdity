@@ -36,6 +36,8 @@ X-GitHub-Delivery: <uuid>
 3. Compare against the `sha256=` value in `X-Hub-Signature-256` using a **constant-time comparison** (never `==`).
 4. Reject with `401 Unauthorized` on mismatch or missing header. Do not parse or queue the payload.
 5. Check `X-GitHub-Delivery` against a short-TTL dedupe cache (24h) to reject replays of a previously-processed delivery.
+   - **At-least-once (SG-07):** the delivery ID is *reserved* at this step, and only *recorded* in the dedupe cache once the event is enqueued or deliberately ignored. A request that fails afterwards (400, 503 or an unexpected error) records nothing, so the provider's redelivery with the same ID is accepted, not refused with 409.
+   - A second request with an ID that's currently in flight gets 409, so concurrent duplicates enqueue exactly once. `EventQueue.publish` is also `INSERT OR IGNORE` on the delivery ID, as a second line of defence.
 6. Only after (3) and (5) pass: parse JSON, normalize, publish to the Event Queue.
 
 ```python
@@ -54,7 +56,7 @@ def verify_signature(secret: bytes, raw_body: bytes, signature_header: str) -> b
 
 - `202 Accepted` — signature valid, event queued. Body: `{"delivery_id": "...", "status": "queued"}`.
 - `401 Unauthorized` — signature invalid or missing.
-- `409 Conflict` — duplicate delivery ID (already processed).
+- `409 Conflict` — duplicate delivery ID (already enqueued or ignored, or currently being processed).
 - `503 Service Unavailable` — queue unreachable; GitHub will retry per its own backoff.
 
 The gateway must respond within GitHub's timeout window (~10s) regardless of downstream load — this is the entire point of decoupling ingestion from processing.
