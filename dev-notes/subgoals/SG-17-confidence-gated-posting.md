@@ -25,9 +25,21 @@
    - Add a `--post-all` escape hatch for local experiments only. It's off by default, always audited, and prints a warning.
 3. Update the README constraint table: change the verification column for #7 from "Router routes by score threshold" to "`gate_findings` on every post path + `test_gated_posting.py`".
 
+## What was done
+- `src/verdity/gating.py`: `gate_findings(...) -> GateResult(postable, queued, dismissed, blocking)`. It aggregates with `confidence_threshold=0.0`, because the aggregator's raw 0.7 filter would otherwise drop CRITICAL findings that the router scores at 1.0. Each finding then goes through `router.route`, MANUAL_REVIEW findings go to `ApprovalQueue.enqueue`, and every finding gets a `finding.routed` audit record. Non-`Finding` results are skipped and counted, never posted.
+- MCP `verdity_review` gates **every** review, posted or not. The response adds `routing`, `queued_findings` and `conclusion`, and the CLI text output prints the counts. The check run is created as `completed` with a real `conclusion` (before, it stayed `in_progress` forever), and its summary lists what was held back. The MCP server now owns an `ApprovalQueue` (in-memory, like its other stores).
+- `RouteAction.BLOCK` was added: an enforcement `BLOCK` gives a posted finding and `conclusion="failure"`, while `REQUIRE_APPROVAL` and `ESCALATE` still give MANUAL_REVIEW.
+- **Second ungated path found by the guard test:** `CodingAgent.apply_fix_and_open_pr` called `post_pr_review`. It's now gated. The method itself is a stub that comments on a hard-coded PR #1 and reports fake success; that's tracked in SG-25.
+- Removed `_finding_from_flattened`, the lossy dict→Finding round-trip that was only used for posting.
+- **Dropped from the plan:** the `--post-all` escape hatch. It would reintroduce the exact bypass this subgoal removes. The JSON output already shows every finding, including held and dismissed ones.
+
+## Follow-ups (not in scope)
+- MCP passes no `enforcement` engine or `calibrator` yet, so `BLOCK` and calibrated weights only apply once a caller wires them in. SG-14's `ReviewPipeline` should load `.verdity/rules.yml` and the `TrustCalibrator`.
+- The MCP approval queue is in-memory, so held findings from a one-shot CLI run are visible in the output but not persisted. SG-19 gives them a durable store and an inbox.
+
 ## Definition of done
-- [ ] There's no code path that calls `create_check_run` or posts a comment without going through `gate_findings` (add a grep-based test or a ruff banned-API rule).
-- [ ] The Red tests pass, with 100% coverage kept.
+- [x] No code path posts to a PR without `gate_findings`. `test_every_pr_post_call_site_is_gated` walks the AST of `src/` and fails on any function that calls a post method without it.
+- [x] The Red tests pass (`tests/test_gated_posting.py`, 13 tests), and coverage stays at 100%.
 
 ## Commit
 `fix(routing): gate all PR posts through aggregate→route→approval queue (constraint #7)`

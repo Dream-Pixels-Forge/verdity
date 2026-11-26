@@ -108,7 +108,7 @@ Violating any of these is a **build failure**, not a style choice.
 | 4 | One shared semantic index — no private stores per agent | All agents receive injected `SemanticIndex` |
 | 5 | Confidence scores computed by deterministic code, never LLM self-report | `_compute_secret_confidence()`, router tests |
 | 6 | Code changes pass: gate → independent verifier → regression, in order | `VerificationGate`, `VerifierSubagent` are separate classes |
-| 7 | Sub-threshold findings never auto-post; always go to Approval Queue | Router routes by score threshold |
+| 7 | Sub-threshold findings never auto-post; always go to Approval Queue | Every PR post path calls `gating.gate_findings` (aggregate → route → approval queue); `tests/test_gated_posting.py` includes an AST guard that fails on any ungated post call |
 | 8 | Every model call metered through `TokenEconomicsService` | All agents call `record_call()` |
 | 9 | Every finding and approval decision logged to Audit Store | All agents append to `AuditStore` |
 

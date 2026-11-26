@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any, ClassVar
 
 from .config import InspectorConfig
@@ -70,63 +71,6 @@ def _create_finding_proxy(finding_data: dict) -> object:
             return self._data.get(name)
 
     return FindingProxy(finding_obj)
-
-
-def _finding_from_flattened(
-    flat: dict[str, Any],
-    *,
-    owner: str,
-    repo: str,
-) -> Any:
-    """Rebuild a full Finding from the dict that _run_orchestrator flattens.
-
-    _run_orchestrator emits a transport-friendly shape (rule_id / message /
-    file_path / line / severity / confidence). Finding requires seven more
-    fields than that, so constructing one directly from those keys raised a
-    ValidationError. Unknown severity/concern values degrade to safe defaults
-    rather than discarding the finding.
-    """
-    from .schemas._models import ConcernType, EvidenceItem, Finding, Severity
-
-    severity_raw = str(flat.get("severity", "info")).lower()
-    try:
-        severity = Severity(severity_raw)
-    except ValueError:
-        severity = Severity.INFO
-
-    # The rule_id is "<specialist>-<index>", so the specialist prefix is the
-    # best available signal for the concern type.
-    rule_id = str(flat.get("rule_id", ""))
-    concern_raw = rule_id.split("-", 1)[0].lower() if "-" in rule_id else ""
-    try:
-        concern = ConcernType(concern_raw)
-    except ValueError:
-        concern = ConcernType.CODE_QUALITY
-
-    line_start = int(flat.get("line", 1) or 1)
-    summary = str(flat.get("message", "")).strip()
-    if not summary:
-        raise ValueError(f"finding {rule_id!r} has no message/summary")
-
-    return Finding(
-        concern=concern,
-        severity=severity,
-        file=str(flat.get("file_path", "") or "unknown"),
-        line_start=line_start,
-        line_end=line_start,
-        summary=summary,
-        explanation=summary,
-        confidence=float(flat.get("confidence", 0.5) or 0.5),
-        evidence=[
-            EvidenceItem(
-                tool=f"verdity/{owner}/{repo}",
-                result=summary,
-                query=rule_id or "review",
-            )
-        ],
-        agent_version="mcp",
-        prompt_hash=rule_id or "mcp",
-    )
 
 
 logger = logging.getLogger(__name__)
@@ -637,6 +581,7 @@ class MCPServer:
         # object. Constructing it with `config=` raised TypeError, and there is
         # no async initialize()/shutdown() on Orchestrator. Follow the same
         # wiring worker.py uses so both entry points behave alike.
+        from .approval_queue import ApprovalQueue
         from .audit_store import AuditStore
         from .event_queue import EventQueue
         from .semantic_index import SemanticIndex
@@ -646,6 +591,9 @@ class MCPServer:
         self._index = SemanticIndex()
         self._token_economics = TokenEconomicsService()
         self._audit = AuditStore()
+        # Findings held back by the posting gate (SG-17). In-memory like the
+        # other MCP stores; the tool response also lists them.
+        self._approval_queue = ApprovalQueue()
 
         # These stores refuse use until connect() is awaited; Orchestrator hits
         # them on the first process_event().
@@ -654,6 +602,7 @@ class MCPServer:
             self._index,
             self._token_economics,
             self._audit,
+            self._approval_queue,
         ):
             connect = getattr(collaborator, "connect", None)
             if connect is not None:
@@ -691,7 +640,7 @@ class MCPServer:
         """Shutdown the MCP server."""
         # Orchestrator exposes no shutdown(); close the collaborators we opened.
         # Each is optional so shutdown() is safe before initialize() ran.
-        for name in ("_queue", "_index", "_token_economics", "_audit"):
+        for name in ("_queue", "_index", "_token_economics", "_audit", "_approval_queue"):
             closer = getattr(getattr(self, name, None), "close", None)
             if closer is not None:
                 await closer()
@@ -1013,6 +962,20 @@ class MCPServer:
 
             findings = result["findings"]
 
+            # Constraint #7: route every finding before anything can reach the
+            # PR. Gate on the real Finding objects, not the flattened dicts.
+            from .gating import gate_findings
+            from .schemas._models import RepoRef
+
+            run = self._orchestrator.get_run(uuid.UUID(result["review_run_id"]))
+            gate = await gate_findings(
+                review_run_id=uuid.UUID(result["review_run_id"]),
+                repo=RepoRef(owner=owner, name=repo, id=0),
+                responses=list((getattr(run, "specialist_results", None) or {}).values()),
+                approval_queue=getattr(self, "_approval_queue", None),
+                audit=getattr(self, "_audit", None),
+            )
+
             response = {
                 "review_run_id": result["review_run_id"],
                 "pr_number": pr_number,
@@ -1020,34 +983,37 @@ class MCPServer:
                 "findings": findings,
                 "summary": result["summary"],
                 "total_findings": len(findings),
+                "routing": gate.counts(),
+                "queued_findings": [
+                    {
+                        "message": g.finding.summary,
+                        "file_path": g.finding.file,
+                        "line": g.finding.line_start,
+                        "severity": g.finding.severity.value,
+                        "confidence": g.decision.confidence,
+                        "reason": g.decision.reason,
+                    }
+                    for g in gate.queued
+                ],
+                "conclusion": gate.conclusion,
             }
 
-            # Optionally post to GitHub
+            # Optionally post to GitHub: only what passed the gate.
             if post_to_github:
                 from verdity.github_client import create_check_output
 
-                postable = []
-                for f in findings:
-                    try:
-                        postable.append(_finding_from_flattened(f, owner=owner, repo=repo))
-                    except Exception:
-                        # One malformed finding must not cost us the whole
-                        # check run; the review results are still returned above.
-                        logger.warning(
-                            "Skipping unconvertible finding %s for check run",
-                            f.get("rule_id"),
-                            exc_info=True,
-                        )
-
-                if not postable:
-                    logger.warning("No convertible findings to post as a check run")
-
-                check_output = create_check_output(postable)
+                check_output = create_check_output(gate.postable)
+                check_output["summary"] = (
+                    f"{gate.summary_markdown}\n\n{check_output.get('summary', '')}"
+                )
                 check_result = await client.create_check_run(
                     owner=owner,
                     repo=repo,
                     head_sha=pr_diff.get("head_sha", ""),
                     name="Verdity Code Review",
+                    status="completed",
+                    conclusion=gate.conclusion,
+                    completed_at=datetime.now(UTC).isoformat(),
                     output=check_output,
                 )
                 response["github_check"] = check_result

@@ -44,8 +44,9 @@ Files for the subgoals already done (01–05, 08–10, 15) were never committed.
 | # | Subgoal | Severity | Size | Depends on | Status |
 |---|---------|----------|------|------------|--------|
 | 16 | [Queue leases, atomic claim, dead-letter replay](SG-16-queue-leases-and-dead-letter.md) | High · silent loss | M | 11 | ☐ |
-| 17 | [Gate every post through the router (constraint #7)](SG-17-confidence-gated-posting.md) | **Critical** | M | — | ☐ |
+| 17 | [Gate every post through the router (constraint #7)](SG-17-confidence-gated-posting.md) | **Critical** | M | — | ☑ |
 | 18 | [Repo hygiene](SG-18-repo-hygiene.md) | Low | XS | — | ◐ (coverage-gate.yml decision open) |
+| 25 | [`CodingAgent.apply_fix_and_open_pr` stub (hard-coded PR #1, fake success)](SG-25-coding-agent-fix-pr-stub.md) | High | M | 17 | ☐ |
 
 ## Track C — New features
 
@@ -59,7 +60,7 @@ Files for the subgoals already done (01–05, 08–10, 15) were never committed.
 | 24 | [Evaluation harness (precision/recall/ECE in CI)](SG-24-evaluation-harness.md) | Proves calibration | M | 17 | ☐ |
 
 ## Recommended order
-**18 → 17 → 07 → 11 → 16 → 12 → 13 → 14 → 24 → 19 → 20 → 21 → 22 → 23**
+**18 → 17 → 07 → 11 → 16 → 12 → 13 → 14 → 25 → 24 → 19 → 20 → 21 → 22 → 23**
 
 - **18** first: it's trivial and makes the tree clean for everything after it.
 - **17** next: today `verdity-review --post-check` posts *every* finding, so Verdity's main promise (constraint #7) is broken for anyone using it now. It needs nothing else and gives SG-14 its `gate_findings` building block.
@@ -70,4 +71,4 @@ Files for the subgoals already done (01–05, 08–10, 15) were never committed.
 - **21, 22, 23** cover scale and depth: deploy, multi-worker, semantic cross-file reasoning.
 
 ## Key finding of the 2026-11-26 review
-None of `AggregatorAgent`, `router.route()` and `ApprovalQueueStore` has a production call site. Only tests call them. Every non-negotiable constraint about confidence and approval is verified **in unit tests only**. SG-17 and SG-14 make them true at runtime. Until then, the README's constraint table should be read as design intent, not as current behaviour.
+None of `AggregatorAgent`, `router.route()` and `ApprovalQueueStore` had a production call site; only tests called them. **SG-17 (done)** routes every PR post through `gating.gate_findings`, so constraint #7 now holds on the MCP/CLI path. The webhook→worker path still produces no review at all until **SG-14**.
